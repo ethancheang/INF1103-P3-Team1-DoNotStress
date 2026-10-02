@@ -40,24 +40,22 @@
 </aside>
 
 <section class="card save-card">
-  {% if can_save %}
-    {% if saved %}
-      <h2>Saved on this computer</h2>
-      <p>You chose to keep this check-in. You can start a new one any time.</p>
-    {% else %}
-      <h2>Save this check-in?</h2>
-      <p>
-        Nothing is stored unless you opt in. Leave this unchecked if you want
-        to keep this check-in private to this page.
-      </p>
-      <form method="post" action="{{ url_for('save_checkin') }}" class="save-form">
-        <label class="opt-in">
-          <input type="checkbox" name="opt_in" value="yes">
-          I want to save this check-in on this computer
-        </label>
-        <button type="submit" class="btn secondary">Save my check-in</button>
-      </form>
-    {% endif %}
+  {% if saved %}
+    <h2>Saved on this computer</h2>
+    <p>You chose to keep this check-in. You can start a new one any time.</p>
+  {% else %}
+    <h2>Save this check-in?</h2>
+    <p>
+      Nothing is stored unless you opt in. Leave this unchecked if you want
+      to keep this check-in private to this page.
+    </p>
+    <form method="post" action="{{ url_for('save_checkin') }}" class="save-form">
+      <label class="opt-in">
+        <input type="checkbox" name="opt_in" value="yes">
+        I want to save this check-in on this computer
+      </label>
+      <button type="submit" class="btn secondary">Save my check-in</button>
+    </form>
   {% endif %}
   <p class="more-actions">
     <a href="{{ url_for('new_checkin') }}">Start another check-in</a>
