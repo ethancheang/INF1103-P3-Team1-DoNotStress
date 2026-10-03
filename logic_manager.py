@@ -150,18 +150,19 @@ REQUIRED_AI_FIELDS = (
 # What this module puts on the result record
 # ---------------------------------------------------------------------------
 
-LOGIC_SOURCE = "ai_logic"
 ERROR_AI_FIELDS_REQUIRED = "ai_fields_required"
 
-OUTCOME_ACCEPT = "accept"
-OUTCOME_FLAG = "flag"
-OUTCOME_ROUTE = "route"
-OUTCOME_REJECT = "reject"
+REACH_OUT_RISK_ABOVE = 0.75
+REACH_OUT_STRESS_MIN = 8
+REACH_OUT_SUPPORT_MAX = 3
 
-RULE_REACH_OUT = "reach_out_high_ai_stress_low_support"
-RULE_FINANCIAL_CHECK_IN = "check_in_high_category_financial"
-RULE_SLEEP_CHECK_IN = "check_in_sleep_deprivation"
-RULE_NONE = "ai_clamped"  # no domain rule matched; AI values were only cleaned
+FINANCIAL_STRESS_MIN = 8
+
+SLEEP_HOURS_MAX = 5.0
+SLEEP_STRESS_MIN = 7
+
+CATEGORY_HIGH_ABOVE = 0.75
+CATEGORY_MODERATE_FROM = 0.40
 
 
 # ---------------------------------------------------------------------------
