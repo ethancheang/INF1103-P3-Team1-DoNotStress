@@ -1,24 +1,3 @@
-"""
-DoNotStress — Data Layer (data_manager)
-
-Sole owner of flat-file persistence for evaluated student check-in records.
-
-Pure procedural Python: functions only — no classes.
-No terminal I/O (print / input), no AI calls, no business-tier rules.
-
-The AI result must contain:
-    risk_score
-    risk_category
-    primary_stressors
-    recommended_support
-    confidence
-    reasoning
-
-Records are saved only when:
-    1. the student explicitly consents (opt_in=True)
-    2. the record is a successful AI-processed result
-"""
-
 from __future__ import annotations
 
 import json
@@ -27,42 +6,31 @@ from pathlib import Path
 from typing import Any
 
 
+# ============================================================
+# FILE PATH
+# ============================================================
+
 _PACKAGE_ROOT = Path(__file__).resolve().parent
-_DEFAULT_DATA_PATH = _PACKAGE_ROOT / "data" / "student_records.json"
+
+_DEFAULT_DATA_PATH = _PACKAGE_ROOT / "data" / "student_record.json"
 
 
 def get_default_data_path() -> str:
-    """Return the absolute path to the default JSON store."""
+    """Return the default JSON file path."""
     return str(_DEFAULT_DATA_PATH)
 
 
-def _resolve_path(data_path: str | None) -> Path:
-    """Resolve the supplied data path or use the default path."""
+def _resolve_path(data_path: str | None = None) -> Path:
+    """Use the default path unless another path is provided."""
     if data_path is None or str(data_path).strip() == "":
-        return Path(get_default_data_path())
+        return _DEFAULT_DATA_PATH
+
     return Path(data_path)
 
 
-_BLOCKED_SOURCES = frozenset(
-    {
-        "logic_fallback",
-        "fallback",
-        "logic_only",
-        "logic",
-    }
-)
-
-
-_AI_SUCCESS_SOURCES = frozenset(
-    {
-        "gemini",
-        "ai",
-        "ai_manager",
-        "gemini+logic",
-        "ai_logic",
-    }
-)
-
+# ============================================================
+# VALIDATION
+# ============================================================
 
 _REQUIRED_AI_FIELDS = (
     "risk_score",
@@ -73,17 +41,33 @@ _REQUIRED_AI_FIELDS = (
     "reasoning",
 )
 
+_AI_SUCCESS_SOURCES = {
+    "gemini",
+    "ai",
+    "ai_manager",
+    "gemini+logic",
+    "ai_logic",
+}
+
+_BLOCKED_SOURCES = {
+    "logic_fallback",
+    "fallback",
+    "logic_only",
+    "logic",
+}
+
 
 def _is_opted_in(opt_in: Any) -> bool:
-    """Return True only for explicit consent."""
+    """Check whether the student explicitly consented."""
+
     if opt_in is True:
         return True
 
     if isinstance(opt_in, str):
         return opt_in.strip().lower() in {
-            "1",
             "true",
             "yes",
+            "1",
             "on",
         }
 
@@ -91,7 +75,8 @@ def _is_opted_in(opt_in: Any) -> bool:
 
 
 def _is_valid_probability(value: Any) -> bool:
-    """Return True when value is numeric and between 0.0 and 1.0."""
+    """Check whether a value is between 0 and 1."""
+
     if isinstance(value, bool):
         return False
 
@@ -104,7 +89,7 @@ def _is_valid_probability(value: Any) -> bool:
 
 
 def _validate_ai_fields(record: dict[str, Any]) -> str | None:
-    """Validate the required Gemini JSON fields."""
+    """Validate required AI result fields."""
 
     missing = [
         field
@@ -113,88 +98,65 @@ def _validate_ai_fields(record: dict[str, Any]) -> str | None:
     ]
 
     if missing:
-        return (
-            "Save refused: AI fields missing: "
-            + ", ".join(missing)
-            + "."
-        )
+        return "Missing AI fields: " + ", ".join(missing)
 
     if not _is_valid_probability(record["risk_score"]):
-        return (
-            "Save refused: risk_score must be a float "
-            "between 0.0 and 1.0."
-        )
+        return "risk_score must be between 0 and 1."
 
     if not _is_valid_probability(record["confidence"]):
-        return (
-            "Save refused: confidence must be a float "
-            "between 0.0 and 1.0."
-        )
+        return "confidence must be between 0 and 1."
 
-    risk_category = record["risk_category"]
+    if record["risk_category"] not in {
+        "Low",
+        "Moderate",
+        "High",
+    }:
+        return "Invalid risk_category."
 
-    if not isinstance(risk_category, str):
-        return "Save refused: risk_category must be a string."
+    if not isinstance(record["primary_stressors"], list):
+        return "primary_stressors must be a list."
 
-    if risk_category not in {"Low", "Moderate", "High"}:
-        return (
-            "Save refused: risk_category must be "
-            "'Low', 'Moderate', or 'High'."
-        )
-
-    primary_stressors = record["primary_stressors"]
-
-    if not isinstance(primary_stressors, list):
-        return (
-            "Save refused: primary_stressors must be "
-            "a list of strings."
-        )
-
-    if not all(isinstance(item, str) for item in primary_stressors):
-        return (
-            "Save refused: every primary_stressors item "
-            "must be a string."
-        )
+    if not all(
+        isinstance(item, str)
+        for item in record["primary_stressors"]
+    ):
+        return "primary_stressors must contain strings."
 
     if not isinstance(record["recommended_support"], str):
-        return (
-            "Save refused: recommended_support must be a string."
-        )
+        return "recommended_support must be a string."
 
     if not isinstance(record["reasoning"], str):
-        return "Save refused: reasoning must be a string."
+        return "reasoning must be a string."
 
     return None
 
 
 def _ai_success_error(record: dict[str, Any]) -> str | None:
-    """Validate that the record is a successful AI result."""
+    """Check whether the record came from successful AI processing."""
 
     if not isinstance(record, dict):
-        return "record must be a dict"
+        return "Record must be a dictionary."
 
     source = str(record.get("source", "")).strip().lower()
 
     if source in _BLOCKED_SOURCES:
-        return (
-            "Save refused: record is not AI-processed "
-            f"(source={record.get('source')!r})."
-        )
+        return "Record was not successfully AI processed."
 
-    explicit_ok = record.get("ai_ok") is True
-    source_ok = source in _AI_SUCCESS_SOURCES
-
-    if not explicit_ok and not source_ok:
-        return (
-            "Save refused: successful Gemini processing required "
-            "(set source to 'gemini' or ai_ok=True)."
-        )
+    if (
+        record.get("ai_ok") is not True
+        and source not in _AI_SUCCESS_SOURCES
+    ):
+        return "Successful AI processing is required."
 
     return _validate_ai_fields(record)
 
 
+# ============================================================
+# FILE HANDLING
+# ============================================================
+
 def _ensure_parent_dir(path: Path) -> None:
-    """Create the parent directory if necessary."""
+    """Create the data folder if it does not exist."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
@@ -202,9 +164,13 @@ def _read_records_file(
     path: Path,
 ) -> tuple[bool, list[dict[str, Any]], str | None]:
     """
-    Load records from JSON.
+    Read student records from JSON.
 
-    Missing / empty / corrupt files are handled gracefully.
+    Handles:
+    - Missing files
+    - Empty files
+    - Corrupted JSON
+    - File permission errors
     """
 
     if not path.exists():
@@ -212,88 +178,73 @@ def _read_records_file(
 
     try:
         raw = path.read_text(encoding="utf-8")
+
     except OSError as exc:
-        return True, [], f"Could not read data file: {exc}"
+        return False, [], f"Unable to read file: {exc}"
 
     if raw.strip() == "":
         return True, [], None
 
     try:
         payload = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return True, [], f"Corrupted JSON in data file: {exc}"
 
-    if payload is None:
-        return True, [], None
+    except json.JSONDecodeError as exc:
+        return False, [], f"Corrupted JSON file: {exc}"
 
     if isinstance(payload, list):
-        records = [
-            record
-            for record in payload
-            if isinstance(record, dict)
-        ]
-        return True, records, None
+        if not all(isinstance(item, dict) for item in payload):
+            return False, [], "JSON records must be dictionaries."
 
-    if (
-        isinstance(payload, dict)
-        and isinstance(payload.get("records"), list)
-    ):
-        records = [
-            record
-            for record in payload["records"]
-            if isinstance(record, dict)
-        ]
-        return True, records, None
+        return True, payload, None
 
-    return (
-        True,
-        [],
-        "Data file JSON must be a list of records "
-        "or an object with a 'records' list.",
-    )
+    if isinstance(payload, dict):
+        records = payload.get("records")
+
+        if isinstance(records, list) and all(
+            isinstance(item, dict) for item in records
+        ):
+            return True, records, None
+
+    return False, [], "Invalid JSON records format."
 
 
 def _write_records_file(
     path: Path,
     records: list[dict[str, Any]],
 ) -> tuple[bool, str | None]:
-    """Write all records to the JSON file."""
+    """Write records to JSON and create the folder if needed."""
 
     try:
         _ensure_parent_dir(path)
 
-        text = (
-            json.dumps(
-                records,
-                indent=2,
-                ensure_ascii=False,
-            )
-            + "\n"
+        content = json.dumps(
+            records,
+            indent=2,
+            ensure_ascii=False,
         )
 
-        path.write_text(text, encoding="utf-8")
+        path.write_text(
+            content + "\n",
+            encoding="utf-8",
+        )
+
         return True, None
 
-    except OSError as exc:
-        return False, f"Could not write data file: {exc}"
+    except (OSError, TypeError, ValueError) as exc:
+        return False, f"Unable to save records: {exc}"
 
+
+# ============================================================
+# LOAD RECORDS
+# ============================================================
 
 def load_all_records(
     data_path: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Load all historical records.
-
-    Returns:
-        {
-            "ok": bool,
-            "records": list,
-            "error": str | None,
-            "path": str
-        }
-    """
+    """Load all previously saved student records."""
 
     path = _resolve_path(data_path)
+
     ok, records, error = _read_records_file(path)
 
     return {
@@ -304,18 +255,30 @@ def load_all_records(
     }
 
 
-def save_record(
-    record: dict[str, Any],
+# ============================================================
+# SAVE STUDENT INPUTS
+# WORKS EVEN WHEN GEMINI API FAILS
+# ============================================================
+
+def save_student_input(
+    student_input: dict[str, Any],
     data_path: str | None = None,
     *,
     opt_in: Any = False,
+    ai_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
-    Append one evaluated student record.
+    Save student check-in inputs regardless of Gemini API status.
 
-    A record is saved only when:
-        1. opt_in is explicit student consent
-        2. the record was successfully AI processed
+    The student must give consent.
+
+    If Gemini fails:
+        ai_status = "failed"
+        ai_result = None
+
+    If Gemini succeeds:
+        ai_status = "success"
+        ai_result = AI response
     """
 
     path = _resolve_path(data_path)
@@ -323,10 +286,92 @@ def save_record(
     if not _is_opted_in(opt_in):
         return {
             "ok": False,
-            "error": (
-                "Save refused: student opt-in required "
-                "(pass opt_in=True)."
-            ),
+            "error": "Student consent is required.",
+            "path": str(path),
+            "record": None,
+        }
+
+    if not isinstance(student_input, dict):
+        return {
+            "ok": False,
+            "error": "Student input must be a dictionary.",
+            "path": str(path),
+            "record": None,
+        }
+
+    ok, records, error = _read_records_file(path)
+
+    if not ok:
+        return {
+            "ok": False,
+            "error": error,
+            "path": str(path),
+            "record": None,
+        }
+
+    record = dict(student_input)
+
+    record["ai_status"] = (
+        "success"
+        if ai_result is not None
+        else "failed"
+    )
+
+    record["ai_result"] = ai_result
+
+    record["source"] = (
+        "gemini"
+        if ai_result is not None
+        else "user_input"
+    )
+
+    record["save_opt_in"] = True
+
+    record["saved_at"] = datetime.now(
+        timezone.utc
+    ).isoformat()
+
+    records.append(record)
+
+    write_ok, write_error = _write_records_file(
+        path,
+        records,
+    )
+
+    return {
+        "ok": write_ok,
+        "error": write_error,
+        "path": str(path),
+        "record": record if write_ok else None,
+    }
+
+
+# ============================================================
+# SAVE SUCCESSFUL AI RECORDS
+# ORIGINAL FUNCTION
+# ============================================================
+
+def save_record(
+    record: dict[str, Any],
+    data_path: str | None = None,
+    *,
+    opt_in: Any = False,
+) -> dict[str, Any]:
+    """
+    Save a successfully AI-processed student record.
+
+    Requires:
+    - Student consent
+    - Successful AI processing
+    - All required AI fields
+    """
+
+    path = _resolve_path(data_path)
+
+    if not _is_opted_in(opt_in):
+        return {
+            "ok": False,
+            "error": "Student consent is required.",
             "path": str(path),
             "record": None,
         }
@@ -334,7 +379,7 @@ def save_record(
     if not isinstance(record, dict):
         return {
             "ok": False,
-            "error": "record must be a dict",
+            "error": "Record must be a dictionary.",
             "path": str(path),
             "record": None,
         }
@@ -349,56 +394,53 @@ def save_record(
             "record": None,
         }
 
-    ok, records, load_error = _read_records_file(path)
+    ok, records, error = _read_records_file(path)
 
     if not ok:
         return {
             "ok": False,
-            "error": load_error,
+            "error": error,
             "path": str(path),
             "record": None,
         }
 
-    if load_error and "Corrupted" in load_error:
-        records = []
-
     stored = dict(record)
+
     stored["save_opt_in"] = True
 
     if not stored.get("saved_at"):
-        stored["saved_at"] = datetime.now(timezone.utc).isoformat()
+        stored["saved_at"] = datetime.now(
+            timezone.utc
+        ).isoformat()
 
     records.append(stored)
 
-    write_ok, write_error = _write_records_file(path, records)
-
-    if not write_ok:
-        return {
-            "ok": False,
-            "error": write_error,
-            "path": str(path),
-            "record": None,
-        }
+    write_ok, write_error = _write_records_file(
+        path,
+        records,
+    )
 
     return {
-        "ok": True,
-        "error": None,
+        "ok": write_ok,
+        "error": write_error,
         "path": str(path),
-        "record": stored,
+        "record": stored if write_ok else None,
     }
 
+
+# ============================================================
+# FILTER RECORDS
+# ============================================================
 
 def filter_records(
     records: list[dict[str, Any]],
     **filters: Any,
 ) -> list[dict[str, Any]]:
     """
-    Filter records in memory.
-
-    Supported filters:
-        student_id
-        risk_category
-        cohort_year
+    Filter student records by:
+    - student_id
+    - risk_category
+    - cohort_year
     """
 
     if not isinstance(records, list):
@@ -408,9 +450,10 @@ def filter_records(
     risk_category = filters.get("risk_category")
     cohort_year = filters.get("cohort_year")
 
-    out: list[dict[str, Any]] = []
+    filtered = []
 
     for record in records:
+
         if not isinstance(record, dict):
             continue
 
@@ -419,29 +462,40 @@ def filter_records(
                 continue
 
         if risk_category is not None:
-            if (
-                str(record.get("risk_category", "")).lower()
-                != str(risk_category).lower()
+            category = record.get("risk_category")
+
+            if category is None and isinstance(
+                record.get("ai_result"), dict
             ):
+                category = record["ai_result"].get("risk_category")
+
+            if str(category or "").lower() != str(
+                risk_category
+            ).lower():
                 continue
 
         if cohort_year is not None:
             prefix = str(cohort_year).zfill(2)[-2:]
+
             sid = str(record.get("student_id", ""))
 
             if len(sid) < 2 or sid[:2] != prefix:
                 continue
 
-        out.append(record)
+        filtered.append(record)
 
-    return out
+    return filtered
 
+
+# ============================================================
+# QUERY FUNCTIONS
+# ============================================================
 
 def get_record_by_student_id(
     student_id: str,
     data_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return all historical records for one student ID."""
+    """Get all records belonging to a student."""
 
     loaded = load_all_records(data_path)
 
@@ -455,7 +509,7 @@ def get_records_by_risk_category(
     category: str,
     data_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return all records matching a risk category."""
+    """Get all records with a matching risk category."""
 
     loaded = load_all_records(data_path)
 
@@ -469,7 +523,7 @@ def get_records_by_cohort_year(
     year_prefix: str,
     data_path: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return records based on the first two digits of student ID."""
+    """Get records using the first two digits of student ID."""
 
     loaded = load_all_records(data_path)
 
