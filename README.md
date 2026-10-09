@@ -1,43 +1,61 @@
 # INF1103-P3-Team1-DoNotStress
 
-Repository for the INF1103 team project DoNotStress.
+Student wellbeing app with a campus check-in UI and the team's AI/backend pipeline.
 
-## Run the campus frontend
+## Run locally
 
-In the VS Code terminal, with this project folder open:
+Open this project folder in the VS Code terminal:
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
-.\.venv\Scripts\python.exe app.py
+.\.venv\Scripts\python.exe main.py
 ```
 
-Open http://127.0.0.1:5000. No API key is needed for this frontend demo.
-If `python` is unavailable but the Python launcher is installed, use `py -m venv .venv` for the first command.
+Open http://127.0.0.1:5000. If only the Python launcher is available, use `py -m venv .venv` for the first command.
 
-## What is implemented
+`main.py` is the single entry point for the frontend and backend. For Flask CLI or WSGI tools, use `main:app`, for example:
 
-- Responsive overview, four-chapter check-in, answer review, sample plan, and garden.
-- Stress slider with whole-number values from 1 to 10.
-- All eight input fields from `io_manager.py`; its validators are the server's source of truth.
-- Sleep and submission-rate sliders plus exact numeric entry. Counts accept nonnegative whole numbers; financial stress is yes/no; free text is optional.
-- Completion grows a plant regardless of the answers. No streak penalties or stress-based rewards.
-- Submission errors preserve answers in the open page and allow retrying.
+```powershell
+.\.venv\Scripts\python.exe -m flask --app main run
+```
 
-## Demo boundary
+## AI configuration
 
-Results and next steps are illustrative, not calculated assessments. `ai_manager.py` currently uses a different field contract and is deliberately not called by this frontend demo. Align that contract and add assessment handling in `submit_checkin` before enabling real results.
+Set `GEMINI_API_KEY` in your local environment or a local `.env` file before starting. A stable `FLASK_SECRET_KEY` is recommended; otherwise each restart generates a fresh key and expires sessions. `PORT` changes the default port. `DONOTSTRESS_DATA_PATH` optionally changes the save-file location.
 
-Answers are sent to Flask for validation and are not saved to a database, file, or session cookie. The browser holds the current answers in memory until reload. The signed session cookie contains only a CSRF token and completion flag. Garden progress and chosen next steps are demo UI states, not a persistent account. No external fonts, analytics, or AI requests are used.
+Do not commit `.env`, API keys, saved student data, or Python cache files. No API key is embedded in the frontend.
 
-Support contacts are placeholders with no outgoing calls or messages. Configure verified campus details before launch. This is a local development app; use an appropriate deployment server and set a stable `FLASK_SECRET_KEY` before deployment.
+The interface opens without a key, but assessment requires Gemini. Missing credentials, provider errors, or invalid responses show a retry message and support contacts; there is no fabricated sample result or Logic-only fallback.
+
+## Current check-in fields
+
+The UI follows `io_manager.FORM_FIELDS`:
+
+- Student ID: seven digits, starting with 23, 24, 25, or 26.
+- Sleep: 0–24 hours, in half-hour steps.
+- Stress, academic workload, financial stress, social support: 1–10 sliders.
+- Feelings text: optional.
+
+The previous submission-rate, CCA-count, absence-count, and yes/no financial-stress fields are no longer collected because the merged I/O and AI modules use the contract above.
+
+## Flow and storage
+
+`main.py` validates with `io_manager`, runs `ai_manager.analyse_student`, then `Logic_manager.apply_logic`. Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
+
+The browser explains that answers are sent to Gemini before submission. Results are temporarily held in server memory for up to 30 minutes; expired entries are removed on the next request. Session cookies contain only opaque identifiers and a CSRF token, not answers. Restarting the server or starting fresh clears access to unsaved results. The garden is a session-level completion reward, not persistent account history.
+
+Saving is optional and requires the checkbox. `/save` calls `data_manager.save_record` only for an AI-processed result with explicit consent. The default file is `data/student_records.json`. Repeating Save for the same pending result does not create another copy.
+
+This is a single-process local app. A production deployment needs a shared server-side session/record store, authentication and access controls appropriate to student records, and a production server.
 
 ## Files
 
-- `app.py`: Flask routes and canonical field validation.
-- `templates/base.html`, `templates/checkin.html`: page shell and initial configuration.
-- `static/style.css`, `static/campus.js`: approved design and interactive journey.
-- The old result/error templates are retained but are not used by the new flow; the result screen renders through the shared campus UI.
+- `main.py`: combined Flask entry point and orchestration.
+- `io_manager.py`, `ai_manager.py`, `Logic_manager.py`, `data_manager.py`: existing team layers.
+- `templates/base.html`, `templates/checkin.html`: page shell.
+- `static/style.css`, `static/campus.js`: campus UI, sliders, review, results, garden, and opt-in saving.
+- Legacy result/error templates remain available; the current interface renders these states in the shared campus UI.
 
 ## Tests
 
@@ -45,4 +63,4 @@ Support contacts are placeholders with no outgoing calls or messages. Configure 
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 ```
 
-Tests cover input validation, boundaries, optional text, CSRF protection, result access, and exclusion of student answers from session data.
+Tests inject a simulated Gemini response but run the real schema validator, Logic finalizer, I/O formatters, and data saver. They make no network calls and only save synthetic test data in a temporary directory.
