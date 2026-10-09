@@ -363,6 +363,8 @@ def save_record(
         records = []
 
     stored = dict(record)
+    if stored.get('survey_version') == 'evidence-v2':
+        stored.pop('feelings_text', None)
     stored["save_opt_in"] = True
 
     if not stored.get("saved_at"):

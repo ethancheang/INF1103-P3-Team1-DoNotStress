@@ -1,93 +1,16 @@
-"""I/O Manager for DoNotStress — student-facing Flask input layer.
+"""Student input validation and presentation for the evidence-v2 survey.
 
-Audience is students via a local Flask web UI (not advisors). This module
-owns pure-function validators and template formatters only.
-
-Joe's Flask app should import FORM_FIELDS / validate_student_form /
-format_* helpers (including format_ai_unavailable_error / format_ai_error
-when Gemini cannot complete a check-in). Do not put Gemini, Intervention
-Tier rules, or file I/O here. Functions only — no object types defined
-in this module.
-
-Canonical Flask form field names (request.form keys) — use FORM_FIELDS:
-  student_id          required  str   2-digit year in {23,24,25,26} + 5 digits
-  sleep_hours         required  float 0.0–24.0 inclusive, 0.5-hour steps
-  stress_level        required  int   1–10 inclusive
-  academic_workload   required  int   1–10 inclusive
-  financial_stress    required  int   1–10 inclusive (scale, not yes/no)
-  social_support      required  int   1–10 inclusive
-  feelings_text       optional  str   blank allowed
-                                      prompt: "In your own words, how have you
-                                      been feeling about school lately?"
-
-Removed from this public API (do not collect):
-  submission_rate, cca_count, consecutive_absences, free_text_concern,
-  and the old financial_stress yes/no bool.
-
-Validators are pure: validate_X(raw) -> (ok, value_or_error_message).
-Web entry point: validate_student_form(form_dict) -> (ok, record_or_errors).
-A thin CLI collect_student_record() remains for smoke tests only.
+Question wording, scales and scoring definitions live in survey.py.
+Student ID: seven ASCII digits beginning with 2. Reflection is ephemeral.
 """
+import survey
 
-# ---------------------------------------------------------------------------
-# Form field names for Flask coordination
-# ---------------------------------------------------------------------------
-
-FORM_FIELDS = {
-    "student_id": "student_id",
-    "sleep_hours": "sleep_hours",
-    "stress_level": "stress_level",
-    "academic_workload": "academic_workload",
-    "financial_stress": "financial_stress",
-    "social_support": "social_support",
-    "feelings_text": "feelings_text",
-}
-
-FORM_PROMPTS = {
-    "student_id": "Student ID",
-    "sleep_hours": "How many hours of sleep did you get last night?",
-    "stress_level": "How stressed have you been feeling? (1–10)",
-    "academic_workload": "How heavy has your academic workload felt? (1–10)",
-    "financial_stress": "How stressed have you been about money? (1–10)",
-    "social_support": "How supported have you felt by people around you? (1–10)",
-    "feelings_text": (
-        "In your own words, how have you been feeling about school lately?"
-    ),
-}
-
-RECORD_FIELD_ORDER = (
-    "student_id",
-    "sleep_hours",
-    "stress_level",
-    "academic_workload",
-    "financial_stress",
-    "social_support",
-    "feelings_text",
-)
-
-REQUIRED_FORM_FIELDS = (
-    "student_id",
-    "sleep_hours",
-    "stress_level",
-    "academic_workload",
-    "financial_stress",
-    "social_support",
-)
-
-# ---------------------------------------------------------------------------
-# Validation constants
-# ---------------------------------------------------------------------------
-
-VALID_STUDENT_ID_YEARS = ("23", "24", "25", "26")
-STUDENT_ID_EXAMPLE = "2605581"
-STUDENT_ID_SERIAL_DIGITS = 5
-
-SLEEP_HOURS_MIN = 0.0
-SLEEP_HOURS_MAX = 24.0
-SLEEP_HOURS_STEP = 0.5
-
-SCALE_MIN = 1
-SCALE_MAX = 10
+FORM_FIELDS = {key:key for key in ['student_id', *survey.QUESTION_MAP, 'feelings_text']}
+FORM_PROMPTS = {'student_id':'Student ID', 'feelings_text':'Anything on your mind about school or life lately?',
+                **{q['key']:q['prompt'] for q in survey.QUESTIONS}}
+RECORD_FIELD_ORDER = tuple(FORM_FIELDS)
+REQUIRED_FORM_FIELDS = ('student_id', *(q['key'] for q in survey.QUESTIONS if not q.get('optional')))
+STUDENT_ID_EXAMPLE = '2605581'
 
 # ---------------------------------------------------------------------------
 # Soft labels, tips allow-list, advisor contacts (hardcoded — never invent)
@@ -293,28 +216,6 @@ def _parse_float(raw) -> tuple[bool, float | str]:
     return True, value
 
 
-def _is_half_hour_step(value: float) -> bool:
-    """True when value is a multiple of 0.5 (within a tiny float tolerance)."""
-    steps = value / SLEEP_HOURS_STEP
-    return abs(steps - round(steps)) <= 1e-9
-
-
-def _quantize_half_hour(value: float) -> float:
-    return round(value / SLEEP_HOURS_STEP) * SLEEP_HOURS_STEP
-
-
-def _validate_scale_1_to_10(raw, field_label: str) -> tuple[bool, int | str]:
-    ok, parsed = _parse_int(raw)
-    if not ok:
-        return False, f"{field_label} {parsed}."
-    if parsed < SCALE_MIN or parsed > SCALE_MAX:
-        return False, (
-            f"{field_label} must be an integer between {SCALE_MIN} and "
-            f"{SCALE_MAX} (inclusive)."
-        )
-    return True, parsed
-
-
 def _form_get(form_dict, key: str):
     """Read one key from a Flask request.form-like mapping."""
     if form_dict is None:
@@ -375,101 +276,38 @@ def extract_form_fields(form_dict) -> dict:
 # ---------------------------------------------------------------------------
 
 def validate_student_id(raw) -> tuple[bool, str]:
-    """Require a 2-digit year in {23,24,25,26} followed by 5 digits."""
+    """Require exactly seven ASCII digits, beginning with 2."""
     text = _as_text(raw)
-    if not text:
-        return False, (
-            "Student ID is required. Use a 2-digit year (23, 24, 25, or 26) "
-            f"followed by 5 digits (e.g. {STUDENT_ID_EXAMPLE})."
-        )
-    if not text.isdigit() or len(text) != 2 + STUDENT_ID_SERIAL_DIGITS:
-        return False, (
-            "Student ID must be 7 digits: a 2-digit year (23, 24, 25, or 26) "
-            f"followed by 5 digits (e.g. {STUDENT_ID_EXAMPLE})."
-        )
-    year = text[:2]
-    if year not in VALID_STUDENT_ID_YEARS:
-        allowed = ", ".join(VALID_STUDENT_ID_YEARS)
-        return False, f"Student ID year '{year}' is not allowed. Use one of: {allowed}."
+    if len(text) != 7 or not text.isascii() or not text.isdigit() or not text.startswith("2"):
+        return False, "Student ID must be exactly 7 digits and start with 2 (e.g. 2605581)."
+    return True, text
+
+def validate_feelings_text(raw):
+    if raw is not None and not isinstance(raw, str):
+        return False, 'Please enter text or leave this blank.'
+    text = _as_text(raw)
+    if len(text) > 2000:
+        return False, 'Please keep your reflection within 2,000 characters.'
     return True, text
 
 
-def validate_sleep_hours(raw) -> tuple[bool, float | str]:
-    """Require a float in [0.0, 24.0] on 0.5-hour steps (5.0, 5.5, 6.0)."""
-    ok, parsed = _parse_float(raw)
+def validate_student_form(form_dict):
+    record, errors = {}, {}
+    ok, value = validate_student_id(_form_get(form_dict, 'student_id'))
+    (record if ok else errors)['student_id'] = value
+    for q in survey.QUESTIONS:
+        ok, value = survey.validate_question(_form_get(form_dict, q['key']), q)
+        (record if ok else errors)[q['key']] = value
+    ok, text = validate_feelings_text(_form_get(form_dict, 'feelings_text'))
     if not ok:
-        return False, f"Sleep hours {parsed}."
-    if parsed < SLEEP_HOURS_MIN or parsed > SLEEP_HOURS_MAX:
-        return False, (
-            f"Sleep hours must be between {SLEEP_HOURS_MIN:.1f} and "
-            f"{SLEEP_HOURS_MAX:.1f} (inclusive), in {SLEEP_HOURS_STEP}-hour "
-            "steps (e.g. 5.0, 5.5, 6.0)."
-        )
-    if not _is_half_hour_step(parsed):
-        return False, (
-            "Sleep hours must be in 0.5-hour steps "
-            "(e.g. 5.0, 5.5, 6.0). Values like 5.25 are not allowed."
-        )
-    return True, _quantize_half_hour(parsed)
-
-
-def validate_stress_level(raw) -> tuple[bool, int | str]:
-    """Require an integer in [1, 10]."""
-    return _validate_scale_1_to_10(raw, "Stress level")
-
-
-def validate_academic_workload(raw) -> tuple[bool, int | str]:
-    """Require an integer in [1, 10]."""
-    return _validate_scale_1_to_10(raw, "Academic workload")
-
-
-def validate_financial_stress(raw) -> tuple[bool, int | str]:
-    """Require an integer in [1, 10] (scale, not yes/no)."""
-    return _validate_scale_1_to_10(raw, "Financial stress")
-
-
-def validate_social_support(raw) -> tuple[bool, int | str]:
-    """Require an integer in [1, 10]."""
-    return _validate_scale_1_to_10(raw, "Social support")
-
-
-def validate_feelings_text(raw) -> tuple[bool, str]:
-    """Optional free text. Blank or whitespace-only is stored as ''."""
-    return True, _as_text(raw)
-
-
-_FIELD_VALIDATORS = {
-    "student_id": validate_student_id,
-    "sleep_hours": validate_sleep_hours,
-    "stress_level": validate_stress_level,
-    "academic_workload": validate_academic_workload,
-    "financial_stress": validate_financial_stress,
-    "social_support": validate_social_support,
-    "feelings_text": validate_feelings_text,
-}
-
-
-def validate_student_form(form_dict) -> tuple[bool, dict]:
-    """Validate every student field from a Flask request.form-like mapping.
-
-    Returns (True, record) when all fields are valid.
-    Returns (False, errors) when any required field fails. `errors` maps
-    field name -> error message. All fields are checked (not fail-fast).
-
-    `form_dict` may be a dict, Flask ImmutableMultiDict, or any object
-    with .get(key). Missing keys are treated as blank strings.
-    """
-    record = {}
-    errors = {}
-    for key in RECORD_FIELD_ORDER:
-        raw = _form_get(form_dict, key)
-        ok, result = _FIELD_VALIDATORS[key](raw)
-        if ok:
-            record[key] = result
-        else:
-            errors[key] = result
+        errors['feelings_text'] = text
     if errors:
         return False, errors
+    # Reflection is checked locally on the server, then discarded. Never sent
+    # to Gemini or retained in pending/saved records.
+    record['safety_flag'] = survey.safety_check(text)
+    record['survey_version'] = survey.VERSION
+    record.update(survey.score(record))
     return True, record
 
 
@@ -665,10 +503,10 @@ def format_student_record(record: dict) -> dict:
             display = str(value).strip() if value is not None else ""
             if not display:
                 display = "(skipped)"
-        elif key == "sleep_hours":
+        elif key == "sleep_hours_avg":
             display = f"{float(value):.1f}"
         else:
-            display = str(value)
+            display = "(skipped)" if value is None else str(value)
         fields.append({
             "key": key,
             "label": FORM_PROMPTS[key],
@@ -705,70 +543,24 @@ def _prompt_until_valid(prompt: str, validator):
 
 def get_student_id() -> str:
     return _prompt_until_valid(
-        "Student ID (YYxxxxx, year 23-26, e.g. 2605581): ",
+        "Student ID (7 digits starting with 2, e.g. 2605581): ",
         validate_student_id,
     )
 
 
-def get_sleep_hours() -> float:
-    return _prompt_until_valid(
-        "Sleep hours last night (0.0 to 24.0, in 0.5 steps): ",
-        validate_sleep_hours,
-    )
+def collect_student_record():
+    """CLI uses the same question definitions and validation as the website."""
+    values = {'student_id':get_student_id()}
+    for q in survey.QUESTIONS:
+        print_message(q['prompt'])
+        if q.get('options'):
+            print_message(' | '.join(f"{i + q['min']}: {label}" for i, label in enumerate(q['options'])))
+        values[q['key']] = _prompt_until_valid(
+            f"{q['min']}–{q['max']}" + (' (optional; Enter to skip)' if q.get('optional') else '') + ': ',
+            lambda raw, item=q: survey.validate_question(raw, item))
+    values['feelings_text'] = _prompt_until_valid('Optional reflection (not saved): ', validate_feelings_text)
+    return validate_student_form(values)[1]
 
 
-def get_stress_level() -> int:
-    return _prompt_until_valid(
-        "Stress level (1 to 10): ",
-        validate_stress_level,
-    )
-
-
-def get_academic_workload() -> int:
-    return _prompt_until_valid(
-        "Academic workload (1 to 10): ",
-        validate_academic_workload,
-    )
-
-
-def get_financial_stress() -> int:
-    return _prompt_until_valid(
-        "Financial stress (1 to 10): ",
-        validate_financial_stress,
-    )
-
-
-def get_social_support() -> int:
-    return _prompt_until_valid(
-        "Social support (1 to 10): ",
-        validate_social_support,
-    )
-
-
-def get_feelings_text() -> str:
-    return _prompt_until_valid(
-        "In your own words, how have you been feeling about school lately? "
-        "(optional, press Enter to skip): ",
-        validate_feelings_text,
-    )
-
-
-def collect_student_record() -> dict:
-    """Prompt for every web-aligned field (CLI smoke test only)."""
-    print_message("Student wellbeing check-in.")
-    print_message("Invalid values will be rejected until a valid value is entered.")
-    return {
-        "student_id": get_student_id(),
-        "sleep_hours": get_sleep_hours(),
-        "stress_level": get_stress_level(),
-        "academic_workload": get_academic_workload(),
-        "financial_stress": get_financial_stress(),
-        "social_support": get_social_support(),
-        "feelings_text": get_feelings_text(),
-    }
-
-
-if __name__ == "__main__":
-    demo = collect_student_record()
-    print_message("")
-    print_message(str(format_student_record(demo)))
+if __name__ == '__main__':
+    print_message(str(format_student_record(collect_student_record())))

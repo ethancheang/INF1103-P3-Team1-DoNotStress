@@ -7,7 +7,21 @@
       <button data-nav="home" aria-current="page">Overview</button>
       <button data-nav="checkin">Check-in</button>
       <button data-nav="garden">My garden</button>
+      {% if boot.isAdmin %}
+      <button data-nav="records">Saved records</button>
+      {% endif %}
     </nav>
+    <div class="ds-account">
+      <span class="ds-pill">{{ 'Admin view' if boot.isAdmin else 'Student view' }}</span>
+      {% if boot.isAdmin %}
+      <form action="{{ url_for('admin_logout') }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ boot.csrfToken }}">
+        <button class="ds-link" type="submit">Sign out</button>
+      </form>
+      {% else %}
+      <a class="ds-link" href="{{ url_for('admin_login') }}">Admin sign in</a>
+      {% endif %}
+    </div>
   </header>
   <div class="ds-demo">A moment for your wellbeing · AI-assisted check-in · not a medical diagnosis</div>
   <main id="ds-main"></main>

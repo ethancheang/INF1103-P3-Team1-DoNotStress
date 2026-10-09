@@ -32,9 +32,9 @@ class CampusTests(unittest.TestCase):
         self.client.get('/')
         with self.client.session_transaction() as session:
             self.token = session['csrf_token']
-        self.values = dict(student_id='2605581', sleep_hours='6.5', stress_level='5',
-                           academic_workload='5', financial_stress='4', social_support='7',
-                           feelings_text='Example concern')
+        self.values = dict(student_id='2605581', pss_1=2, pss_2=2, pss_3=2, pss_4=2,
+                           sleep_hours_avg=6.5, sleep_quality=1, pas_workload=3, fin_stress=8,
+                           mspss_friends=6, mspss_family=6, feelings_text='Example concern')
 
     def post(self, values=None, url='/'):
         return self.client.post(url, json=self.values if values is None else values,
@@ -52,9 +52,9 @@ class CampusTests(unittest.TestCase):
         self.assertEqual(self.client.get('/result').status_code, 200)
 
     def test_invalid_fields_prevent_ai_call(self):
-        for field, value in [('student_id','2200000'), ('sleep_hours','6.75'),
-                             ('stress_level','11'), ('academic_workload','0'),
-                             ('financial_stress','yes'), ('social_support','1.5')]:
+        for field, value in [('student_id','1200000'), ('sleep_hours_avg','6.75'),
+                             ('pss_1','5'), ('pas_workload','0'),
+                             ('fin_stress','yes'), ('mspss_friends','1.5')]:
             with self.subTest(field=field), patch('main.ai_manager.analyse_student') as ai:
                 response = self.post({**self.values, field:value})
                 self.assertEqual(response.status_code, 400)

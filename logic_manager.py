@@ -26,6 +26,7 @@ Pipeline position:
 from __future__ import annotations
 
 import math
+import survey
 from typing import Any
 
 
@@ -202,6 +203,11 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
     missing, invalid = _ai_field_problems(record)
     if missing or invalid:
         return _error_result(record, missing=missing, invalid=invalid)
+
+    if record.get('survey_version') == survey.VERSION:
+        # New questionnaire uses the documented deterministic rules; old /10
+        # thresholds must never be applied to its different response scales.
+        return survey.finalise(record)
 
     clamped, clamp_notes = _clamp_ai_fields(record)
     label = clamped["soft_label"]

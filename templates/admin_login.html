@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Admin sign in · DoNotStress{% endblock %}
+{% block content %}
+<div id="dns-campus">
+  <header class="ds-top">
+    <div class="ds-brand"><span class="ds-logo" aria-hidden="true">✿</span>DoNotStress<span class="ds-campus-label">/ campus</span></div>
+    <a class="ds-link" href="{{ url_for('checkin') }}">← Back to student view</a>
+  </header>
+  <main>
+    <section class="ds-admin-login" aria-labelledby="login-title">
+      <span class="ds-pill">Admin access</span>
+      <h1 id="login-title">Saved check-ins,<br>for your review.</h1>
+      <p>Sign in to view student records, search Student IDs, and filter by risk or cohort.</p>
+      <form method="post" action="{{ url_for('admin_login') }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <div class="ds-field">
+          <label class="ds-label" for="username">Username</label>
+          <input class="ds-input" id="username" name="username" autocomplete="username" maxlength="100" required>
+        </div>
+        <div class="ds-field">
+          <label class="ds-label" for="password">Password</label>
+          <input class="ds-input" id="password" name="password" type="password" autocomplete="current-password" maxlength="256" required>
+        </div>
+        {% if error %}<p class="ds-error" role="alert">{{ error }}</p>{% endif %}
+        <button class="ds-primary" type="submit">Sign in to admin view →</button>
+      </form>
+      <p class="ds-help">Students can complete and save their own check-ins without signing in.</p>
+    </section>
+  </main>
+</div>
+{% endblock %}

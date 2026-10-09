@@ -141,3 +141,85 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 @media(max-width:700px){body{padding:0}
 #dns-campus{border-radius:0}
 }
+
+/* Saved history and risk presentation: labels always accompany colour. */
+#dns-campus .ds-nav{flex-wrap:wrap}
+#dns-campus .ds-account{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#dns-campus .ds-account form{margin:0}
+#dns-campus .ds-account .ds-link{font-size:12px;white-space:nowrap}
+#dns-campus .ds-admin-login{max-width:480px;margin:35px auto 70px;padding:26px;background:var(--ds-panel);border:1px solid var(--ds-line);border-radius:22px}
+#dns-campus .ds-admin-login h1{font-size:36px;letter-spacing:-1.4px}
+#dns-campus .ds-admin-login .ds-help{margin-top:24px}
+@media(max-width:550px){#dns-campus .ds-admin-login{padding:20px;margin:10px auto 30px}#dns-campus .ds-account{width:100%;justify-content:space-between}}
+#dns-campus .ds-top{flex-wrap:wrap}
+#dns-campus .ds-risk{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:650;white-space:nowrap}
+#dns-campus .ds-risk-low{background:light-dark(#dff0e3,#284b37);color:light-dark(#225335,#caefd5)}
+#dns-campus .ds-risk-moderate{background:light-dark(#fff0c6,#574624);color:light-dark(#765000,#ffe8af)}
+#dns-campus .ds-risk-high{background:light-dark(#fde1db,#5d302d);color:light-dark(#942f27,#ffd0c7)}
+#dns-campus .ds-risk-unknown{background:var(--ds-soft);color:var(--ds-sub)}
+#dns-campus .ds-result-hero[data-risk=low]{background:light-dark(#e5f1e7,#294434)}
+#dns-campus .ds-result-hero[data-risk=moderate]{background:light-dark(#fff0ce,#493e28)}
+#dns-campus .ds-result-hero[data-risk=high]{background:light-dark(#fbe3de,#4e302e)}
+#dns-campus .ds-insights{padding:22px;border:1px solid var(--ds-line);border-radius:20px;margin:0 0 24px;background:var(--ds-panel)}
+#dns-campus .ds-explanation{white-space:pre-line;overflow-wrap:anywhere}
+#dns-campus .ds-record-filters{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:14px;align-items:end;margin:24px 0 10px}
+#dns-campus .ds-record-filters label{font-size:13px;min-width:0}
+#dns-campus .ds-record-filters .ds-input{display:block;margin-top:7px;min-height:46px}
+#dns-campus .ds-record-filters button{min-height:46px}
+#dns-campus .ds-record-table{overflow-x:auto;border:1px solid var(--ds-line);border-radius:16px;margin:15px 0;background:var(--ds-panel)}
+#dns-campus table{border-collapse:collapse;width:100%;min-width:880px;text-align:left;font-size:13px}
+#dns-campus caption{text-align:left;padding:16px;font-weight:600}
+#dns-campus th{background:var(--ds-soft);font-size:12px;font-weight:600}
+#dns-campus th,#dns-campus td{padding:14px 12px;border-bottom:1px solid var(--ds-line)}
+#dns-campus tr:last-child td{border-bottom:0}
+#dns-campus td:first-child{font-variant-numeric:tabular-nums;font-weight:600}
+#dns-campus td:last-child{min-width:165px}
+#dns-campus tr[data-risk=low] td:first-child{border-left:4px solid light-dark(#438052,#8cbb99)}
+#dns-campus tr[data-risk=moderate] td:first-child{border-left:4px solid light-dark(#a57519,#e5bb65)}
+#dns-campus tr[data-risk=high] td:first-child{border-left:4px solid light-dark(#bd5a49,#eaa293)}
+#dns-campus .ds-empty{text-align:center;padding:45px;color:var(--ds-sub)}
+#dns-campus #ds-record-status{font-size:13px;color:var(--ds-sub);margin-top:16px}
+@media(max-width:800px){#dns-campus .ds-record-filters{grid-template-columns:1fr 1fr}}
+@media(max-width:450px){#dns-campus .ds-record-filters{grid-template-columns:1fr}#dns-campus .ds-insights{padding:16px}}
+
+/* Evidence questionnaire: explicit choices, clear scales, and readable context. */
+#dns-campus .ds-why{padding:18px 20px;background:var(--ds-soft);border-radius:16px;margin:20px 0}
+#dns-campus .ds-why p{margin:5px 0 0;font-size:14px}
+#dns-campus .ds-question{min-width:0;border:1px solid var(--ds-line);border-radius:18px;padding:20px;margin:25px 0;background:var(--ds-panel)}
+#dns-campus .ds-question legend{font-weight:600;font-size:15px;line-height:1.55;padding:0 6px;max-width:100%}
+#dns-campus .ds-answer-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
+#dns-campus .ds-answer{position:relative;display:block;cursor:pointer}
+#dns-campus .ds-answer input{position:absolute;opacity:0;width:1px;height:1px}
+#dns-campus .ds-answer span{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;min-height:84px;height:100%;border:1px solid var(--ds-line);border-radius:12px;padding:10px 8px;text-align:center;font-size:12px;line-height:1.4}
+#dns-campus .ds-answer b{font-size:18px}
+#dns-campus .ds-answer input:checked+span{background:var(--ds-accent);color:var(--ds-on);border-color:var(--ds-accent)}
+#dns-campus .ds-answer input:focus-visible+span{outline:3px solid light-dark(#78649d,#cabbeb);outline-offset:3px}
+#dns-campus .ds-question .ds-big-value{font-size:24px;letter-spacing:-.5px;margin:20px 0}
+#dns-campus .ds-question input[type=range]{height:34px}
+#dns-campus .ds-confirm{font-size:12px;padding:9px 14px;margin:8px 0}
+#dns-campus .ds-exact{max-width:150px;display:block;margin-top:6px}
+#dns-campus .ds-finance-anchors{display:flex;justify-content:space-around;font-size:12px;color:var(--ds-sub);margin:14px 0}
+#dns-campus .ds-extra,#dns-campus .ds-scoring{border:1px solid var(--ds-line);border-radius:14px;padding:16px;margin:20px 0}
+#dns-campus summary{cursor:pointer;font-weight:600;font-size:14px}
+#dns-campus .ds-extra .ds-question{margin-bottom:0}
+#dns-campus .ds-optional{display:inline-block;font-size:11px;background:var(--ds-soft);border-radius:12px;padding:3px 8px}
+#dns-campus .ds-source{margin-top:22px}
+#dns-campus .ds-review-block{padding:12px 0;border-bottom:1px solid var(--ds-line)}
+#dns-campus .ds-review-block .ds-summary{margin:5px 0 15px}
+#dns-campus .ds-review-block .ds-summary div{border:0}
+#dns-campus .ds-score{display:flex;gap:20px;align-items:center;padding:20px 0}
+#dns-campus .ds-score>strong{font-size:48px;font-weight:550}
+#dns-campus .ds-score small{font-size:22px;color:var(--ds-sub)}
+#dns-campus .ds-score>span{font-size:13px;color:var(--ds-sub)}
+#dns-campus .ds-scoring p{margin:14px 0 0;font-size:13px}
+#dns-campus .ds-factor-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:28px}
+#dns-campus .ds-factor{border:1px solid var(--ds-line);border-radius:18px;padding:18px;background:var(--ds-panel)}
+#dns-campus .ds-factor.is-flagged{border-color:light-dark(#b08a44,#bcaa78)}
+#dns-campus .ds-factor strong{display:block;font-size:14px;margin:14px 0 8px}
+#dns-campus .ds-factor p{font-size:13px;margin-bottom:0}
+#dns-campus .ds-support-urgent{border:2px solid light-dark(#bd5a49,#eaa293)}
+#dns-campus .ds-footer{border-top:1px solid var(--ds-line);margin-top:28px;line-height:1.8}
+#dns-campus a{color:var(--ds-accent);text-underline-offset:3px}
+#dns-campus td small{display:block;font-size:11px;color:var(--ds-sub);min-width:110px}
+#dns-campus a:focus-visible,#dns-campus summary:focus-visible,#dns-campus select:focus-visible{outline:3px solid light-dark(#78649d,#cabbeb);outline-offset:3px}
+@media(max-width:550px){#dns-campus .ds-factor-grid{grid-template-columns:1fr}#dns-campus .ds-question{padding:16px 12px}#dns-campus .ds-answer-options{grid-template-columns:repeat(2,1fr)}#dns-campus .ds-answer span{min-height:65px}#dns-campus .ds-journey{gap:0}}

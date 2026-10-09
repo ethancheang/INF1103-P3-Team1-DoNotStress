@@ -20,6 +20,8 @@ Pipeline position:
 from __future__ import annotations
 
 import json
+import math
+import survey
 import logging
 import os
 import time
@@ -31,14 +33,10 @@ logger = logging.getLogger(__name__)
 # I/O fields this layer may send to Gemini (student check-in only)
 # ---------------------------------------------------------------------------
 
-STUDENT_PROMPT_FIELDS = (
-    "student_id",
-    "sleep_hours",
-    "stress_level",
-    "academic_workload",
-    "financial_stress",
-    "social_support",
-    "feelings_text",
+# No student identifier or optional reflection is sent to the AI provider.
+STUDENT_PROMPT_FIELDS = tuple(survey.QUESTION_MAP) + (
+    'survey_version', 'pss_total', 'support_mean', 'support_item_count',
+    'context_flags', 'risk_category', 'soft_label', 'speak_prominence',
 )
 
 # ---------------------------------------------------------------------------
@@ -346,15 +344,7 @@ def build_prompt(student_dict: dict[str, Any]) -> str:
     Uses only the student-facing fields. Instructs Gemini to act as a
     supportive student-wellbeing assistant and return ONLY the required JSON.
     """
-    payload = {
-        "student_id": student_dict.get("student_id"),
-        "sleep_hours": student_dict.get("sleep_hours"),
-        "stress_level": student_dict.get("stress_level"),
-        "academic_workload": student_dict.get("academic_workload"),
-        "financial_stress": student_dict.get("financial_stress"),
-        "social_support": student_dict.get("social_support"),
-        "feelings_text": student_dict.get("feelings_text") or "",
-    }
+    payload = {key:student_dict.get(key) for key in STUDENT_PROMPT_FIELDS}
     record_json = json.dumps(payload, ensure_ascii=False, indent=2)
     stressor_list = ", ".join(sorted(ALLOWED_PRIMARY_STRESSORS))
     tip_id_list = ", ".join(sorted(ALLOWED_TIP_IDS))
@@ -363,10 +353,22 @@ def build_prompt(student_dict: dict[str, Any]) -> str:
     return (
         "You are a supportive student-wellbeing assistant for DoNotStress, "
         "a local check-in tool used by students (not an advisor dashboard).\n"
+        "The questionnaire is evidence-v2. Explain associations, not causation or diagnosis. "
+        "Use the supplied computed risk_category, soft_label and speak_prominence exactly. "
+        "They are project heuristics, not clinical cut-offs. PSS-4 has no official cut-offs. "
+        "risk_score must equal pss_total / 16 and is a normalised score, not a probability. "
+        "PSS items use 0–4 frequency in the last month; reverse items 2 and 3. "
+        "Sleep: typical actual hours 0–14 and quality 0 good to 3 bad in the past week. "
+        "PAS: 1 disagree to 5 agree, selected items only, not a full validated subscale. "
+        "Finance: 1 overwhelming stress to 10 no stress (lower is worse). "
+        "MSPSS: 1–7 agreement, higher is more support; selected-item mean is approximate. "
+        "Optional pas_catchup and mspss_so may be null: never invent missing answers. "
+        "Use context_flags to choose tips. Do not infer a diagnosis, safety, or a student's state of mind. "
+        "Reflection text is excluded and must not be inferred.\n"
         "Speak to the student with warmth and care. Analyse the check-in "
         "holistically and return ONLY a single JSON object (no markdown "
         "fences, no commentary) with exactly these keys:\n"
-        '- "risk_score": float between 0.0 and 1.0 (composite risk likelihood)\n'
+        '- "risk_score": float between 0.0 and 1.0 (normalised PSS-4 score, not a probability)\n'
         '- "risk_category": one of "Low", "Moderate", "High"\n'
         '- "primary_stressors": list of short snake_case strings chosen ONLY '
         f"from this allow-list: {stressor_list}\n"
@@ -398,7 +400,7 @@ def _as_unit_interval(value: Any, field_name: str) -> tuple[bool, Any]:
         number = float(value)
     except (TypeError, ValueError):
         return False, f"{field_name} must be a float between 0.0 and 1.0."
-    if number < 0.0 or number > 1.0:
+    if isinstance(value, bool) or not math.isfinite(number) or number < 0.0 or number > 1.0:
         return False, f"{field_name} must be between 0.0 and 1.0."
     return True, number
 
