@@ -25,6 +25,7 @@ Pipeline position:
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 
@@ -120,6 +121,28 @@ REQUIRED_AI_FIELDS = (
 LOGIC_SOURCE = "ai_logic"
 ERROR_AI_FIELDS_REQUIRED = "ai_fields_required"
 
+
+# ---------------------------------------------------------------------------
+# Domain settings - the team's numbers. Change them here and nowhere else.
+# The student scales (stress, financial stress, social support) run 1 to 10.
+# ---------------------------------------------------------------------------
+
+# Rule 1 - reach out
+REACH_OUT_RISK_ABOVE = 0.75  # the AI's risk_score must be above this
+REACH_OUT_STRESS_MIN = 8  # stress_level at least this
+REACH_OUT_SUPPORT_MAX = 3  # social_support at most this
+
+# Rule 2 - financial check-in
+FINANCIAL_STRESS_MIN = 8  # financial_stress at least this
+
+# Rule 3 - sleep check-in
+SLEEP_HOURS_MAX = 5.0  # sleep_hours at most this
+SLEEP_STRESS_MIN = 7  # stress_level at least this
+
+# Used only when the AI's own risk_category cannot be used: score -> category.
+CATEGORY_HIGH_ABOVE = 0.75
+CATEGORY_MODERATE_FROM = 0.40
+
 _MAX_TIPS = 4
 
 _LABEL_RANK = {
@@ -188,7 +211,7 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
     reasoning = clamped["reasoning"]
 
     applied_rules: list[str] = []
-    sleep = _optional_float(record.get("sleep_hours"))
+    sleep = _safe_float(record.get("sleep_hours"))
     stress = _optional_int(record.get("stress_level"))
     financial = _optional_int(record.get("financial_stress"))
     support = _optional_int(record.get("social_support"))
@@ -197,11 +220,11 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
     # Rule 1 — force reach-out from AI risk + student stress/support.
     # risk_score > 0.75 AND stress_level >= 8 AND social_support <= 3
     if (
-        clamped["risk_score"] > 0.75
+        clamped["risk_score"] > REACH_OUT_RISK_ABOVE
         and stress is not None
-        and stress >= 8
+        and stress >= REACH_OUT_STRESS_MIN
         and support is not None
-        and support <= 3
+        and support <= REACH_OUT_SUPPORT_MAX
     ):
         label, prominence, category = _raise_band(
             label, prominence, category,
@@ -217,7 +240,7 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
         label == SOFT_LABEL_OK
         and category == "High"
         and financial is not None
-        and financial >= 8
+        and financial >= FINANCIAL_STRESS_MIN
     ):
         label, prominence, category = _raise_band(
             label, prominence, category,
@@ -232,9 +255,9 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
     if (
         "sleep_deprivation" in stressors
         and sleep is not None
-        and sleep <= 5.0
+        and sleep <= SLEEP_HOURS_MAX
         and stress is not None
-        and stress >= 7
+        and stress >= SLEEP_STRESS_MIN
     ):
         label, prominence, category = _raise_band(
             label, prominence, category,
@@ -389,9 +412,9 @@ def _clamp_risk_category(value: Any, risk_score: float) -> tuple[str, bool]:
 
 
 def _score_to_category(risk_score: float) -> str:
-    if risk_score > 0.75:
+    if risk_score > CATEGORY_HIGH_ABOVE:
         return "High"
-    if risk_score >= 0.40:
+    if risk_score >= CATEGORY_MODERATE_FROM:
         return "Moderate"
     return "Low"
 
@@ -482,36 +505,31 @@ def _raise_band(
 # No defaults: defaults would invent outcomes from incomplete inputs.
 # ---------------------------------------------------------------------------
 
+def _safe_float(value: Any) -> float | None:
+    """Return value as a finite float, or None if it is missing or unusable.
+
+    None, True/False, text that is not a number, NaN and infinity all give None.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
 def _as_unit_interval(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
+    """Return value limited to 0.0-1.0, or None if it is missing or unusable."""
+    number = _safe_float(value)
+    if number is None:
         return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number != number or number == float("inf") or number == float("-inf"):
-        return None
-    if number < 0.0:
-        return 0.0
-    if number > 1.0:
-        return 1.0
-    return number
-
-
-def _optional_float(value: Any) -> float | None:
-    if value is None or isinstance(value, bool):
-        return None
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return None
-    if number != number or number == float("inf") or number == float("-inf"):
-        return None
-    return number
+    return max(0.0, min(1.0, number))
 
 
 def _optional_int(value: Any) -> int | None:
-    number = _optional_float(value)
+    """Return value rounded to a whole number, or None if it is unusable."""
+    number = _safe_float(value)
     if number is None:
         return None
-    return int(round(number))
+    return round(number)
