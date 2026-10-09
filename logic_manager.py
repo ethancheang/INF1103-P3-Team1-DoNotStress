@@ -3,18 +3,39 @@ DoNotStress — Logic Layer (logic_manager)
 
 Post-AI finalizer. Gemini is mandatory for every record.
 
-This module does NOT invent soft_label / tips / speak_prominence from
-student numeric inputs when AI is missing or failed. It only runs on an
-AI-enriched record (after a successful `ai_manager.analyse_student`).
+Logic decides the soft label from the student's answers, following the
+team's evidence brief (donotstress_question_evidence.docx, 9 Oct 2026).
+For evidence-v2 records, survey.py computes the actual four-item PSS score
+and applies the documented project bands. Gemini contributes suggestions
+but cannot replace those bands. If the AI step failed, Logic does not run.
+
+The legacy path below preserves the team's logic for older 1–10 records,
+including AI escalation and bounded tip lists.
 
 Design
 ------
-1. Require AI fields produced by Gemini (see REQUIRED_AI_FIELDS).
+1. Require AI fields produced by Gemini (see REQUIRED_AI_FIELDS) and a
+   usable stress_level.
 2. Clamp present-but-invalid AI values onto I/O allow-lists
    (io_manager SOFT_LABELS / TIPS_ALLOWLIST keys / SPEAK_PROMINENCE).
-3. Apply multi-condition rules that combine AI fields with student
-   numerics. Rules may escalate the outcome; they never de-escalate.
-4. Mark the result `source: "ai_logic"` (never `logic_fallback`).
+3. Decide the label from the evidence brief's heuristic:
+   a. Stress band — stress_level mapped onto the PSS-4 0–16 range:
+      >= 12 "Please reach out", 8–11 "Worth a check-in", <= 7 "You're
+      doing ok".
+   b. Context flags — poor sleep, heavy workload, money worries, low
+      support. Two or more raise the label one level, at most to
+      "Worth a check-in". Flags alone never trigger "Please reach out".
+   c. Safety override — crisis / self-harm language in feelings_text
+      always gives "Please reach out". feelings_text is used for
+      nothing else.
+   d. Gemini's own soft_label may raise the result, never lower it.
+4. Flags pick the tips shown first; Gemini's tips fill the rest.
+5. Mark the result `source: "ai_logic"` (never `logic_fallback`).
+
+The legacy path used single 1–10 questions. Its rescaled scores below are
+approximations and must not be confused with actual PSS-4 totals. The current
+website uses the revised items in survey.py and bypasses legacy thresholds.
+All guidance bands are team heuristics, not clinical cut-offs or a diagnosis.
 
 Pure procedural Python: functions only — no classes.
 No terminal I/O (print / input), no Gemini / network, no file I/O.
@@ -27,6 +48,7 @@ from __future__ import annotations
 
 import math
 import survey
+import re
 from typing import Any
 
 
@@ -106,6 +128,10 @@ ALLOWED_PRIMARY_STRESSORS = frozenset(
     }
 )
 
+# Student answer the stress band is computed from. Without it Logic
+# cannot decide a label, so the record is rejected rather than guessed.
+REQUIRED_STUDENT_FIELDS = ("stress_level",)
+
 # Gemini fields that must already be on the record. Matching ai_manager
 # `_REQUIRED_FIELDS` except recommended_support (pass-through, unused here).
 REQUIRED_AI_FIELDS = (
@@ -125,20 +151,67 @@ ERROR_AI_FIELDS_REQUIRED = "ai_fields_required"
 
 # ---------------------------------------------------------------------------
 # Domain settings - the team's numbers. Change them here and nowhere else.
-# The student scales (stress, financial stress, social support) run 1 to 10.
+# Cut-offs come from the evidence brief (Section 2, "Suggested labelling
+# logic"). They are design heuristics, not clinical cut-offs: pilot them.
+# The student scales (stress, workload, financial stress, support) run 1–10.
 # ---------------------------------------------------------------------------
 
-# Rule 1 - reach out
-REACH_OUT_RISK_ABOVE = 0.75  # the AI's risk_score must be above this
-REACH_OUT_STRESS_MIN = 8  # stress_level at least this
-REACH_OUT_SUPPORT_MAX = 3  # social_support at most this
+ANSWER_MIN = 1
+ANSWER_MAX = 10
 
-# Rule 2 - financial check-in
-FINANCIAL_STRESS_MIN = 8  # financial_stress at least this
+# Stress band. PSS-4 total runs 0–16 (Cohen et al., 1983). stress_level is
+# mapped linearly onto that range: 1 -> 0, 10 -> 16. So stress_level >= 8
+# reaches out, 6–7 checks in, <= 5 is ok.
+PSS4_MAX = 16
+PSS4_REACH_OUT_MIN = 12  # average answer "Fairly Often" or more
+PSS4_CHECK_IN_MIN = 8  # average answer "Sometimes" or more
 
-# Rule 3 - sleep check-in
-SLEEP_HOURS_MAX = 5.0  # sleep_hours at most this
-SLEEP_STRESS_MIN = 7  # stress_level at least this
+# Sleep flag. PSQI duration component >= 2 means under 6 hours
+# (Buysse et al., 1989).
+SLEEP_FLAG_BELOW_HOURS = 6.0
+
+# Workload flag. PAS item on 1–5 agreement; >= 4 is "Agree" or stronger
+# (Bedewy & Gabriel, 2015). academic_workload 1–10 is mapped onto 1–5,
+# so academic_workload >= 8 raises the flag.
+PAS_SCALE_MAX = 5
+PAS_FLAG_MIN = 4
+
+# Financial flag. IFDFW item 8 runs 1 = overwhelming stress to 10 = no
+# stress (Prawitz et al., 2006); <= 4 is "High" to "Overwhelming".
+# financial_stress runs the other way, so it is reversed (11 - x):
+# financial_stress >= 7 raises the flag.
+IFDFW_FLAG_MAX = 4
+
+# Support flag. MSPSS mean on 1–7; below 3 is "low support"
+# (Zimet et al., 1988). social_support 1–10 is mapped onto 1–7,
+# so social_support <= 3 raises the flag.
+MSPSS_SCALE_MAX = 7
+MSPSS_FLAG_BELOW = 3
+
+# Two or more flags raise the label one level, never past check-in.
+FLAGS_TO_RAISE = 2
+
+FLAG_SLEEP = "sleep"
+FLAG_WORKLOAD = "workload"
+FLAG_FINANCE = "finance"
+FLAG_SUPPORT = "support"
+
+# Crisis / self-harm phrases in feelings_text. Deliberately broad: a false
+# alarm only shows support contacts, a miss could leave a student without
+# them. Matched on lower-case text with straight apostrophes.
+_CRISIS_PATTERNS = tuple(re.compile(p) for p in (
+    r"\bsuicid",
+    r"\bkill(?:ing)? my ?self\b(?!-)",
+    r"\bend(?:ing)? (?:my life|it all)\b",
+    r"\btake my (?:own )?life\b",
+    r"\bself[- ]?harm",
+    r"\b(?:hurt(?:ing)?|harm(?:ing)?|cut(?:ting)?) my ?self\b(?!-| some slack)",
+    r"\b(?:(?:want|going) to|wanna) die\b",
+    r"\bbetter off dead\b",
+    r"\b(?:don't|do not|dont) want to (?:live|be alive|be here|exist)\b",
+    r"\bno (?:reason|point) (?:to|in) (?:live|living|go on|going on)\b",
+    r"\b(?:life is )?not worth living\b",
+))
 
 # Used only when the AI's own risk_category cannot be used: score -> category.
 CATEGORY_HIGH_ABOVE = 0.75
@@ -165,10 +238,29 @@ _CATEGORY_TO_PROMINENCE = {
     "Low": "low",
 }
 
-_TIP_SLEEP = "sleep_routine"
-_TIP_MONEY = "money_worries"
+_LABEL_BY_RANK = {rank: label for label, rank in _LABEL_RANK.items()}
+_LABEL_TO_PROMINENCE = {
+    SOFT_LABEL_OK: "low",
+    SOFT_LABEL_CHECK_IN: "medium",
+    SOFT_LABEL_REACH_OUT: "high",
+}
+_LABEL_TO_CATEGORY = {
+    SOFT_LABEL_OK: "Low",
+    SOFT_LABEL_CHECK_IN: "Moderate",
+    SOFT_LABEL_REACH_OUT: "High",
+}
+
 _TIP_TALK = "talk_to_someone"
 _TIP_FEELINGS = "feelings_check_in"
+
+# Flags drive which tips come first (brief: sleep tips, money resources,
+# peer support, time management).
+_FLAG_TIPS = {
+    FLAG_SLEEP: "sleep_routine",
+    FLAG_WORKLOAD: "workload_chunks",
+    FLAG_FINANCE: "money_worries",
+    FLAG_SUPPORT: "keep_social_contact",
+}
 
 
 # ---------------------------------------------------------------------------
@@ -180,102 +272,97 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
     Finalize an AI-enriched student record.
 
     Input MUST be a dict that already contains Gemini's fields
-    (see REQUIRED_AI_FIELDS). Student numerics are used only inside
-    multi-condition rules that also reference AI fields.
+    (see REQUIRED_AI_FIELDS) and a usable stress_level.
 
-    On success, returns a shallow copy with clamped / possibly escalated
-    outcome fields, `ok=True`, `source="ai_logic"`, and `ai_ok=True`.
+    The label comes from the student's answers (stress band, context
+    flags, crisis-language check); Gemini's soft_label can only raise it.
 
-    On missing or unusable AI fields, returns an error result:
+    On success, returns a shallow copy with the final outcome fields,
+    `ok=True`, `source="ai_logic"`, `ai_ok=True`, plus audit fields:
+      stress_score_pss4  stress_level on the PSS-4 0–16 range
+      logic_flags        context flags raised, e.g. ["sleep", "finance"]
+      crisis_language    True if feelings_text matched a crisis phrase
+      logic_rule         step that set the final label
+      logic_rules        every step that applied
+
+    On missing or unusable AI fields or stress_level, returns an error:
       {"ok": False, "error": "ai_fields_required", "missing": [...], ...}
-    and does not invent soft_label / tips / speak_prominence from
-    sleep/stress alone.
 
     Does not mutate the original dict.
     """
     if not isinstance(record, dict):
         return _error_result(
             {},
-            missing=list(REQUIRED_AI_FIELDS),
+            missing=list(REQUIRED_AI_FIELDS + REQUIRED_STUDENT_FIELDS),
             invalid=["record"],
         )
 
     missing, invalid = _ai_field_problems(record)
+    revised = record.get('survey_version') == survey.VERSION
+    student_fields = (tuple(q['key'] for q in survey.QUESTIONS if not q.get('optional'))
+                      if revised else REQUIRED_STUDENT_FIELDS)
+    for key in student_fields:
+        if key not in record:
+            missing.append(key)
+        elif _safe_float(record.get(key)) is None:
+            invalid.append(key)
     if missing or invalid:
         return _error_result(record, missing=missing, invalid=invalid)
 
-    if record.get('survey_version') == survey.VERSION:
+    if revised:
         # New questionnaire uses the documented deterministic rules; old /10
         # thresholds must never be applied to its different response scales.
         return survey.finalise(record)
 
     clamped, clamp_notes = _clamp_ai_fields(record)
-    label = clamped["soft_label"]
-    prominence = clamped["speak_prominence"]
-    category = clamped["risk_category"]
-    tips = list(clamped["tips"])
-    reasoning = clamped["reasoning"]
 
-    applied_rules: list[str] = []
-    sleep = _safe_float(record.get("sleep_hours"))
-    stress = _optional_int(record.get("stress_level"))
-    financial = _optional_int(record.get("financial_stress"))
-    support = _optional_int(record.get("social_support"))
-    stressors = clamped["primary_stressors"]
+    # a. Stress band from the student's own answer.
+    stress_score = _stress_to_pss4(_safe_float(record.get("stress_level")))
+    label = _stress_band_label(stress_score)
+    deciding_rule = "stress_band"
+    applied_rules = ["stress_band"]
 
-    # Rule 1 — force reach-out from AI risk + student stress/support.
-    # risk_score > 0.75 AND stress_level >= 8 AND social_support <= 3
+    # b. Two or more context flags raise one level, never past check-in.
+    flags = _context_flags(record)
     if (
-        clamped["risk_score"] > REACH_OUT_RISK_ABOVE
-        and stress is not None
-        and stress >= REACH_OUT_STRESS_MIN
-        and support is not None
-        and support <= REACH_OUT_SUPPORT_MAX
+        len(flags) >= FLAGS_TO_RAISE
+        and _LABEL_RANK[label] < _LABEL_RANK[SOFT_LABEL_CHECK_IN]
     ):
-        label, prominence, category = _raise_band(
-            label, prominence, category,
-            SOFT_LABEL_REACH_OUT, "high", "High",
-        )
-        tips = _ensure_tips(tips, (_TIP_TALK, _TIP_FEELINGS))
-        applied_rules.append("reach_out_high_ai_stress_low_support")
+        label = _LABEL_BY_RANK[_LABEL_RANK[label] + 1]
+        deciding_rule = "context_flags"
+        applied_rules.append("context_flags")
 
-    # Rule 2 — mild AI label vs High category + financial strain.
-    # soft_label is "You're doing ok" AND risk_category == "High"
-    # AND financial_stress >= 8 → at least "Worth a check-in" / medium
-    if (
-        label == SOFT_LABEL_OK
-        and category == "High"
-        and financial is not None
-        and financial >= FINANCIAL_STRESS_MIN
-    ):
-        label, prominence, category = _raise_band(
-            label, prominence, category,
-            SOFT_LABEL_CHECK_IN, "medium", "High",
-        )
-        tips = _ensure_tips(tips, (_TIP_MONEY,))
-        applied_rules.append("check_in_high_category_financial")
+    # c. Safety override from crisis language in the free text.
+    crisis = _has_crisis_language(record.get("feelings_text"))
+    if crisis:
+        label = SOFT_LABEL_REACH_OUT
+        deciding_rule = "crisis_language"
+        applied_rules.append("crisis_language")
 
-    # Rule 3 — AI sleep_deprivation stressor + student sleep/stress.
-    # "sleep_deprivation" in primary_stressors AND sleep_hours <= 5.0
-    # AND stress_level >= 7 → at least "Worth a check-in" / medium
-    if (
-        "sleep_deprivation" in stressors
-        and sleep is not None
-        and sleep <= SLEEP_HOURS_MAX
-        and stress is not None
-        and stress >= SLEEP_STRESS_MIN
-    ):
-        label, prominence, category = _raise_band(
-            label, prominence, category,
-            SOFT_LABEL_CHECK_IN, "medium", "Moderate",
-        )
-        tips = _ensure_tips(tips, (_TIP_SLEEP,))
-        applied_rules.append("check_in_sleep_deprivation")
+    # d. Gemini may raise the label, never lower it.
+    if _LABEL_RANK[clamped["soft_label"]] > _LABEL_RANK[label]:
+        label = clamped["soft_label"]
+        deciding_rule = "ai_raised"
+        applied_rules.append("ai_raised")
 
-    if applied_rules:
-        reasoning = (
-            f"{reasoning} Logic adjusted: {', '.join(applied_rules)}."
-        )
+    prominence = _higher(
+        _PROMINENCE_RANK, _LABEL_TO_PROMINENCE[label], clamped["speak_prominence"]
+    )
+    category = _higher(
+        _CATEGORY_RANK, _LABEL_TO_CATEGORY[label], clamped["risk_category"]
+    )
+
+    lead_tips: list[str] = []
+    if label == SOFT_LABEL_REACH_OUT:
+        lead_tips += [_TIP_TALK, _TIP_FEELINGS]
+    lead_tips += [_FLAG_TIPS[flag] for flag in flags]
+    tips = _ensure_tips(clamped["tips"], tuple(lead_tips))
+
+    reasoning = (
+        f"{clamped['reasoning']} Logic: stress {stress_score:.1f}/{PSS4_MAX} "
+        f"(PSS-4 range); flags: {', '.join(flags) or 'none'}; "
+        f"label set by {deciding_rule}."
+    )
 
     enriched = dict(record)
     enriched.update({
@@ -286,12 +373,15 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
         "speak_prominence": prominence,
         "risk_score": clamped["risk_score"],
         "risk_category": category,
-        "primary_stressors": stressors,
+        "primary_stressors": clamped["primary_stressors"],
         "reasoning": reasoning,
         "confidence": clamped["confidence"],
         "source": LOGIC_SOURCE,
         "ai_ok": True,
-        "logic_rule": applied_rules[0] if applied_rules else "ai_clamped",
+        "stress_score_pss4": round(stress_score, 2),
+        "logic_flags": flags,
+        "crisis_language": crisis,
+        "logic_rule": deciding_rule,
         "logic_rules": applied_rules,
         "logic_clamp_notes": clamp_notes,
     })
@@ -323,8 +413,8 @@ def _error_result(
     result["missing"] = list(missing)
     result["invalid"] = list(invalid)
     result["message"] = (
-        "Logic requires a successful Gemini (AI-enriched) record; "
-        "it does not invent soft outcomes from student inputs alone."
+        "Logic requires a successful Gemini (AI-enriched) record with a "
+        "usable stress_level; it does not guess outcomes without them."
     )
     return result
 
@@ -458,6 +548,9 @@ def _clamp_tips(value: Any) -> tuple[list[str], bool]:
                 cleaned.append(tip_id)
         else:
             dropped = True
+    if len(cleaned) > _MAX_TIPS:
+        cleaned = cleaned[:_MAX_TIPS]
+        dropped = True
     return cleaned, dropped
 
 
@@ -488,22 +581,71 @@ def _ensure_tips(tips: list[str], extra: tuple[str, ...]) -> list[str]:
     return ordered[:_MAX_TIPS]
 
 
-def _raise_band(
-    label: str,
-    prominence: str,
-    category: str,
-    target_label: str,
-    target_prominence: str,
-    target_category: str,
-) -> tuple[str, str, str]:
-    """Escalate only — never lower AI's already-higher band."""
-    if _LABEL_RANK.get(target_label, 0) > _LABEL_RANK.get(label, 0):
-        label = target_label
-    if _PROMINENCE_RANK.get(target_prominence, 0) > _PROMINENCE_RANK.get(prominence, 0):
-        prominence = target_prominence
-    if _CATEGORY_RANK.get(target_category, 0) > _CATEGORY_RANK.get(category, 0):
-        category = target_category
-    return label, prominence, category
+def _higher(rank: dict[str, int], first: str, second: str) -> str:
+    """Return whichever of two band values ranks higher (first on a tie)."""
+    return second if rank.get(second, 0) > rank.get(first, 0) else first
+
+
+# ---------------------------------------------------------------------------
+# Scoring — the evidence brief's heuristic on the current 1–10 answers
+# ---------------------------------------------------------------------------
+
+def _answer(value: Any) -> float | None:
+    """Return a 1–10 answer clamped into range, or None if unusable."""
+    number = _safe_float(value)
+    if number is None:
+        return None
+    return max(float(ANSWER_MIN), min(float(ANSWER_MAX), number))
+
+
+def _rescale(answer: float, low: float, high: float) -> float:
+    """Map a 1–10 answer linearly onto low..high (1 -> low, 10 -> high)."""
+    fraction = (answer - ANSWER_MIN) / (ANSWER_MAX - ANSWER_MIN)
+    return low + fraction * (high - low)
+
+
+def _stress_to_pss4(stress_level: float) -> float:
+    """stress_level 1–10 on the PSS-4 0–16 range (higher = more stress)."""
+    return _rescale(_answer(stress_level), 0, PSS4_MAX)
+
+
+def _stress_band_label(pss4_score: float) -> str:
+    if pss4_score >= PSS4_REACH_OUT_MIN:
+        return SOFT_LABEL_REACH_OUT
+    if pss4_score >= PSS4_CHECK_IN_MIN:
+        return SOFT_LABEL_CHECK_IN
+    return SOFT_LABEL_OK
+
+
+def _context_flags(record: dict[str, Any]) -> list[str]:
+    """Return raised flags in a fixed order. Missing answers raise nothing."""
+    flags: list[str] = []
+
+    sleep = _safe_float(record.get("sleep_hours"))
+    if sleep is not None and sleep < SLEEP_FLAG_BELOW_HOURS:
+        flags.append(FLAG_SLEEP)
+
+    workload = _answer(record.get("academic_workload"))
+    if workload is not None and _rescale(workload, 1, PAS_SCALE_MAX) >= PAS_FLAG_MIN:
+        flags.append(FLAG_WORKLOAD)
+
+    financial = _answer(record.get("financial_stress"))
+    if financial is not None and (ANSWER_MAX + ANSWER_MIN - financial) <= IFDFW_FLAG_MAX:
+        flags.append(FLAG_FINANCE)
+
+    support = _answer(record.get("social_support"))
+    if support is not None and _rescale(support, 1, MSPSS_SCALE_MAX) < MSPSS_FLAG_BELOW:
+        flags.append(FLAG_SUPPORT)
+
+    return flags
+
+
+def _has_crisis_language(text: Any) -> bool:
+    if not isinstance(text, str) or not text.strip():
+        return False
+    normalized = text.lower().replace("’", "'").replace("‘", "'")
+    normalized = " ".join(normalized.split())
+    return any(pattern.search(normalized) for pattern in _CRISIS_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -531,11 +673,3 @@ def _as_unit_interval(value: Any) -> float | None:
     if number is None:
         return None
     return max(0.0, min(1.0, number))
-
-
-def _optional_int(value: Any) -> int | None:
-    """Return value rounded to a whole number, or None if it is unusable."""
-    number = _safe_float(value)
-    if number is None:
-        return None
-    return round(number)
