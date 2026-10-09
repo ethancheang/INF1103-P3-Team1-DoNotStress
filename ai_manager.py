@@ -107,6 +107,13 @@ _REQUIRED_FIELDS = (
 )
 
 _DEFAULT_MODEL = "gemini-3.6-flash"
+# Tried in order when the preferred model returns HTTP 503 (high demand).
+# These answered successfully with the same API key while 3.6-flash was busy.
+_FALLBACK_MODELS = (
+    "gemini-flash-latest",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+)
 _DEFAULT_TEMPERATURE = 0.2
 _DEFAULT_MAX_ATTEMPTS = 3
 _DEFAULT_RETRY_DELAY_SEC = 0.5
@@ -290,6 +297,24 @@ def _is_retryable_api_error(exc: BaseException) -> bool:
     if classify_ai_error(exc) == ERROR_CODE_TIMEOUT:
         return True
     return _is_rate_limited(exc)
+
+
+def _is_model_overloaded(exc: BaseException) -> bool:
+    """True when Gemini accepted the key but the model returned HTTP 503."""
+    if _exception_status_code(exc) == 503:
+        return True
+    text = str(exc).lower()
+    return "503" in text and ("unavailable" in text or "high demand" in text)
+
+
+def _models_for_call(model_name: str) -> tuple[str, ...]:
+    """Preferred model first, then overload fallbacks, with duplicates removed."""
+    primary = (model_name or _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
+    ordered = [primary]
+    for name in _FALLBACK_MODELS:
+        if name not in ordered:
+            ordered.append(name)
+    return tuple(ordered)
 
 
 def require_gemini_api_key() -> str:
@@ -558,8 +583,10 @@ def call_gemini(
     Call Gemini with structured JSON output, validate schema, retry on failure.
 
     Timeouts and HTTP 429 are retried up to max_attempts with exponential
-    backoff (base retry_delay_sec, then double). Other API errors are not
-    retried. A schema miss is retried so one bad JSON payload can recover.
+    backoff (base retry_delay_sec, then double). HTTP 503 (model overloaded)
+    switches to the next fallback model instead of retrying the same one.
+    Other API errors are not retried. A schema miss is retried so one bad
+    JSON payload can recover.
 
     Returns (ok, validated_ai_dict_or_None, error_or_None).
     On failure, error is {"error_code", "detail", "source": "gemini"}.
@@ -581,44 +608,61 @@ def call_gemini(
     last_kind = ERROR_CODE_UNAVAILABLE
     last_was_api_exception = False
     attempts = max(1, int(max_attempts))
+    models = _models_for_call(model_name)
+    finished_attempt = 1
 
-    for attempt in range(1, attempts + 1):
-        try:
-            raw_text = generator(prompt, key, model_name)
-        except Exception as exc:  # noqa: BLE001 — must not crash pipeline
-            last_was_api_exception = True
-            last_kind = classify_ai_error(exc)
-            safe_exc = _redact_secret(str(exc), key)
+    for model_index, active_model in enumerate(models):
+        switch_model = False
+        for attempt in range(1, attempts + 1):
+            finished_attempt = attempt
+            try:
+                raw_text = generator(prompt, key, active_model)
+            except Exception as exc:  # noqa: BLE001 — must not crash pipeline
+                last_was_api_exception = True
+                last_kind = classify_ai_error(exc)
+                safe_exc = _redact_secret(str(exc), key)
+                last_detail = (
+                    f"Gemini API failure (attempt {attempt}/{attempts}) "
+                    f"model={active_model}: {safe_exc}"
+                )
+                logger.warning(last_detail)
+                if _is_model_overloaded(exc) and model_index < len(models) - 1:
+                    logger.warning(
+                        "Model %s is overloaded; trying %s",
+                        active_model,
+                        models[model_index + 1],
+                    )
+                    switch_model = True
+                    break
+                if attempt < attempts and _is_retryable_api_error(exc):
+                    time.sleep(_backoff_seconds(attempt, retry_delay_sec))
+                    continue
+                break
+
+            ok, result = validate_ai_response(raw_text)
+            if ok:
+                return True, _mark_gemini_success(result), None
+
+            last_was_api_exception = False
+            last_kind = ERROR_CODE_INVALID_RESPONSE
             last_detail = (
-                f"Gemini API failure (attempt {attempt}/{attempts}) "
-                f"model={model_name}: {safe_exc}"
+                f"Schema validation failed (attempt {attempt}/{attempts}) "
+                f"model={active_model}: {result}"
             )
             logger.warning(last_detail)
-            if attempt < attempts and _is_retryable_api_error(exc):
+            if attempt < attempts:
                 time.sleep(_backoff_seconds(attempt, retry_delay_sec))
                 continue
             break
 
-        ok, result = validate_ai_response(raw_text)
-        if ok:
-            return True, _mark_gemini_success(result), None
-
-        last_was_api_exception = False
-        last_kind = ERROR_CODE_INVALID_RESPONSE
-        last_detail = (
-            f"Schema validation failed (attempt {attempt}/{attempts}) "
-            f"model={model_name}: {result}"
-        )
-        logger.warning(last_detail)
-        if attempt < attempts:
-            time.sleep(_backoff_seconds(attempt, retry_delay_sec))
+        if switch_model:
             continue
         break
 
     return False, None, _final_ai_error(
         last_kind,
         last_detail,
-        attempts=attempt,
+        attempts=finished_attempt,
         last_was_api_exception=last_was_api_exception,
     )
 
