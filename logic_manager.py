@@ -452,6 +452,9 @@ def _clamp_tips(value: Any) -> tuple[list[str], bool]:
                 cleaned.append(tip_id)
         else:
             dropped = True
+    if len(cleaned) > _MAX_TIPS:
+        cleaned = cleaned[:_MAX_TIPS]
+        dropped = True
     return cleaned, dropped
 
 

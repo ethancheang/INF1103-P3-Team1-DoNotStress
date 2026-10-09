@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -35,15 +36,40 @@ def _enriched(**overrides):
     return record
 
 
-# ---------------------------------------------------------------------------
-# Safe handling of the caller's data
-# ---------------------------------------------------------------------------
+class LogicOutcomeTests(unittest.TestCase):
 
-def test_huge_numbers_are_handled_without_a_crash():
-    bad_score = lm.apply_logic(_enriched(risk_score=10 ** 400))
-    assert bad_score["ok"] is False
-    assert "risk_score" in bad_score["invalid"]
+    # -----------------------------------------------------------------------
+    # Safe handling of the caller's data
+    # -----------------------------------------------------------------------
 
-    huge_stress = lm.apply_logic(_enriched(stress_level=10 ** 400))
-    assert huge_stress["ok"] is True
-    assert huge_stress["logic_rule"] == "ai_clamped"
+    def test_huge_numbers_are_handled_without_a_crash(self):
+        bad_score = lm.apply_logic(_enriched(risk_score=10 ** 400))
+        self.assertIs(bad_score["ok"], False)
+        self.assertIn("risk_score", bad_score["invalid"])
+
+        huge_stress = lm.apply_logic(_enriched(stress_level=10 ** 400))
+        self.assertIs(huge_stress["ok"], True)
+        self.assertEqual(huge_stress["logic_rule"], "ai_clamped")
+
+    # -----------------------------------------------------------------------
+    # Tip list size
+    # -----------------------------------------------------------------------
+
+    def test_tips_are_capped_even_when_no_rule_fires(self):
+        result = lm.apply_logic(_enriched(tips=list(lm.TIPS_ALLOWLIST)))
+        self.assertEqual(result["logic_rules"], [])
+        self.assertEqual(len(result["tips"]), lm._MAX_TIPS)
+        self.assertIn("tips", result["logic_clamp_notes"])
+
+    def test_tips_are_capped_when_a_rule_adds_tips(self):
+        result = lm.apply_logic(_enriched(
+            risk_score=0.9, stress_level=9, social_support=1,
+            tips=list(lm.TIPS_ALLOWLIST),
+        ))
+        self.assertEqual(result["soft_label"], lm.SOFT_LABEL_REACH_OUT)
+        self.assertEqual(len(result["tips"]), lm._MAX_TIPS)
+        self.assertEqual(result["tips"][:2], ["talk_to_someone", "feelings_check_in"])
+
+
+if __name__ == "__main__":
+    unittest.main()
