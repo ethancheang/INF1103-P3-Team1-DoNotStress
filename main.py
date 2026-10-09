@@ -12,7 +12,7 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 import ai_manager
 import data_manager
 import io_manager
-import Logic_manager as logic_manager
+import logic_manager
 
 load_dotenv()
 logger = logging.getLogger(__name__)

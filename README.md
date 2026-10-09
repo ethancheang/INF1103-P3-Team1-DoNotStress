@@ -41,7 +41,7 @@ The previous submission-rate, CCA-count, absence-count, and yes/no financial-str
 
 ## Flow and storage
 
-`main.py` validates with `io_manager`, runs `ai_manager.analyse_student`, then `Logic_manager.apply_logic`. Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
+`main.py` validates with `io_manager`, runs `ai_manager.analyse_student`, then `logic_manager.apply_logic`. Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
 
 The browser explains that answers are sent to Gemini before submission. Results are temporarily held in server memory for up to 30 minutes; expired entries are removed on the next request. Session cookies contain only opaque identifiers and a CSRF token, not answers. Restarting the server or starting fresh clears access to unsaved results. The garden is a session-level completion reward, not persistent account history.
 
@@ -52,7 +52,7 @@ This is a single-process local app. A production deployment needs a shared serve
 ## Files
 
 - `main.py`: combined Flask entry point and orchestration.
-- `io_manager.py`, `ai_manager.py`, `Logic_manager.py`, `data_manager.py`: existing team layers.
+- `io_manager.py`, `ai_manager.py`, `logic_manager.py`, `data_manager.py`: existing team layers.
 - `templates/base.html`, `templates/checkin.html`: page shell.
 - `static/style.css`, `static/campus.js`: campus UI, sliders, review, results, garden, and opt-in saving.
 - Legacy result/error templates remain available; the current interface renders these states in the shared campus UI.
