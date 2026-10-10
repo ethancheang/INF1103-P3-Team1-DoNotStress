@@ -53,7 +53,7 @@ Eleven required questions, plus optional reflection. ID is not scored. Each ques
 - A basic local crisis-language check highlights “Please reach out” and support contacts without changing the stress score. It can miss language or produce false positives; it is not a safety assessment and no person monitors reflections.
 - `risk_score` is retained for backend compatibility as `(stress_score - 1) / 4`, NOT a probability. AI cannot replace the computed band. Tips combine relevant context suggestions with validated AI tip IDs.
 
-Sleep items are adapted; PAS and MSPSS are selected items, not complete scales. The combined questionnaire and its guidance bands have not been clinically validated. Each result explains its factors and the project rules.
+Sleep items are adapted; PAS and MSPSS are selected items, not complete scales. The combined questionnaire and its guidance bands have not been clinically validated. Factor cards describe rest, study, money, and support. The average score is stored for the admin table.
 
 ### Sources and permissions
 
@@ -73,9 +73,9 @@ Support contacts are always available, including without an AI result, in the pa
 
 `main.py` validates with `io_manager`, runs `ai_manager.analyse_student`, then `logic_manager.apply_logic`. Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
 
-Before submission, the review step says that answers are used to share a few suggestions, while the student ID and personal reflection stay private. The server checks reflection text then discards it; only the boolean safety flag remains in a result. Numeric answers are sent for suggestions; the ID and reflection are not. Request bodies must not be logged by a deployment proxy. Results are temporarily held in server memory for up to 30 minutes; expired entries are removed on the next request. Session cookies contain only opaque identifiers and a CSRF token, not answers. Restarting the server or starting fresh clears access to unsaved results. The garden is a session-level completion reward, not persistent account history.
+Before submission, the review step says that answers are used to share a few suggestions, while the student ID stays private and anything written in the reflection box is not stored. The server checks reflection text then discards it; only the boolean safety flag remains in a result. Numeric answers are sent for suggestions; the ID and reflection are not. Request bodies must not be logged by a deployment proxy. After a successful check-in the result is shown at `/result`. Session cookies contain only opaque identifiers and a CSRF token, not answers. The in-memory result expires after 30 minutes; the saved file is separate. `/garden` redirects to the home page.
 
-Saving is optional and requires the checkbox. `/save` calls `data_manager.save_record` only for an AI-processed result with explicit consent. The default file is `data/student_records.json`. Repeating Save for the same pending result does not create another copy.
+Every completed check-in is saved automatically to `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) through `data_manager`. Reflection text is never stored. A finished AI result is written with `save_record`. If Gemini cannot complete the check-in, the answers are still saved as a pending record and the student is asked to try again; no result page is shown. Refreshing `/result` does not write a second copy.
 
 This is a single-process local app. A production deployment needs a shared server-side session/record store, authentication and access controls appropriate to student records, and a production server.
 
@@ -84,7 +84,7 @@ This is a single-process local app. A production deployment needs a shared serve
 - `main.py`: combined Flask entry point and orchestration.
 - `io_manager.py`, `ai_manager.py`, `logic_manager.py`, `data_manager.py`: existing team layers.
 - `templates/base.html`, `templates/checkin.html`: page shell.
-- `static/style.css`, `static/campus.js`: campus UI, sliders, review, results, garden, and opt-in saving.
+- `static/style.css`, `static/campus.js`: campus UI, sliders, review, and results.
 - Legacy result/error templates remain available; the current interface renders these states in the shared campus UI.
 
 ## Tests
@@ -97,7 +97,7 @@ Tests inject a simulated Gemini response but run the real schema validator, Logi
 
 ## Saved check-ins and detailed results
 
-The default is **Student view**. Students can complete a check-in, view their own current result and opt in to saving. They cannot open the saved-records table or fetch its data.
+The default is **Student view**. Students can complete a check-in and view their own current result at `/result`. Every completed check-in is saved automatically. They cannot open the saved-records table or fetch its data.
 
 Use **Admin sign in** (or `/admin/login`) with the fixed coursework account:
 
@@ -106,10 +106,10 @@ Use **Admin sign in** (or `/admin/login`) with the fixed coursework account:
 
 The credential check runs on the server; `main.py` contains a password hash. Credentials are not embedded in the login page, JavaScript or browser configuration. This shared, documented demo account is for the local prototype, not public deployment with real student records.
 
-Successful sign-in opens **Saved records**. The header is rendered from the server session on every page. While that session is valid, Home, Check-in and My garden still show **Admin view** (the records route) and **Log out**. `/records` redirects unauthenticated users to sign-in, and `/api/records` returns 401 before loading any records. Admin access expires after 30 minutes. **Log out** revokes the server-side admin token, clears the current browser session, and returns to Student view. Restarting the app revokes admin sessions. Five failed sign-in attempts within five minutes temporarily block further attempts from that address.
+Successful sign-in opens **Saved records** at `/records`. The header is rendered from the server session on every page. While that session is valid, Home and Check-in still show **Admin view** and **Log out**. `/records` is admin-only and redirects unauthenticated users to sign-in, and `/api/records` returns 401 before loading any records. Admin access expires after 30 minutes. **Log out** revokes the server-side admin token, clears the current browser session, and returns to Student view. Restarting the app revokes admin sessions. Five failed sign-in attempts within five minutes temporarily block further attempts from that address.
 
-Admins can search any part of a Student ID and combine a tier filter (You're doing ok, Worth a check-in, Please reach out) with the cohort-year filter. Clear Filters restores the full list. Cohort year uses the first two ID digits (26 means 2026); dates display in Singapore time. Only records saved through opt-in are shown; unsaved results stay out of the table. Load errors are distinguished from an empty result. The history endpoint omits free-text concerns and AI reasoning.
+Admins can search any part of a Student ID and combine a tier filter (You're doing ok, Worth a check-in, Please reach out) with the cohort-year filter. Clear Filters restores the full list. Cohort year uses the first two ID digits (26 means 2026); dates display in Singapore time. Saved check-ins are shown, including pending records from a check-in Gemini could not finish. Load errors are distinguished from an empty result. The history endpoint omits free-text concerns and AI reasoning.
 
-The table shows the current check-in only: Student ID, stress score out of 5, tier (with the same green, amber and red colours), sleep in hours, sleep quality, workload, catch-up, finances, friends, family, status (Evaluated, or Pending when a record is marked pending), and date saved. Answers appear as `number · label`. Records whose `survey_version` is not `evidence-v3` are skipped, including older /10 and evidence-v2 saves. Before a demo, delete `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) so the table starts empty. Do not commit that file.
+The table shows Student ID, stress score out of 5, tier (with the same green, amber and red colours), then all 11 answers as numbers only: Control (pss_1), Coping (pss_2), Going well (pss_3), Piling up (pss_4), sleep in hours, sleep quality, workload, catch-up, finances, friends, family, then status (Evaluated, or Pending when AI could not finish) and date saved. Hovering an answer shows the word label, for example `3 · Sometimes`. A key above the table reads "Answers: 1 = lowest, 5 = highest · Sleep in hours". Records whose `survey_version` is not `evidence-v3` are skipped, including older /10 and evidence-v2 saves. Before a demo, delete `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) so the table starts empty. Do not commit that file.
 
-Results include the 1–5 average stress score, an explanation of the guidance band, and four factor cards. Colours accompany the tier names. New records carry `survey_version: evidence-v3`.
+Student results at `/result` show a short wellbeing message, four factor cards, and a few suggestions. A factor shows "Worth some attention" only when it is flagged. The raw stress score stays in the admin table, not on the student page. Colours accompany the tier names. New records carry `survey_version: evidence-v3`.

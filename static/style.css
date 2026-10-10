@@ -95,8 +95,6 @@
 #dns-campus .ds-contacts li{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px;min-width:0}
 #dns-campus .ds-contact-label{font-size:12px;color:var(--ds-sub)}
 #dns-campus .ds-contacts a{min-width:0}
-#dns-campus .ds-garden{text-align:center;max-width:610px;margin:15px auto}
-#dns-campus .ds-garden .ds-art{max-width:330px;margin:25px auto}
 #dns-campus [hidden]{display:none!important}
 
 @media(max-width:700px){#dns-campus .ds-top{padding:20px;gap:15px;flex-wrap:wrap}
