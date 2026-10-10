@@ -34,10 +34,10 @@ The questionnaire follows section 2 of `donotstress_question_evidence.docx` (9 O
 `survey.py` owns question wording, options, chapter explanations and deterministic scoring.
 The browser receives the same definitions from Flask. Required answers start unselected, except the sleep slider, which starts at 7 hours and uses that position as the answer.
 
-1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items under one stem, "In the past month, how often have you felt…". Each item is 1 (never) to 5 (very often). Items 2 and 3 are reverse-scored.
+1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items as full sentences, each beginning "In the past month, how often have you felt…". The chapter title is "Start with the bigger picture." Each item is 1 (never) to 5 (very often). Items 2 and 3 are reverse-scored.
 2. **Rest and recovery:** typical sleep this week is a 0–14 hour slider in 0.5 steps. Scoring converts hours to 1–5 stress: 8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5. Sleep quality is 1 (very good) to 5 (very bad).
 3. **Study demands:** workload and catch-up items, both required, 1 (strongly disagree) to 5 (strongly agree). Direction is adapted.
-4. **Money pressures:** IFDFW item 8 adapted to a 1–5 slider, 1 (no stress at all) to 5 (overwhelming stress). Higher means MORE distress.
+4. **Money pressures:** IFDFW item 8 adapted to a 1–5 slider, 1 (no stress at all) to 5 (overwhelming stress). Higher means MORE distress. The displayed position is the answer; there is no separate confirm button. The hint reads "Higher numbers mean more financial stress."
 5. **Your support:** MSPSS friends and family items, both required, 1 (strongly disagree) to 5 (strongly agree). Reverse-scored in the stress score.
 6. **Reflection:** optional text, up to 2,000 characters; not scored, sent to Gemini, or saved.
 
@@ -57,21 +57,23 @@ Sleep items are adapted; PAS and MSPSS are selected items, not complete scales. 
 
 ### Sources and permissions
 
-- PSS-4: Cohen, Kamarck & Mermelstein (1983), https://doi.org/10.2307/2136404. Reverse coding verified at https://www.cmu.edu/dietrich/psychology/stress-immunity-disease-lab/scales/html/pssscoring.html.
-- Sleep: adapted from PSQI, Buysse et al. (1989), https://doi.org/10.1016/0165-1781(89)90047-4; recall shortened to one week. This is not a PSQI score.
-- PAS: Bedewy & Gabriel (2015), https://doi.org/10.1177/2055102915596714, CC BY-NC 3.0; response direction adapted to increasing agreement.
-- IFDFW: Prawitz et al. (2006), https://www.afcpe.org/wp-content/uploads/2018/10/vol1714.pdf.
-- MSPSS: Zimet et al. (1988), https://doi.org/10.1207/s15327752jpa5201_2.
+Questionnaire pages do not show a source line. The home page has a short "Backed by research" note and this compact line: Sources: Cohen et al. (1983); Buysse et al. (1989); Bedewy & Gabriel (2015); Prawitz et al. (2006); Zimet et al. (1988). Full citations:
+
+- Cohen, S., Kamarck, T., & Mermelstein, R. (1983). A global measure of perceived stress. *Journal of Health and Social Behavior, 24*(4), 385–396. https://doi.org/10.2307/2136404. PSS-4 items, adapted to a 1–5 scale. Items 2 and 3 are reverse-scored. Reverse coding checked at https://www.cmu.edu/dietrich/psychology/stress-immunity-disease-lab/scales/html/pssscoring.html.
+- Buysse, D. J., Reynolds, C. F., Monk, T. H., Berman, S. R., & Kupfer, D. J. (1989). The Pittsburgh Sleep Quality Index: A new instrument for psychiatric practice and research. *Psychiatry Research, 28*(2), 193–213. https://doi.org/10.1016/0165-1781(89)90047-4. Two sleep items only; recall shortened to one week. This is not a PSQI score.
+- Bedewy, D., & Gabriel, A. (2015). Examining perceptions of academic stress and its sources among university students: The Perception of Academic Stress Scale. *Health Psychology Open, 2*(2). https://doi.org/10.1177/2055102915596714. CC BY-NC 3.0. Selected items; response direction adapted to increasing agreement.
+- Prawitz, A. D., Garman, E. T., Sorhaindo, B., O'Neill, B., Kim, J., & Drentea, P. (2006). InCharge Financial Distress/Financial Well-Being Scale: Development, administration, and score interpretation. *Financial Counseling and Planning, 17*(1), 34–50. https://www.afcpe.org/wp-content/uploads/2018/10/vol1714.pdf. Item 8, adapted to a 1–5 slider.
+- Zimet, G. D., Dahlem, N. W., Zimet, S. G., & Farley, G. K. (1988). The Multidimensional Scale of Perceived Social Support. *Journal of Personality Assessment, 52*(1), 30–41. https://doi.org/10.1207/s15327752jpa5201_2. Friends and family items only, adapted to five points and reverse-scored in the stress score. Not an MSPSS total.
 
 The supplied brief identifies permissions to resolve before distribution: PSS permission through Mapi/ePROVIDE and the copyrighted IFDFW wording. PSQI educational/research use is non-commercial; adaptations and commercial use need appropriate review. Attribution does not itself grant permission. No permission request has been sent by this implementation.
 
-Support contacts are always available, including without an AI result: SIT Counselling, SOS **1767**, national mindline **1771**. The latter two are 24-hour services, verified 9 October 2026 at https://www.sos.org.sg/contact-us/ and https://www.moh.gov.sg/newsroom/national-mindline-1771-to-provide--round-the-clock-support-for-mental-health/.
+Support contacts are always available, including without an AI result, in the page footer and in the check-in support panels: SIT Counselling 24-hour helpline **6592 2030** (SITCounselling@SingaporeTech.edu.sg), Samaritans of Singapore **1767** and CareText **9151 1767** (WhatsApp), and national mindline **1771**. SOS and mindline are 24-hour services, verified 9 October 2026 at https://www.sos.org.sg/contact-us/ and https://www.moh.gov.sg/newsroom/national-mindline-1771-to-provide--round-the-clock-support-for-mental-health/.
 
 ## Flow and storage
 
 `main.py` validates with `io_manager`, runs `ai_manager.analyse_student`, then `logic_manager.apply_logic`. Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
 
-The browser explains that numeric questionnaire answers and computed context are sent to Gemini before submission. Student ID and reflection are excluded. The server checks reflection text then discards it; only the boolean safety flag remains in a result. Request bodies must not be logged by a deployment proxy. Results are temporarily held in server memory for up to 30 minutes; expired entries are removed on the next request. Session cookies contain only opaque identifiers and a CSRF token, not answers. Restarting the server or starting fresh clears access to unsaved results. The garden is a session-level completion reward, not persistent account history.
+Before submission, the review step says that answers are used to share a few suggestions, while the student ID and personal reflection stay private. The server checks reflection text then discards it; only the boolean safety flag remains in a result. Numeric answers are sent for suggestions; the ID and reflection are not. Request bodies must not be logged by a deployment proxy. Results are temporarily held in server memory for up to 30 minutes; expired entries are removed on the next request. Session cookies contain only opaque identifiers and a CSRF token, not answers. Restarting the server or starting fresh clears access to unsaved results. The garden is a session-level completion reward, not persistent account history.
 
 Saving is optional and requires the checkbox. `/save` calls `data_manager.save_record` only for an AI-processed result with explicit consent. The default file is `data/student_records.json`. Repeating Save for the same pending result does not create another copy.
 
@@ -104,8 +106,10 @@ Use **Admin sign in** (or `/admin/login`) with the fixed coursework account:
 
 The credential check runs on the server; `main.py` contains a password hash. Credentials are not embedded in the login page, JavaScript or browser configuration. This shared, documented demo account is for the local prototype, not public deployment with real student records.
 
-Successful sign-in opens **Saved records**. `/records` redirects unauthenticated users to sign-in, and `/api/records` returns 401 before loading any records. Admin access expires after 30 minutes. **Log out** revokes the server-side admin token, clears the current browser session, and returns to Student view. Restarting the app revokes admin sessions. Five failed sign-in attempts within five minutes temporarily block further attempts from that address.
+Successful sign-in opens **Saved records**. The header is rendered from the server session on every page. While that session is valid, Home, Check-in and My garden still show **Admin view** (the records route) and **Log out**. `/records` redirects unauthenticated users to sign-in, and `/api/records` returns 401 before loading any records. Admin access expires after 30 minutes. **Log out** revokes the server-side admin token, clears the current browser session, and returns to Student view. Restarting the app revokes admin sessions. Five failed sign-in attempts within five minutes temporarily block further attempts from that address.
 
-Admins can search any part of a Student ID and combine the Low/Moderate/High risk and cohort-year filters. Clear Filters restores the full list. Cohort year uses the first two ID digits (26 means 2026); dates display in Singapore time. Only records saved through opt-in are shown; unsaved results stay out of the table. Load errors are distinguished from an empty result. The history endpoint omits free-text concerns and AI reasoning.
+Admins can search any part of a Student ID and combine a tier filter (You're doing ok, Worth a check-in, Please reach out) with the cohort-year filter. Clear Filters restores the full list. Cohort year uses the first two ID digits (26 means 2026); dates display in Singapore time. Only records saved through opt-in are shown; unsaved results stay out of the table. Load errors are distinguished from an empty result. The history endpoint omits free-text concerns and AI reasoning.
 
-Results include the 1–5 average stress score, an explanation of the computed guidance band, and four factor cards. Colours accompany Low/Moderate/High text. New records carry `survey_version: evidence-v3`; legacy /10 and evidence-v2 records remain unchanged and are labelled with their own version. They are not converted or directly comparable with the 1–5 questionnaire.
+The table shows the current check-in only: Student ID, stress score out of 5, tier (with the same green, amber and red colours), sleep in hours, sleep quality, workload, catch-up, finances, friends, family, status (Evaluated, or Pending when a record is marked pending), and date saved. Answers appear as `number · label`. Records whose `survey_version` is not `evidence-v3` are skipped, including older /10 and evidence-v2 saves. Before a demo, delete `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) so the table starts empty. Do not commit that file.
+
+Results include the 1–5 average stress score, an explanation of the guidance band, and four factor cards. Colours accompany the tier names. New records carry `survey_version: evidence-v3`.

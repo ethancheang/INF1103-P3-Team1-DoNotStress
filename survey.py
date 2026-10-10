@@ -22,22 +22,17 @@ SUPPORT_OPTIONS = AGREE_OPTIONS
 FIN_OPTIONS = ["No stress at all", "A little stress", "Moderate stress", "High stress", "Overwhelming stress"]
 CHECK_IN_FROM = 2.5    # average 2.5 to 3.5 (inclusive) -> 'Worth a check-in'
 REACH_OUT_ABOVE = 3.5  # average above 3.5 -> 'Please reach out'
-PSS_STEM = 'In the past month, how often have you felt'
 SUPPORT_KEYS = ('mspss_friends', 'mspss_family')
 
 def question(key, label, prompt, minimum, maximum, options=None, **extra):
     return dict(key=key, label=label, prompt=prompt, min=minimum, max=maximum,
                 step=extra.pop('step', 1), options=options, **extra)
 
-def pss_question(key, label, ending, **extra):
-    """Card shows the ending; prompt keeps the shared stem plus that ending."""
-    return question(key, label, f'{PSS_STEM} {ending}', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, card=f'…{ending}', **extra)
-
 QUESTIONS = [
-    pss_question('pss_1', 'Losing control', "you couldn't control the important things in your life?"),
-    pss_question('pss_2', 'Handling personal problems', 'confident handling your personal problems?', reverse=True),
-    pss_question('pss_3', 'Things going your way', 'things were going well for you?', reverse=True),
-    pss_question('pss_4', 'Difficulties piling up', 'problems were piling up too much to handle?'),
+    question('pss_1', 'Losing control', "In the past month, how often have you felt you couldn't control the important things in your life?", SCALE_MIN, SCALE_MAX, PSS_OPTIONS),
+    question('pss_2', 'Handling personal problems', 'In the past month, how often have you felt confident handling your personal problems?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, reverse=True),
+    question('pss_3', 'Things going your way', 'In the past month, how often have you felt things were going well for you?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, reverse=True),
+    question('pss_4', 'Difficulties piling up', 'In the past month, how often have you felt problems were piling up too much to handle?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS),
     question('sleep_hours_avg', 'Typical sleep · past week', 'On average, how many hours of sleep have you gotten each night this week?', 0, 14, step=0.5, kind='slider', default=7, low='0 hours', high='14 hours', unit='hours'),
     question('sleep_quality', 'Sleep quality · past week', 'During the past week, how would you rate your sleep quality overall?', SCALE_MIN, SCALE_MAX, SLEEP_OPTIONS),
     question('pas_workload', 'Study workload', 'I feel my coursework is too much to handle.', SCALE_MIN, SCALE_MAX, PAS_OPTIONS),
@@ -50,30 +45,30 @@ QUESTION_MAP = {q['key']: q for q in QUESTIONS}
 # Positively worded items: a high answer means LESS stress, so they are scored as 6 - answer.
 REVERSED_KEYS = tuple(q['key'] for q in QUESTIONS if q.get('reverse'))
 SECTIONS = [
-    dict(title='Your month', heading=f'{PSS_STEM}…', period='Think about the last month',
+    dict(title='Your month', heading='Start with the bigger picture.', period='Think about the last month',
          intro='Notice how manageable life has felt, including moments when things went well. Choose how often each experience happened.',
          why='These four questions explore perceived stress: how unpredictable, difficult to control, or overwhelming life has felt. Together they give more context than one stress rating.',
-         source='PSS-4 items · Cohen, Kamarck & Mermelstein (1983), adapted to a 1–5 scale. Items 2 and 3 are reverse-scored.', keys=['pss_1','pss_2','pss_3','pss_4']),
+         keys=['pss_1','pss_2','pss_3','pss_4']),
     dict(title='Rest & recovery', heading='How has your sleep been?', period='Think about the past week',
          intro='Now zoom in on your recent routine. Think about a typical night, rather than only last night.',
          why='Sleep and stress can affect one another. Hours and quality capture different parts of rest; either can help explain why daily demands feel harder to manage.',
-         source='Two items adapted from PSQI · Buysse et al. (1989). Sleep is entered in hours and mapped to 1–5 only when scoring. This is not a PSQI score.', keys=['sleep_hours_avg','sleep_quality']),
+         keys=['sleep_hours_avg','sleep_quality']),
     dict(title='Study demands', heading='Make room for your study load.', period='Your current study experience',
          intro='With your overall feelings and rest in mind, consider the demands of your coursework.',
          why='Feeling overloaded by assignments can add pressure and reduce time for recovery. This question identifies a possible source of strain, rather than judging your academic performance.',
-         source='Selected PAS items · Bedewy & Gabriel (2015), CC BY-NC 3.0. Response direction adapted.', keys=['pas_workload','pas_catchup']),
+         keys=['pas_workload','pas_catchup']),
     dict(title='Money pressures', heading='Life outside the timetable.', period='Your personal finances in general',
          intro='Everyday expenses can take up mental space too. You do not need to share amounts or financial details.',
          why='Financial worries may compete for attention alongside study demands. This question helps us suggest relevant support without assuming your income or circumstances.',
-         source='IFDFW item 8 · Prawitz et al. (2006), adapted to a 1–5 slider. Higher numbers mean more financial stress.', keys=['fin_stress']),
+         keys=['fin_stress']),
     dict(title='Your support', heading='Who can you lean on?', period='The support available to you',
          intro='After looking at pressures, consider the people who help you face them. Friends and family may support you in different ways.',
          why='Support can make stressful experiences easier to navigate. These questions look at sources of support; they do not cancel out or invalidate the stress you reported.',
-         source='Selected MSPSS items · Zimet et al. (1988), adapted to five points and reverse-scored in the stress score. Not a validated short-form scale.', keys=['mspss_friends','mspss_family']),
+         keys=['mspss_friends','mspss_family']),
     dict(title='A moment to reflect', heading='Anything else on your mind?', period='Optional · not scored',
          intro='Numbers cannot capture everything. You can reflect here, or continue without writing anything.',
          why='Your reflection does not contribute to the stress score. A basic safety check can highlight support, but it cannot recognise every situation. You can contact support at any time.',
-         source='Optional reflection · team wording', keys=[]),
+         keys=[]),
 ]
 
 # Shared with the browser for an immediate, conservative support prompt.
@@ -147,28 +142,28 @@ def score(record):
 def explanation(record, scores):
     stress = scores['stress_score']
     text = (f"Your {scores['scored_item_count']} answers give an average stress score of {stress:g} out of 5 "
-            '(1 = least stress, 5 = most). Positively worded questions were reversed, so higher always means more stress.')
+            '(1 = least stress, 5 = most). Positively worded questions were reversed, so a higher score always means more stress.')
     if record.get('safety_flag'):
         text += ' Your reflection prompted us to highlight support. This does not change your stress score and is not a diagnosis.'
     elif scores['risk_category'] == 'High':
-        text += ' The project uses averages above 3.5 to encourage reaching out to someone for support.'
+        text += ' An average above 3.5 is a sign to reach out to someone for support.'
     elif scores['risk_category'] == 'Moderate':
-        text += ' The project uses averages from 2.5 to 3.5 to suggest a check-in with someone you trust.'
+        text += ' An average from 2.5 to 3.5 suggests a check-in with someone you trust.'
     else:
-        text += ' Your answers fall in the lower project band (below 2.5). You can still ask for support whenever you need it.'
-    return text + ' These bands are team heuristics, not clinical cut-offs.'
+        text += ' Your answers sit below 2.5. You can still ask for support whenever you need it.'
+    return text + ' These bands are a simple guide, not clinical cut-offs.'
 
 def factor_insights(record, scores):
     flags = scores['context_flags']
     return [
         dict(title='Rest & recovery', flagged=flags['sleep'], value=f"{record['sleep_hours_avg']:g} hours · {SLEEP_OPTIONS[record['sleep_quality']-1]} quality",
-             text='Short or unsatisfying sleep can make daily demands harder to manage. Stress may also disrupt sleep. The project flags under 6 hours or fairly/very bad quality (answers of 4 or 5).'),
+             text='Short or unsatisfying sleep can make daily demands harder to manage. Stress may also disrupt sleep. Under 6 hours, or fairly or very bad quality (answers of 4 or 5), is highlighted here.'),
         dict(title='Study demands', flagged=flags['workload'], value=f"{record['pas_workload']}/5 · {PAS_OPTIONS[record['pas_workload']-1]}",
-             text='Feeling overloaded may leave less room for rest. Agreeing that coursework is too much raises a workload flag. The catch-up answer counts in the stress score, not as a separate flag.'),
+             text='Feeling overloaded may leave less room for rest. Agreeing that coursework is too much highlights workload. The catch-up answer counts in the stress score, not as its own highlight.'),
         dict(title='Money pressures', flagged=flags['finances'], value=f"{record['fin_stress']}/5 · {FIN_OPTIONS[record['fin_stress']-1]}",
-             text='Money worries may add to study pressures. Answers of 4–5 (high or overwhelming stress) raise a financial flag and guide money-support suggestions; no amounts or income are inferred.'),
+             text='Money worries may add to study pressures. Answers of 4–5 (high or overwhelming stress) highlight finances and guide money-support suggestions. No amounts or income are inferred.'),
         dict(title='Support & connection', flagged=flags['support'], value=f"{scores['support_mean']:g}/5 agreement across {scores['support_item_count']} answers",
-             text='Available support may help you cope with pressures. An average below 2.5 raises a support flag. In the overall stress score these answers are reversed (6 − answer). This is an indicator, not a validated MSPSS score.'),
+             text='Available support may help you cope with pressures. An average below 2.5 highlights support. In the overall stress score these answers are reversed (6 − answer).'),
     ]
 
 def finalise(record):

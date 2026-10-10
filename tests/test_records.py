@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 import io_manager
+import survey
 from main import create_app, result_view
 from test_admin_access import login_admin
 
@@ -17,14 +18,17 @@ class RecordsTests(unittest.TestCase):
         self.app = create_app({'TESTING': True, 'SECRET_KEY':'tests', 'DATA_PATH':str(self.path)})
         self.client = self.app.test_client()
         login_admin(self.client)
-        self.rows = [dict(student_id=sid, sleep_hours=7.5, stress_level=stress,
-                          academic_workload=6, financial_stress=4, social_support=7,
-                          risk_category=risk, ai_ok=True, source='ai_logic', saved_at=date,
-                          feelings_text='Private response that must not appear in history', reasoning='Private explanation')
-                     for sid, stress, risk, date in [
-                         ('2603503',5,'Moderate','2026-10-09T01:00:00+00:00'),
-                         ('2703504',8,'High','2026-10-09T02:00:00+00:00'),
-                         ('2000123',2,'Low','2026-10-09T03:00:00+00:00')]]
+        labels={'Low':"You're doing ok",'Moderate':'Worth a check-in','High':'Please reach out'}
+        self.rows = [dict(student_id=sid, survey_version=survey.VERSION, stress_score=score,
+                          stress_level=5, sleep_hours_avg=7.5, sleep_quality=2, pas_workload=3,
+                          pas_catchup=2, fin_stress=4, mspss_friends=4, mspss_family=5,
+                          risk_category=risk, soft_label=labels[risk], ai_ok=True, source='ai_logic',
+                          saved_at=date, feelings_text='Private response that must not appear in history',
+                          reasoning='Private explanation')
+                     for sid, score, risk, date in [
+                         ('2603503',3.1,'Moderate','2026-10-09T01:00:00+00:00'),
+                         ('2703504',4.2,'High','2026-10-09T02:00:00+00:00'),
+                         ('2000123',1.4,'Low','2026-10-09T03:00:00+00:00')]]
 
     def write(self, rows=None):
         self.path.write_text(json.dumps(self.rows if rows is None else rows), encoding='utf-8')
@@ -46,41 +50,55 @@ class RecordsTests(unittest.TestCase):
         self.assertEqual(response.status_code,200)
         self.assertEqual(response.json['total'],3)
         self.assertEqual(response.json['records'][0]['student_id'],'2000123')
-        self.assertEqual(set(response.json['records'][0]),{'student_id','sleep_hours','stress_level',
-                         'academic_workload','financial_stress','social_support','risk_category','ai_status','saved_at',
-                         'survey_version','stress_score','sleep_hours_avg','sleep_quality','pas_workload','pas_catchup',
-                         'fin_stress','mspss_friends','mspss_family','support_mean'})
+        self.assertEqual(set(response.json['records'][0]),{'student_id','stress_score','risk_category','soft_label',
+                         'sleep_hours_avg','sleep_quality','pas_workload','pas_catchup','fin_stress','mspss_friends',
+                         'mspss_family','saved_at','survey_version','status'})
+        self.assertNotIn('stress_level',response.json['records'][0])
+        self.assertNotIn('ai_status',response.json['records'][0])
         self.assertNotIn('Private',response.get_data(as_text=True))
         self.assertEqual(response.headers['Cache-Control'],'no-store')
 
     def test_partial_id_and_combined_filters(self):
         self.write()
         self.assertEqual(self.client.get('/api/records?student_id=035').json['matching'],2)
-        result=self.client.get('/api/records?student_id=035&risk_category=High&cohort_year=2027').json
+        result=self.client.get('/api/records?student_id=035&tier=Please reach out&cohort_year=2027').json
         self.assertEqual(result['matching'],1)
         self.assertEqual(result['records'][0]['student_id'],'2703504')
         self.assertEqual(result['cohorts'],['27','26','20'])
-        self.assertEqual(self.client.get('/api/records?risk_category=Low&cohort_year=26').json['records'],[])
+        self.assertEqual(self.client.get("/api/records?tier=You're doing ok&cohort_year=26").json['records'],[])
         self.assertEqual(self.client.get('/api/records').json['matching'],3)
 
-    def test_risk_filters(self):
+    def test_tier_filters(self):
         self.write()
-        for risk in ('Low','Moderate','High'):
-            rows=self.client.get('/api/records',query_string={'risk_category':risk}).json['records']
+        for risk, tier in (('Low',"You're doing ok"),('Moderate','Worth a check-in'),('High','Please reach out')):
+            rows=self.client.get('/api/records',query_string={'tier':tier}).json['records']
             self.assertEqual(len(rows),1)
             self.assertEqual(rows[0]['risk_category'],risk)
+            self.assertEqual(rows[0]['soft_label'],tier)
+            self.assertEqual(rows[0]['status'],'Evaluated')
 
     def test_errors_are_not_empty_history(self):
         self.path.write_text('invalid json',encoding='utf-8')
         self.assertEqual(self.client.get('/api/records').status_code,500)
         self.write()
-        self.assertEqual(self.client.get('/api/records?risk_category=Critical').status_code,400)
+        self.assertEqual(self.client.get('/api/records?tier=Critical').status_code,400)
         self.assertEqual(self.client.get('/api/records?cohort_year=abc').status_code,400)
 
-    def test_legacy_status_and_missing_values(self):
-        self.write([{'student_id':'2600000'}, {'student_id':'2700000','ai_ok':False}])
-        statuses={r['student_id']:r['ai_status'] for r in self.client.get('/api/records').json['records']}
-        self.assertEqual(statuses,{'2600000':'Unknown','2700000':'Failed'})
+    def test_legacy_records_are_ignored(self):
+        self.write([
+            {'student_id':'2600000','survey_version':'legacy','risk_category':'High'},
+            {'student_id':'2700000','survey_version':'evidence-v2','ai_ok':False,'risk_category':'Low'},
+            {'student_id':'2800000','survey_version':survey.VERSION,'status':'pending','risk_category':'Low'},
+            {'student_id':'2900000','survey_version':survey.VERSION,'ai_ok':True,'source':'ai_logic','risk_category':'Moderate'},
+            'not-a-record',
+        ])
+        payload=self.client.get('/api/records').json
+        self.assertEqual(payload['total'],2)
+        self.assertEqual(payload['cohorts'],['29','28'])
+        statuses={row['student_id']:row['status'] for row in payload['records']}
+        self.assertEqual(statuses,{'2800000':'Pending','2900000':'Evaluated'})
+        pending=next(row for row in payload['records'] if row['student_id']=='2800000')
+        self.assertEqual(pending['soft_label'],"You're doing ok")
 
     def test_insights_use_assessment_and_inputs(self):
         view=result_view({**self.rows[0], 'soft_label':'Worth a check-in',

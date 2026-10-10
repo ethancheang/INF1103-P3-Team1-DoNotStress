@@ -64,6 +64,13 @@ _AI_SUCCESS_SOURCES = frozenset(
 )
 
 
+TIER_TO_CATEGORY = {
+    "You're doing ok": "Low",
+    "Worth a check-in": "Moderate",
+    "Please reach out": "High",
+}
+
+
 _REQUIRED_AI_FIELDS = (
     "risk_score",
     "risk_category",
@@ -400,6 +407,7 @@ def filter_records(
     Supported filters:
         student_id
         risk_category
+        tier            You're doing ok / Worth a check-in / Please reach out
         cohort_year
     """
 
@@ -408,6 +416,7 @@ def filter_records(
 
     student_id = filters.get("student_id")
     risk_category = filters.get("risk_category")
+    tier = filters.get("tier")
     cohort_year = filters.get("cohort_year")
 
     out: list[dict[str, Any]] = []
@@ -425,6 +434,12 @@ def filter_records(
                 str(record.get("risk_category", "")).lower()
                 != str(risk_category).lower()
             ):
+                continue
+
+        if tier is not None:
+            label = str(record.get("soft_label") or "")
+            category = str(record.get("risk_category") or "")
+            if label != str(tier) and category != TIER_TO_CATEGORY.get(str(tier)):
                 continue
 
         if cohort_year is not None:

@@ -84,21 +84,49 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('Skip / clear this answer',js)
         self.assertNotIn('ds-optional',js)
         self.assertIn('ds-q-title',js)
+        self.assertNotIn('data-confirm',js)
+        self.assertNotIn('Answer selected',js)
+        self.assertNotIn('Move the slider or confirm the displayed position.',js)
+        self.assertIn('Higher numbers mean more financial stress.',js)
+        self.assertIn('Your student ID stays private.',js)
+        self.assertIn("This space is just for you.",js)
+        self.assertIn("This check-in isn't a diagnosis",js)
+        self.assertIn('>Your check-in<',js)
+        self.assertNotIn('stressBadge',js)
+        self.assertNotIn('not sent to the AI provider',js)
+        self.assertNotIn('Not sent to Gemini',js)
+        self.assertNotIn('project guidance',js)
+        self.assertNotIn('project heuristics',js)
+        self.assertNotIn('documented project rules',js)
+        self.assertNotIn('not a validated combined screening instrument',js)
+        self.assertNotIn('Legacy /10',js)
+        self.assertNotIn('Risk category',js)
+        self.assertNotIn('AI Status',js)
+        self.assertIn('Stress score (/5)',js)
+        self.assertIn("You're doing ok",js)
+        self.assertIn('SIT Counselling 24-hour helpline',js)
+        self.assertIn('href="tel:65922030"',js)
+        self.assertIn('href="tel:1767"',js)
+        self.assertIn('href="tel:1771"',js)
 
-    def test_prompts_and_pss_stem(self):
-        stem='In the past month, how often have you felt'
-        endings={
-            'pss_1':"you couldn't control the important things in your life?",
-            'pss_2':'confident handling your personal problems?',
-            'pss_3':'things were going well for you?',
-            'pss_4':'problems were piling up too much to handle?',
+    def test_prompts_and_pss_sentences(self):
+        prompts={
+            'pss_1':"In the past month, how often have you felt you couldn't control the important things in your life?",
+            'pss_2':'In the past month, how often have you felt confident handling your personal problems?',
+            'pss_3':'In the past month, how often have you felt things were going well for you?',
+            'pss_4':'In the past month, how often have you felt problems were piling up too much to handle?',
         }
         self.assertEqual(survey.QUESTION_MAP['pss_1']['label'],'Losing control')
-        self.assertEqual(survey.SECTIONS[0]['heading'],f'{stem}…')
-        for key, ending in endings.items():
-            item=survey.QUESTION_MAP[key]
-            self.assertEqual(item['card'],f'…{ending}')
-            self.assertEqual(item['prompt'],f'{stem} {ending}')
+        self.assertEqual(survey.SECTIONS[0]['heading'],'Start with the bigger picture.')
+        self.assertTrue(all('source' not in section for section in survey.SECTIONS))
+        self.assertTrue(all('card' not in item for item in survey.QUESTIONS))
+        page=(Path(__file__).resolve().parents[1]/'static'/'campus.js').read_text(encoding='utf-8')
+        self.assertIn('Backed by research', page)
+        self.assertNotIn('ds-source', page)
+        self.assertNotIn('cardText', page)
+        self.assertNotIn('team wording', page)
+        for key, prompt in prompts.items():
+            self.assertEqual(survey.QUESTION_MAP[key]['prompt'], prompt)
         self.assertEqual(survey.QUESTION_MAP['pas_workload']['prompt'],'I feel my coursework is too much to handle.')
         self.assertEqual(survey.QUESTION_MAP['pas_catchup']['prompt'],'When I fall behind on my work, I find it hard to catch up.')
         self.assertEqual(survey.QUESTION_MAP['mspss_family']['prompt'],'I get the emotional help and support I need from my family.')
@@ -163,7 +191,7 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('2605581',prompt)
         for key in survey.QUESTION_MAP:self.assertIn(key,prompt)
         self.assertIn(survey.QUESTION_MAP['pss_1']['prompt'],prompt)
-        self.assertIn("you couldn't control the important things in your life?",prompt)
+        self.assertIn("In the past month, how often have you felt you couldn't control the important things in your life?",prompt)
         self.assertNotIn('mspss_so',prompt)
         self.assertNotIn('special person',prompt.lower())
 
@@ -215,7 +243,8 @@ class RevisedPipelineTests(unittest.TestCase):
         self.assertEqual(row['survey_version'],survey.VERSION)
         self.assertEqual(row['fin_stress'],3)
         self.assertNotIn('mspss_so',row)
-        self.assertIsNone(row['stress_level'])
+        self.assertNotIn('stress_level',row)
+        self.assertEqual(row['status'],'Evaluated')
 
     def test_safety_remains_visible_when_ai_fails(self):
         self.values['feelings_text']='I want to end my life'

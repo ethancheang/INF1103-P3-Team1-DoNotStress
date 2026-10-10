@@ -29,6 +29,17 @@ class AdminAccessTests(unittest.TestCase):
         text = self.client.get('/').get_data(as_text=True)
         self.assertIn('Student view', text)
         self.assertIn('Admin sign in', text)
+        self.assertNotIn('/ campus', text)
+        self.assertIn('>Home<', text)
+        self.assertNotIn('>Overview<', text)
+        self.assertIn('Need to talk?', text)
+        self.assertIn('A guide, not a diagnosis.', text)
+        self.assertIn('Immediate crises: If you face an urgent emergency outside of school hours, you can use the 24-hour helpline (6592 2030) or reach out to national helplines such as Samaritans of Singapore (1-767) or emergency services (995 / 999).', text)
+        self.assertIn('href="tel:65922030"', text)
+        self.assertIn('href="tel:1767"', text)
+        self.assertIn('href="tel:1771"', text)
+        self.assertIn('href="mailto:SITCounselling@SingaporeTech.edu.sg"', text)
+        self.assertIn('class="ds-brand"', text)
         self.assertNotIn('data-nav="records"', text)
         self.assertIn('"isAdmin": false', text)
         self.assertNotIn('DoNotStress2026!', text)
@@ -72,6 +83,20 @@ class AdminAccessTests(unittest.TestCase):
             self.assertEqual(self.client.get('/api/records').status_code,200)
         self.assertEqual(self.app.test_client().get('/api/records').status_code,401)
 
+    def test_admin_keeps_records_from_home_without_signing_in_again(self):
+        login_admin(self.client)
+        home=self.client.get('/').get_data(as_text=True)
+        self.assertIn('Admin view', home)
+        self.assertIn('Log out', home)
+        self.assertIn('data-nav="records"', home)
+        self.assertNotIn('Admin sign in', home)
+        self.assertIn('data-nav="home"', home)
+        records=self.client.get('/records')
+        self.assertEqual(records.status_code,200)
+        self.assertIn('data-nav="records"', records.get_data(as_text=True))
+        with patch('main.data_manager.load_all_records',return_value={'ok':True,'records':[]}):
+            self.assertEqual(self.client.get('/api/records').status_code,200)
+
     def test_untrusted_role_and_unknown_server_token_do_not_authorize(self):
         with self.client.session_transaction() as state:
             state['role']='admin'
@@ -109,6 +134,9 @@ class AdminAccessTests(unittest.TestCase):
     def test_password_not_echoed_or_embedded_in_static_assets(self):
         text=self.client.get('/admin/login').get_data(as_text=True)
         self.assertIn('type="password"',text)
+        self.assertNotIn('/ campus',text)
+        self.assertIn('>Home<',text)
+        self.assertNotIn('>Overview<',text)
         self.assertNotIn('DoNotStress2026!',text)
         with self.client.get('/static/campus.js') as response:
             self.assertNotIn('DoNotStress2026!',response.get_data(as_text=True))
