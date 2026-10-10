@@ -57,11 +57,13 @@ Sleep items are adapted; PAS and MSPSS are selected items, not complete scales. 
 
 ### Sources and permissions
 
-- PSS-4: Cohen, Kamarck & Mermelstein (1983), https://doi.org/10.2307/2136404. Reverse coding verified at https://www.cmu.edu/dietrich/psychology/stress-immunity-disease-lab/scales/html/pssscoring.html.
-- Sleep: adapted from PSQI, Buysse et al. (1989), https://doi.org/10.1016/0165-1781(89)90047-4; recall shortened to one week. This is not a PSQI score.
-- PAS: Bedewy & Gabriel (2015), https://doi.org/10.1177/2055102915596714, CC BY-NC 3.0; response direction adapted to increasing agreement.
-- IFDFW: Prawitz et al. (2006), https://www.afcpe.org/wp-content/uploads/2018/10/vol1714.pdf.
-- MSPSS: Zimet et al. (1988), https://doi.org/10.1207/s15327752jpa5201_2.
+Questionnaire pages do not show a source line. The home page has a short "Backed by research" note and this compact line: Sources: Cohen et al. (1983); Buysse et al. (1989); Bedewy & Gabriel (2015); Prawitz et al. (2006); Zimet et al. (1988). Full citations:
+
+- Cohen, S., Kamarck, T., & Mermelstein, R. (1983). A global measure of perceived stress. *Journal of Health and Social Behavior, 24*(4), 385–396. https://doi.org/10.2307/2136404. PSS-4 items, adapted to a 1–5 scale. Items 2 and 3 are reverse-scored. Reverse coding checked at https://www.cmu.edu/dietrich/psychology/stress-immunity-disease-lab/scales/html/pssscoring.html.
+- Buysse, D. J., Reynolds, C. F., Monk, T. H., Berman, S. R., & Kupfer, D. J. (1989). The Pittsburgh Sleep Quality Index: A new instrument for psychiatric practice and research. *Psychiatry Research, 28*(2), 193–213. https://doi.org/10.1016/0165-1781(89)90047-4. Two sleep items only; recall shortened to one week. This is not a PSQI score.
+- Bedewy, D., & Gabriel, A. (2015). Examining perceptions of academic stress and its sources among university students: The Perception of Academic Stress Scale. *Health Psychology Open, 2*(2). https://doi.org/10.1177/2055102915596714. CC BY-NC 3.0. Selected items; response direction adapted to increasing agreement.
+- Prawitz, A. D., Garman, E. T., Sorhaindo, B., O'Neill, B., Kim, J., & Drentea, P. (2006). InCharge Financial Distress/Financial Well-Being Scale: Development, administration, and score interpretation. *Financial Counseling and Planning, 17*(1), 34–50. https://www.afcpe.org/wp-content/uploads/2018/10/vol1714.pdf. Item 8, adapted to a 1–5 slider.
+- Zimet, G. D., Dahlem, N. W., Zimet, S. G., & Farley, G. K. (1988). The Multidimensional Scale of Perceived Social Support. *Journal of Personality Assessment, 52*(1), 30–41. https://doi.org/10.1207/s15327752jpa5201_2. Friends and family items only, adapted to five points and reverse-scored in the stress score. Not an MSPSS total.
 
 The supplied brief identifies permissions to resolve before distribution: PSS permission through Mapi/ePROVIDE and the copyrighted IFDFW wording. PSQI educational/research use is non-commercial; adaptations and commercial use need appropriate review. Attribution does not itself grant permission. No permission request has been sent by this implementation.
 

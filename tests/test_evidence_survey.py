@@ -99,6 +99,11 @@ class ScoringTests(unittest.TestCase):
         }
         self.assertEqual(survey.QUESTION_MAP['pss_1']['label'],'Losing control')
         self.assertEqual(survey.SECTIONS[0]['heading'],f'{stem}…')
+        self.assertTrue(all('source' not in section for section in survey.SECTIONS))
+        page=(Path(__file__).resolve().parents[1]/'static'/'campus.js').read_text(encoding='utf-8')
+        self.assertIn('Backed by research', page)
+        self.assertNotIn('ds-source', page)
+        self.assertNotIn('team wording', page)
         for key, ending in endings.items():
             item=survey.QUESTION_MAP[key]
             self.assertEqual(item['card'],f'…{ending}')
