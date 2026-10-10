@@ -84,6 +84,10 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('Skip / clear this answer',js)
         self.assertNotIn('ds-optional',js)
         self.assertIn('ds-q-title',js)
+        self.assertNotIn('data-confirm',js)
+        self.assertNotIn('Answer selected',js)
+        self.assertNotIn('Move the slider or confirm the displayed position.',js)
+        self.assertIn('Higher numbers mean more financial stress.',js)
 
     def test_prompts_and_pss_stem(self):
         stem='In the past month, how often have you felt'

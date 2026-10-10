@@ -30,20 +30,18 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   }
   function cardText(q){return q.card || q.prompt;}
   function questionControl(q) {
-    if(q.key==='sleep_hours_avg' && answers[q.key]===null) answers[q.key]=q.default;
-    const chosen=answers[q.key]!==null, value=chosen?answers[q.key]:q.default;
+    if(q.kind==='slider' && answers[q.key]===null) answers[q.key]=q.default;
+    const value=answers[q.key];
     const helpId=q.key+'-help';
     const title=`<h3 class="ds-q-title" id="${q.key}-title">${q.kind==='slider'?`<label for="${q.key}">${escape(cardText(q))}</label>`:escape(cardText(q))}</h3>`;
     if(q.kind==='slider'){
-      const shown=escape(answerText(q.key, chosen?answers[q.key]:value));
-      const finance=q.key==='fin_stress';
+      const shown=escape(answerText(q.key, value));
       return `<div class="ds-question" id="question-${q.key}">
       ${title}
-      <div class="ds-big-value"><output id="${q.key}-value" for="${q.key}" aria-live="polite">${chosen?shown:'Choose your answer'}</output></div>
-      <input type="range" id="${q.key}" min="${q.min}" max="${q.max}" step="${q.step}" value="${value}" ${finance?`aria-describedby="${helpId}"`:''} aria-valuetext="${chosen?shown:'Not answered; slider starts at '+value}">
+      <div class="ds-big-value"><output id="${q.key}-value" for="${q.key}" aria-live="polite">${shown}</output></div>
+      <input type="range" id="${q.key}" min="${q.min}" max="${q.max}" step="${q.step}" value="${value}" ${q.key==='fin_stress'?`aria-describedby="${helpId}"`:''} aria-valuetext="${shown}">
       <div class="ds-ends"><span>${q.min} · ${escape(q.low)}</span><span>${q.max} · ${escape(q.high)}</span></div>
-      ${finance?`<p id="${helpId}" class="ds-help">Higher numbers mean more financial stress. Move the slider or confirm the displayed position.</p>
-      <button class="ds-secondary ds-confirm" data-confirm="${q.key}">${chosen?'Answer selected':'Use '+value+' / 5'}</button>`:''}
+      ${q.key==='fin_stress'?`<p id="${helpId}" class="ds-help">Higher numbers mean more financial stress.</p>`:''}
       </div>`;
     }
     return `<div class="ds-question" id="question-${q.key}" role="group" aria-labelledby="${q.key}-title">${title}
@@ -260,7 +258,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       const shown=answerText(id);
       const out=main.querySelector('#'+id+'-value');if(out)out.textContent=shown;
       event.target.setAttribute('aria-valuetext',shown);
-      const confirm=main.querySelector(`[data-confirm="${id}"]`);if(confirm)confirm.textContent='Answer selected';
     } else if(id==='student_id'||id==='feelings_text') {
       answers[id]=value;
       if(id==='feelings_text')main.querySelector('#ds-safety').innerHTML=reflectionSafety()?safetyPrompt():'';
@@ -273,7 +270,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   });
   root.addEventListener('click',async event=>{
     const button=event.target.closest('button');if(!button||busy)return;
-    if(button.dataset.confirm){const key=button.dataset.confirm;const control=main.querySelector('#'+key);control.dispatchEvent(new Event('input',{bubbles:true}));return;}
     if(button.dataset.editStep!==undefined){step=+button.dataset.editStep;checkin();main.querySelector('#ds-step-heading').focus();return;}
     if(button.dataset.nav){page=button.dataset.nav;render();return;}
     if(button.dataset.task!==undefined){const id=+button.dataset.task;selected.has(id)?selected.delete(id):selected.add(id);render();return;}

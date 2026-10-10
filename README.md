@@ -37,7 +37,7 @@ The browser receives the same definitions from Flask. Required answers start uns
 1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items under one stem, "In the past month, how often have you felt…". Each item is 1 (never) to 5 (very often). Items 2 and 3 are reverse-scored.
 2. **Rest and recovery:** typical sleep this week is a 0–14 hour slider in 0.5 steps. Scoring converts hours to 1–5 stress: 8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5. Sleep quality is 1 (very good) to 5 (very bad).
 3. **Study demands:** workload and catch-up items, both required, 1 (strongly disagree) to 5 (strongly agree). Direction is adapted.
-4. **Money pressures:** IFDFW item 8 adapted to a 1–5 slider, 1 (no stress at all) to 5 (overwhelming stress). Higher means MORE distress.
+4. **Money pressures:** IFDFW item 8 adapted to a 1–5 slider, 1 (no stress at all) to 5 (overwhelming stress). Higher means MORE distress. The displayed position is the answer; there is no separate confirm button. The hint reads "Higher numbers mean more financial stress."
 5. **Your support:** MSPSS friends and family items, both required, 1 (strongly disagree) to 5 (strongly agree). Reverse-scored in the stress score.
 6. **Reflection:** optional text, up to 2,000 characters; not scored, sent to Gemini, or saved.
 
