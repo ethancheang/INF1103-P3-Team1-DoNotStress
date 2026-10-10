@@ -85,6 +85,7 @@
 #dns-campus .ds-result{display:grid;grid-template-columns:1fr 270px;gap:24px}
 #dns-campus .ds-result-hero{padding:25px;background:var(--ds-lilac);border-radius:22px;margin:22px 0}
 #dns-campus .ds-result-hero p{margin-bottom:0}
+#dns-campus .ds-save-note{font-size:13px;margin-top:18px}
 #dns-campus .ds-suggestions{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:10px}
 #dns-campus .ds-suggestions li{border:1px solid var(--ds-line);border-radius:15px;padding:16px 17px;background:var(--ds-panel)}
 #dns-campus .ds-support{padding:23px;background:var(--ds-soft);border-radius:20px;margin-top:20px;min-width:0;overflow-wrap:anywhere}

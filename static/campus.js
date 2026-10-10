@@ -70,7 +70,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       ${survey.sections.map((section,index)=>`<section class="ds-review-block"><div class="ds-actions"><h3>${escape(section.title)}</h3><button class="ds-link" data-edit-step="${index}">Edit</button></div><p class="ds-help">${escape(section.period)}</p>
       <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(questions[key].prompt)}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Written for you only. It isn\'t scored or saved.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
       ${reflectionSafety()?safetyPrompt():''}
-      <div class="ds-why"><strong>What happens next</strong><p>After you submit, we'll look at your answers and share a few suggestions that may help. Your student ID and personal reflection stay private. This check-in isn't a diagnosis, and you can choose whether to save your results at the end.</p></div>`;
+      <div class="ds-why"><strong>What happens next</strong><p>After you submit, we'll look at your answers and share a few suggestions that may help. Your student ID stays private. Anything you write in the reflection box is not stored. This check-in isn't a diagnosis.</p></div>`;
     }
     main.innerHTML=`<div class="ds-journey"><aside class="ds-rail"><div class="ds-kicker">Your little reset</div>
       ${chapters.map((title,i)=>`<div class="ds-stop ${i===step?'current':i<step?'done':''}"><b>${i<step?'✓':i+1}</b><span>${escape(title)}</span></div>`).join('')}
@@ -107,9 +107,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       ${insightsPanel()}
       <h3>${escape(assessment.tips.heading)}</h3><p>A few ideas that might help.</p>
       <ul class="ds-suggestions">${assessment.tips.items.map(tip=>`<li>${escape(tip.text)}</li>`).join('')}</ul>
-      <section class="ds-support"><h3>${assessment.saved?'Saved on this computer':'Keep this check-in?'}</h3>
-      ${assessment.saved?'<p>You chose to save this check-in. Saved records are available in the admin view.</p>':'<p>Your result is held temporarily in server memory. Saving writes your questionnaire answers, assessment, and whether a safety prompt was shown to this computer. Reflection text is never saved. Only a signed-in admin can view saved records through this app.</p><label><input type="checkbox" id="ds-opt-in"> I want to save my check-in on this computer for admin review.</label><p></p><button class="ds-secondary" data-action="save">Save my check-in</button>'}
-      <div class="ds-error" id="ds-save-status" role="status"></div></section>
+      <p class="ds-save-note">Your answers are saved so SIT wellbeing staff can follow up if needed. Anything you wrote in the reflection box is not stored.</p>
       <button class="ds-link" data-action="edit">${answers.student_id?'Review my answers':'Start another check-in'}</button>
       <span> · </span><button class="ds-link" data-action="new">Start fresh</button></section>
       <aside><div class="ds-mini ds-companion">${plant()}<span class="ds-pill">First seed planted</span><h3>You made space for you.</h3>
@@ -238,17 +236,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     } catch(error) {main.querySelector('#ds-error').textContent='Could not connect. Your answers are still here; please try again.';}
     finally {setBusy(false);}
   }
-  async function save() {
-    const status=main.querySelector('#ds-save-status');
-    if(!main.querySelector('#ds-opt-in').checked){status.textContent='Tick the consent box before saving.';return;}
-    setBusy(true);
-    try {
-      const {response,data}=await post(boot.saveUrl,{opt_in:true});
-      if(!response.ok){status.textContent=data.message;return;}
-      assessment.saved=true;render();
-    }catch(error){status.textContent='Could not save your check-in. Please try again.';}
-    finally{setBusy(false);}
-  }
   root.addEventListener('input',event=>{
     const {id,value}=event.target;
     if(id==='ds-record-search'){recordFilters.student_id=value;clearTimeout(searchTimer);recordsRequest++;searchTimer=setTimeout(()=>{if(page==='records')loadRecords();},200);return;}
@@ -283,7 +270,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       case 'back':if(step===0)page='home';else step--;break;
       case 'next':if(!valid())return;if(step<reviewStep)step++;else{await submit();return;}break;
       case 'edit':page='checkin';step=answers.student_id?reviewStep:0;break;
-      case 'save':await save();return;
       case 'new':location.assign(boot.newUrl);return;
       default:return;
     }

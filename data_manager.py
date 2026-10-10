@@ -14,9 +14,10 @@ The AI result must contain:
     confidence
     reasoning
 
-Records are saved only when:
-    1. the student explicitly consents (opt_in=True)
-    2. the record is a successful AI-processed result
+save_record stores a successful AI-processed result when the caller
+asks it to (opt_in=True). save_pending_record stores the same check-in
+when AI could not finish, with status "pending". Reflection text is
+removed before either write.
 """
 
 from __future__ import annotations
@@ -370,8 +371,84 @@ def save_record(
         records = []
 
     stored = dict(record)
-    if str(stored.get('survey_version', '')).startswith('evidence-'):
-        stored.pop('feelings_text', None)
+    stored.pop("feelings_text", None)
+    stored.pop("reflection", None)
+    stored["save_opt_in"] = True
+
+    if not stored.get("saved_at"):
+        stored["saved_at"] = datetime.now(timezone.utc).isoformat()
+
+    records.append(stored)
+
+    write_ok, write_error = _write_records_file(path, records)
+
+    if not write_ok:
+        return {
+            "ok": False,
+            "error": write_error,
+            "path": str(path),
+            "record": None,
+        }
+
+    return {
+        "ok": True,
+        "error": None,
+        "path": str(path),
+        "record": stored,
+    }
+
+
+def save_pending_record(
+    record: dict[str, Any],
+    data_path: str | None = None,
+    *,
+    opt_in: Any = False,
+) -> dict[str, Any]:
+    """Append a check-in that could not be evaluated because AI was unavailable.
+
+    The answers are kept for admin follow-up and marked pending.
+    Reflection text is never stored.
+    """
+
+    path = _resolve_path(data_path)
+
+    if not _is_opted_in(opt_in):
+        return {
+            "ok": False,
+            "error": (
+                "Save refused: student opt-in required "
+                "(pass opt_in=True)."
+            ),
+            "path": str(path),
+            "record": None,
+        }
+
+    if not isinstance(record, dict):
+        return {
+            "ok": False,
+            "error": "record must be a dict",
+            "path": str(path),
+            "record": None,
+        }
+
+    ok, records, load_error = _read_records_file(path)
+
+    if not ok:
+        return {
+            "ok": False,
+            "error": load_error,
+            "path": str(path),
+            "record": None,
+        }
+
+    if load_error and "Corrupted" in load_error:
+        records = []
+
+    stored = dict(record)
+    stored.pop("feelings_text", None)
+    stored.pop("reflection", None)
+    stored["status"] = "pending"
+    stored["ai_ok"] = False
     stored["save_opt_in"] = True
 
     if not stored.get("saved_at"):
