@@ -22,30 +22,35 @@ SUPPORT_OPTIONS = AGREE_OPTIONS
 FIN_OPTIONS = ["No stress at all", "A little stress", "Moderate stress", "High stress", "Overwhelming stress"]
 CHECK_IN_FROM = 2.5    # average 2.5 to 3.5 (inclusive) -> 'Worth a check-in'
 REACH_OUT_ABOVE = 3.5  # average above 3.5 -> 'Please reach out'
+PSS_STEM = 'In the past month, how often have you felt'
+SUPPORT_KEYS = ('mspss_friends', 'mspss_family')
 
 def question(key, label, prompt, minimum, maximum, options=None, **extra):
     return dict(key=key, label=label, prompt=prompt, min=minimum, max=maximum,
                 step=extra.pop('step', 1), options=options, **extra)
 
+def pss_question(key, label, ending, **extra):
+    """Card shows the ending; prompt keeps the shared stem plus that ending."""
+    return question(key, label, f'{PSS_STEM} {ending}', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, card=f'…{ending}', **extra)
+
 QUESTIONS = [
-    question('pss_1', 'Feeling in control', 'In the last month, how often have you felt that you were unable to control the important things in your life?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS),
-    question('pss_2', 'Handling personal problems', 'In the last month, how often have you felt confident about your ability to handle your personal problems?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, reverse=True),
-    question('pss_3', 'Things going your way', 'In the last month, how often have you felt that things were going your way?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, reverse=True),
-    question('pss_4', 'Difficulties piling up', 'In the last month, how often have you felt difficulties were piling up so high that you could not overcome them?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS),
-    question('sleep_hours_avg', 'Typical sleep · past week', 'During the past week, how many hours of actual sleep did you get on a typical night? (This may be different than the number of hours you spend in bed.)', 0, 14, step=0.5, kind='slider', default=7, low='0 hours', high='14 hours', unit='hours'),
+    pss_question('pss_1', 'Losing control', "you couldn't control the important things in your life?"),
+    pss_question('pss_2', 'Handling personal problems', 'confident handling your personal problems?', reverse=True),
+    pss_question('pss_3', 'Things going your way', 'things were going well for you?', reverse=True),
+    pss_question('pss_4', 'Difficulties piling up', 'problems were piling up too much to handle?'),
+    question('sleep_hours_avg', 'Typical sleep · past week', 'On average, how many hours of sleep have you gotten each night this week?', 0, 14, step=0.5, kind='slider', default=7, low='0 hours', high='14 hours', unit='hours'),
     question('sleep_quality', 'Sleep quality · past week', 'During the past week, how would you rate your sleep quality overall?', SCALE_MIN, SCALE_MAX, SLEEP_OPTIONS),
-    question('pas_workload', 'Study workload', 'I believe that the amount of work assignment is too much', SCALE_MIN, SCALE_MAX, PAS_OPTIONS),
-    question('pas_catchup', 'Catching up · optional', 'Am unable to catch up if getting behind the work', SCALE_MIN, SCALE_MAX, PAS_OPTIONS, optional=True),
+    question('pas_workload', 'Study workload', 'I feel my coursework is too much to handle.', SCALE_MIN, SCALE_MAX, PAS_OPTIONS),
+    question('pas_catchup', 'Catching up', 'When I fall behind on my work, I find it hard to catch up.', SCALE_MIN, SCALE_MAX, PAS_OPTIONS),
     question('fin_stress', 'Personal finances', 'How stressed do you feel about your personal finances in general?', SCALE_MIN, SCALE_MAX, FIN_OPTIONS, kind='slider', step=1, default=3, low='No stress at all', high='Overwhelming stress', unit='out of 5'),
     question('mspss_friends', 'Support from friends', 'I can count on my friends when things go wrong.', SCALE_MIN, SCALE_MAX, SUPPORT_OPTIONS, reverse=True),
-    question('mspss_family', 'Support from family', 'I get the emotional help & support I need from my family.', SCALE_MIN, SCALE_MAX, SUPPORT_OPTIONS, reverse=True),
-    question('mspss_so', 'A special person · optional', 'There is a special person who is around when I am in need.', SCALE_MIN, SCALE_MAX, SUPPORT_OPTIONS, optional=True, reverse=True),
+    question('mspss_family', 'Support from family', 'I get the emotional help and support I need from my family.', SCALE_MIN, SCALE_MAX, SUPPORT_OPTIONS, reverse=True),
 ]
 QUESTION_MAP = {q['key']: q for q in QUESTIONS}
 # Positively worded items: a high answer means LESS stress, so they are scored as 6 - answer.
 REVERSED_KEYS = tuple(q['key'] for q in QUESTIONS if q.get('reverse'))
 SECTIONS = [
-    dict(title='Your month', heading='Start with the bigger picture.', period='Think about the last month',
+    dict(title='Your month', heading=f'{PSS_STEM}…', period='Think about the last month',
          intro='Notice how manageable life has felt, including moments when things went well. Choose how often each experience happened.',
          why='These four questions explore perceived stress: how unpredictable, difficult to control, or overwhelming life has felt. Together they give more context than one stress rating.',
          source='PSS-4 items · Cohen, Kamarck & Mermelstein (1983), adapted to a 1–5 scale. Items 2 and 3 are reverse-scored.', keys=['pss_1','pss_2','pss_3','pss_4']),
@@ -64,7 +69,7 @@ SECTIONS = [
     dict(title='Your support', heading='Who can you lean on?', period='The support available to you',
          intro='After looking at pressures, consider the people who help you face them. Friends and family may support you in different ways.',
          why='Support can make stressful experiences easier to navigate. These questions look at sources of support; they do not cancel out or invalidate the stress you reported.',
-         source='Selected MSPSS items · Zimet et al. (1988), adapted to five points and reverse-scored in the stress score. Not a validated short-form scale.', keys=['mspss_friends','mspss_family','mspss_so']),
+         source='Selected MSPSS items · Zimet et al. (1988), adapted to five points and reverse-scored in the stress score. Not a validated short-form scale.', keys=['mspss_friends','mspss_family']),
     dict(title='A moment to reflect', heading='Anything else on your mind?', period='Optional · not scored',
          intro='Numbers cannot capture everything. You can reflect here, or continue without writing anything.',
          why='Your reflection does not contribute to the stress score. A basic safety check can highlight support, but it cannot recognise every situation. You can contact support at any time.',
@@ -116,13 +121,13 @@ def scored_value(key, answer):
 def score(record):
     """Score validated v3 inputs only; no AI or free-text sentiment scoring.
 
-    stress_score = mean of every answered item on a 1-5 stress scale (1.0-5.0).
+    stress_score = mean of all 11 required answers on a 1-5 stress scale (1.0-5.0).
     Sleep hours are converted in scored_value; the stored answer stays hours.
-    Skipped optional items are left out, never counted as zero.
+    Every question has equal weight.
     """
     items = [scored_value(q['key'], record[q['key']]) for q in QUESTIONS if record.get(q['key']) is not None]
     average = sum(items) / len(items)
-    support = [record[k] for k in ('mspss_friends','mspss_family','mspss_so') if record.get(k) is not None]
+    support = [record[k] for k in SUPPORT_KEYS if record.get(k) is not None]
     mean = sum(support) / len(support)
     flags = {
         'sleep': record['sleep_hours_avg'] < 6 or record['sleep_quality'] >= 4,  # under 6 h, or fairly/very bad
@@ -159,7 +164,7 @@ def factor_insights(record, scores):
         dict(title='Rest & recovery', flagged=flags['sleep'], value=f"{record['sleep_hours_avg']:g} hours · {SLEEP_OPTIONS[record['sleep_quality']-1]} quality",
              text='Short or unsatisfying sleep can make daily demands harder to manage. Stress may also disrupt sleep. The project flags under 6 hours or fairly/very bad quality (answers of 4 or 5).'),
         dict(title='Study demands', flagged=flags['workload'], value=f"{record['pas_workload']}/5 · {PAS_OPTIONS[record['pas_workload']-1]}",
-             text='Feeling overloaded may leave less room for rest. Agreeing that assignments are too much raises a workload flag. The optional catch-up answer adds context, not another flag.'),
+             text='Feeling overloaded may leave less room for rest. Agreeing that coursework is too much raises a workload flag. The catch-up answer counts in the stress score, not as a separate flag.'),
         dict(title='Money pressures', flagged=flags['finances'], value=f"{record['fin_stress']}/5 · {FIN_OPTIONS[record['fin_stress']-1]}",
              text='Money worries may add to study pressures. Answers of 4–5 (high or overwhelming stress) raise a financial flag and guide money-support suggestions; no amounts or income are inferred.'),
         dict(title='Support & connection', flagged=flags['support'], value=f"{scores['support_mean']:g}/5 agreement across {scores['support_item_count']} answers",

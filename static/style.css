@@ -186,7 +186,8 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 #dns-campus .ds-why{padding:18px 20px;background:var(--ds-soft);border-radius:16px;margin:20px 0}
 #dns-campus .ds-why p{margin:5px 0 0;font-size:14px}
 #dns-campus .ds-question{min-width:0;border:1px solid var(--ds-line);border-radius:18px;padding:20px;margin:25px 0;background:var(--ds-panel)}
-#dns-campus .ds-question legend{font-weight:600;font-size:15px;line-height:1.55;padding:0 6px;max-width:100%}
+#dns-campus .ds-q-title{margin:0 0 16px;font-size:15px;font-weight:600;line-height:1.55;color:var(--ds-ink)}
+#dns-campus .ds-q-title label{display:block;font:inherit;color:inherit;margin:0}
 #dns-campus .ds-answer-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px}
 #dns-campus .ds-answer{position:relative;display:block;cursor:pointer}
 #dns-campus .ds-answer input{position:absolute;opacity:0;width:1px;height:1px}
@@ -197,12 +198,9 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 #dns-campus .ds-question .ds-big-value{font-size:24px;letter-spacing:-.5px;margin:20px 0}
 #dns-campus .ds-question input[type=range]{height:34px}
 #dns-campus .ds-confirm{font-size:12px;padding:9px 14px;margin:8px 0}
-#dns-campus .ds-exact{max-width:150px;display:block;margin-top:6px}
 #dns-campus .ds-finance-anchors{display:flex;justify-content:space-around;font-size:12px;color:var(--ds-sub);margin:14px 0}
-#dns-campus .ds-extra,#dns-campus .ds-scoring{border:1px solid var(--ds-line);border-radius:14px;padding:16px;margin:20px 0}
+#dns-campus .ds-scoring{border:1px solid var(--ds-line);border-radius:14px;padding:16px;margin:20px 0}
 #dns-campus summary{cursor:pointer;font-weight:600;font-size:14px}
-#dns-campus .ds-extra .ds-question{margin-bottom:0}
-#dns-campus .ds-optional{display:inline-block;font-size:11px;background:var(--ds-soft);border-radius:12px;padding:3px 8px}
 #dns-campus .ds-source{margin-top:22px}
 #dns-campus .ds-review-block{padding:12px 0;border-bottom:1px solid var(--ds-line)}
 #dns-campus .ds-review-block .ds-summary{margin:5px 0 15px}

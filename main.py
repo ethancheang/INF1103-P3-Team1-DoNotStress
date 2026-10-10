@@ -258,7 +258,7 @@ def create_app(test_config=None):
                    'financial_stress', 'social_support', 'risk_category', 'saved_at',
                    'survey_version', 'stress_score', 'sleep_hours_avg', 'sleep_quality',
                    'pas_workload', 'pas_catchup', 'fin_stress', 'mspss_friends',
-                   'mspss_family', 'mspss_so', 'support_mean')
+                   'mspss_family', 'support_mean')
         rows = []
         for item in filtered:
             row = {key: item.get(key) for key in columns}

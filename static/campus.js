@@ -13,11 +13,10 @@
   Object.assign(answers,{student_id:'',feelings_text:''});
   const chapters = survey.sections.map(section=>section.title);
   const reviewStep = chapters.length;
-  const labels = {student_id:'Student ID',...Object.fromEntries(survey.questions.map(q=>[q.key,q.label])),feelings_text:'Private reflection'};
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function plant(g=1){return `<div class="ds-plant" aria-hidden="true" style="--grow:${g}"><div class="ds-stem"><div class="ds-leaf"></div><div class="ds-leaf r"></div><div class="ds-leaf s"></div></div><div class="ds-pot"></div></div>`}
 function footer(){return `<footer class="ds-footer"><div><strong>Support is always available.</strong><br><a href="tel:1767">SOS 1767</a> · <a href="tel:1771">National mindline 1771</a> (24 hours)<br><a href="mailto:SITCounselling@SingaporeTech.edu.sg">SIT Counselling</a> · <a href="tel:65922030">6592 2030</a></div><div>A self-reflection aid, not a diagnosis.<br>Project bands are not clinical cut-offs.<br><a href="https://www.sos.org.sg/contact-us/" target="_blank" rel="noopener">SOS</a> · <a href="https://www.mindline.sg/" target="_blank" rel="noopener">mindline</a></div></footer>`}
-function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pill">✦ A small pause. A fresh perspective.</span><h1>Uni is a lot.<br>Let's check in<br><em style="font-family:Georgia,serif;font-weight:400">with you.</em></h1><p>Sleep, deadlines, life. Make a little room to notice how you're doing — and find your next small step.</p><div class="ds-actions"><button class="ds-primary" data-action="start">Start my check-in <span>↗</span></button><span class="ds-note">10 core questions · 6 chapters<br>Go at your own pace</span></div></section><div class="ds-art ds-companion"><div class="ds-orbit"></div><span class="ds-float a">☾ Rest counts, too.</span><span class="ds-float b">One thing at a time.</span><span class="ds-float c">✦ Showing up is enough.</span>${plant()}<div class="ds-ground"></div><span class="ds-art-label">Meet your little growth buddy</span></div></div><div class="ds-bottom"><section class="ds-feature"><span class="ds-num">01 / NOTICE</span><h3>A check-in, on your terms.</h3><p>Simple taps and sliders. No right answers, no pressure to feel a certain way.</p></section><section class="ds-feature"><span class="ds-num">02 / UNDERSTAND</span><h3>See the bigger picture.</h3><p>Bring your academic load and everyday wellbeing into one view.</p></section><section class="ds-feature"><span class="ds-num">03 / RESET</span><h3>Pick one small next step.</h3><p>Leave with a manageable plan. Grow your plant by taking time for yourself.</p></section></div>${footer()}`}
+function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pill">✦ A small pause. A fresh perspective.</span><h1>Uni is a lot.<br>Let's check in<br><em style="font-family:Georgia,serif;font-weight:400">with you.</em></h1><p>Sleep, deadlines, life. Make a little room to notice how you're doing — and find your next small step.</p><div class="ds-actions"><button class="ds-primary" data-action="start">Start my check-in <span>↗</span></button><span class="ds-note">11 core questions · 6 chapters<br>Go at your own pace</span></div></section><div class="ds-art ds-companion"><div class="ds-orbit"></div><span class="ds-float a">☾ Rest counts, too.</span><span class="ds-float b">One thing at a time.</span><span class="ds-float c">✦ Showing up is enough.</span>${plant()}<div class="ds-ground"></div><span class="ds-art-label">Meet your little growth buddy</span></div></div><div class="ds-bottom"><section class="ds-feature"><span class="ds-num">01 / NOTICE</span><h3>A check-in, on your terms.</h3><p>Simple taps and sliders. No right answers, no pressure to feel a certain way.</p></section><section class="ds-feature"><span class="ds-num">02 / UNDERSTAND</span><h3>See the bigger picture.</h3><p>Bring your academic load and everyday wellbeing into one view.</p></section><section class="ds-feature"><span class="ds-num">03 / RESET</span><h3>Pick one small next step.</h3><p>Leave with a manageable plan. Grow your plant by taking time for yourself.</p></section></div>${footer()}`}
 function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">My little garden</span><h2>Growth, without the pressure.</h2><p>Your completed check-in plants a seed.<br>Missing a day never takes anything away.</p><div class="ds-art">${plant(completed?1:.45)}<div class="ds-ground"></div><span class="ds-art-label">${completed?'Your first check-in plant':'Your first seed is waiting'}</span></div><h3>${completed?'1 check-in · 1 moment for you':'A fresh start, whenever you’re ready.'}</h3><p>${completed?'You earned this by checking in — whatever your answers were.':'Take a moment for yourself and watch your first plant grow.'}</p><button class="ds-primary" data-action="${completed?'plan':'start'}">${completed?'Return to my plan':'Plant my first seed →'}</button></div>${footer()}`}
 
   function field(label, id, control, help='') {
@@ -30,21 +29,27 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     if(q.options)return `${value} · ${q.options[+value-q.min]}`;
     return `${value} ${q.unit}`;
   }
+  function cardText(q){return q.card || q.prompt;}
   function questionControl(q) {
+    if(q.key==='sleep_hours_avg' && answers[q.key]===null) answers[q.key]=q.default;
     const chosen=answers[q.key]!==null, value=chosen?answers[q.key]:q.default;
     const helpId=q.key+'-help';
-    if(q.kind==='slider')return `<div class="ds-question" id="question-${q.key}">
-      <label class="ds-label" for="${q.key}">${escape(q.prompt)}</label>
-      <div class="ds-big-value"><output id="${q.key}-value" for="${q.key}" aria-live="polite">${chosen?escape(answerText(q.key)):'Choose your answer'}</output></div>
-      <input type="range" id="${q.key}" min="${q.min}" max="${q.max}" step="${q.step}" value="${value}" aria-describedby="${helpId}" aria-valuetext="${chosen?escape(answerText(q.key)):'Not answered; slider starts at '+value}">
+    const title=`<h3 class="ds-q-title" id="${q.key}-title">${q.kind==='slider'?`<label for="${q.key}">${escape(cardText(q))}</label>`:escape(cardText(q))}</h3>`;
+    if(q.kind==='slider'){
+      const shown=escape(answerText(q.key, chosen?answers[q.key]:value));
+      const finance=q.key==='fin_stress';
+      return `<div class="ds-question" id="question-${q.key}">
+      ${title}
+      <div class="ds-big-value"><output id="${q.key}-value" for="${q.key}" aria-live="polite">${chosen?shown:'Choose your answer'}</output></div>
+      <input type="range" id="${q.key}" min="${q.min}" max="${q.max}" step="${q.step}" value="${value}" ${finance?`aria-describedby="${helpId}"`:''} aria-valuetext="${chosen?shown:'Not answered; slider starts at '+value}">
       <div class="ds-ends"><span>${q.min} · ${escape(q.low)}</span><span>${q.max} · ${escape(q.high)}</span></div>
-      <p id="${helpId}" class="ds-help">${q.key==='sleep_hours_avg'?'Use half-hour steps.':'Higher numbers mean more financial stress.'} Move the slider or confirm the displayed position.</p>
-      <button class="ds-secondary ds-confirm" data-confirm="${q.key}">${chosen?'Answer selected':'Use '+value+(q.key==='sleep_hours_avg'?' hours':' / 5')}</button>
-      ${q.key==='sleep_hours_avg'?`<label class="ds-help" for="sleep_exact">Or enter hours directly</label><input class="ds-input ds-exact" id="sleep_exact" type="number" min="0" max="14" step="0.5" value="${chosen?value:''}" placeholder="e.g. 6.5">`:''}
+      ${finance?`<p id="${helpId}" class="ds-help">Higher numbers mean more financial stress. Move the slider or confirm the displayed position.</p>
+      <button class="ds-secondary ds-confirm" data-confirm="${q.key}">${chosen?'Answer selected':'Use '+value+' / 5'}</button>`:''}
       </div>`;
-    return `<fieldset class="ds-question" id="question-${q.key}"><legend>${escape(q.prompt)} ${q.optional?'<span class="ds-optional">Optional</span>':''}</legend>
+    }
+    return `<div class="ds-question" id="question-${q.key}" role="group" aria-labelledby="${q.key}-title">${title}
       <div class="ds-answer-options">${q.options.map((label,i)=>`<label class="ds-answer"><input type="radio" name="${q.key}" value="${i+q.min}" ${answers[q.key]===i+q.min?'checked':''}><span><b>${i+q.min}</b>${escape(label)}</span></label>`).join('')}</div>
-      ${q.optional?`<button class="ds-link" data-skip="${q.key}">Skip / clear this answer</button>`:''}</fieldset>`;
+      </div>`;
   }
   function safetyPrompt() {
     return `<div class="ds-support ds-support-urgent" role="status"><h3>Please reach out</h3><p>If your words reflect how you feel right now, you deserve support. This basic word check cannot determine your safety.</p><p>Talk to someone now: <a href="tel:1767">SOS 1767</a> or <a href="tel:1771">mindline 1771</a> (24 hours).</p><a href="mailto:SITCounselling@SingaporeTech.edu.sg">SIT Counselling</a></div>`;
@@ -60,15 +65,14 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       content=`<span class="ds-pill">${escape(section.period)}</span><h2 tabindex="-1" id="ds-step-heading">${escape(section.heading)}</h2><p>${escape(section.intro)}</p>
         <div class="ds-why"><strong>Why this matters</strong><p>${escape(section.why)}</p></div>
         ${step===0?field('Student ID','student_id','<input class="ds-input" id="student_id" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="e.g. 2605581">','7 digits starting with 2. Your ID is not sent to the AI provider.'):''}
-        ${section.keys.filter(key=>!questions[key].optional).map(key=>questionControl(questions[key])).join('')}
-        ${section.keys.some(key=>questions[key].optional)?`<details class="ds-extra" ${section.keys.some(key=>questions[key].optional&&answers[key]!==null)?'open':''}><summary>Add a little more context (optional)</summary>${section.keys.filter(key=>questions[key].optional).map(key=>questionControl(questions[key])).join('')}</details>`:''}
+        ${section.keys.map(key=>questionControl(questions[key])).join('')}
         ${step===5?field('Anything on your mind about school or life lately? (Optional)','feelings_text','<textarea class="ds-input" id="feelings_text" rows="4" maxlength="2000" placeholder="A space to reflect, if you want it."></textarea>','Not scored or saved. Checked by this app for possible crisis language, then discarded by the server. Not sent to Gemini. No person monitors this text.'):''}
         <div id="ds-safety">${reflectionSafety()?safetyPrompt():''}</div><p class="ds-help ds-source">${escape(section.source)}</p>`;
     } else {
       content=`<span class="ds-pill">✦ Your check-in, together</span><h2 tabindex="-1" id="ds-step-heading">A moment to look back.</h2><p>Check the time periods and answers below. You can edit any chapter before continuing.</p>
       <p><strong>Student ID:</strong> ${escape(answers.student_id)}</p>
       ${survey.sections.map((section,index)=>`<section class="ds-review-block"><div class="ds-actions"><h3>${escape(section.title)}</h3><button class="ds-link" data-edit-step="${index}">Edit</button></div><p class="ds-help">${escape(section.period)}</p>
-      <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(labels[key])}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Included for the local safety check only; not saved or sent to AI.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
+      <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(questions[key].prompt)}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Included for the local safety check only; not saved or sent to AI.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
       ${reflectionSafety()?safetyPrompt():''}
       <div class="ds-why"><strong>What happens next</strong><p>Your questionnaire answers (without your ID or reflection) go to Gemini for supporting suggestions. The app calculates your average stress score (1–5) and applies the documented project rules. This is not a diagnosis. Saving is optional afterwards.</p></div>`;
     }
@@ -134,7 +138,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     return `<section class="ds-insights"><div class="ds-actions"><h3>Your stress picture</h3>${riskBadge(info.risk_category)}</div>
       <div class="ds-score"><strong>${escape(info.stress_score ?? '—')}<small> / 5</small></strong><span>Average stress score · 1 (low) to 5 (high)<br>Across all your answers</span></div>
       <p class="ds-explanation">${escape(info.explanation)}</p>
-      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>Every question uses a 1–5 scale except typical sleep, which you enter in hours. Those hours are converted when scoring (8 or more hours is 1, under 5 hours is 5). Positively worded questions (handling problems, things going your way, and the three support questions) are reversed as 6 − answer, so a higher number always means more stress. Your score is the average of all the questions you answered. The project uses below 2.5, 2.5–3.5 and above 3.5 for its Low, Moderate and High guidance bands. Context flags choose which tips appear first. A safety prompt can produce High without changing the score.</p><p>These are project heuristics, not validated clinical cut-offs. This mix of selected and adapted questions is not a validated combined screening instrument.</p></details>
+      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>Every question uses a 1–5 scale except typical sleep, which you enter in hours. Those hours are converted when scoring (8 or more hours is 1, under 5 hours is 5). Positively worded questions (confident handling personal problems, things going well, and support from friends and family) are reversed as 6 − answer, so a higher number always means more stress. Your score is the average of all 11 answers, each with equal weight. The project uses below 2.5, 2.5–3.5 and above 3.5 for its Low, Moderate and High guidance bands. Context flags choose which tips appear first. A safety prompt can produce High without changing the score.</p><p>These are project heuristics, not validated clinical cut-offs. This mix of selected and adapted questions is not a validated combined screening instrument.</p></details>
       </section><section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3><span class="ds-pill">${factor.flagged?'Worth some attention':'Context noted'}</span></div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('')}</div></section>
       ${info.safety_flag?safetyPrompt():''}`;
   }
@@ -150,7 +154,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <p class="ds-help">Cohort year uses the first two ID digits (26 → 2026). Dates use Singapore time.</p>
       <div id="ds-record-status" role="status" aria-live="polite"></div>
       <div class="ds-record-table" role="region" aria-label="Saved check-ins table" tabindex="0">
-      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Questionnaire','Typical Sleep','Sleep Quality','Perceived Stress','Study Workload','Finances','Friends / Family / Other','Support Mean','Risk Category','AI Status','Date Saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
+      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Questionnaire','Typical Sleep','Sleep Quality','Perceived Stress','Study Workload','Finances','Friends / Family','Support Mean','Risk Category','AI Status','Date Saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
       <p class="ds-help">Project bands: ${riskBadge('Low')} ${riskBadge('Moderate')} ${riskBadge('High')}. Answers are 1–5, except typical sleep, which is still hours. Stress score is the 1–5 average (higher = more stress); finance is a 1–5 slider (higher = more stress); support mean is raw agreement /5 (higher = more support). Legacy /10 and evidence-v2 records use different scales and cannot be directly compared.</p>
       <button class="ds-link" data-action="refresh-records">Refresh records</button></section>${footer()}`;
     loadRecords();
@@ -193,7 +197,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
         <td>${revised?cell(row.stress_score)+'/5':cell(row.stress_level)+'/10 · legacy'}</td>
         <td>${revised?cell(row.pas_workload)+'/5'+(row.pas_catchup==null?'':`<small>Catch-up: ${cell(row.pas_catchup)}/5</small>`):cell(row.academic_workload)+'/10'}</td>
         <td>${revised?opt('fin_stress',row.fin_stress)+'<small>Higher = more stress</small>':cell(row.financial_stress)+'/10<small>Legacy: higher = more distress</small>'}</td>
-        <td>${revised?[row.mspss_friends,row.mspss_family,row.mspss_so].map(cell).join(' / '):'—'}</td>
+        <td>${revised?[row.mspss_friends,row.mspss_family].map(cell).join(' / '):'—'}</td>
         <td>${revised?cell(row.support_mean)+'/5':cell(row.social_support)+'/10 · legacy'}</td>
         <td>${riskBadge(row.risk_category)}</td><td>${cell(row.ai_status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`;
       }).join(''):'<tr><td colspan="12" class="ds-empty">No records found</td></tr>';
@@ -205,7 +209,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     if(step===0&&!/^2[0-9]{6}$/.test(answers.student_id.trim())){message='Enter a 7-digit student ID starting with 2.';focus=main.querySelector('#student_id');}
     for(const key of survey.sections[step]?.keys||[]) {
       const q=questions[key], value=answers[key];
-      if(q.optional&&value===null)continue;
       if(value===null||value===''||!Number.isFinite(+value)||+value<q.min||+value>q.max||!Number.isInteger(+value/q.step)) {
         if(!message){message=`Please answer “${q.label}” using the available choices.`;focus=main.querySelector(`#question-${key} input`);}
       }
@@ -253,14 +256,12 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   root.addEventListener('input',event=>{
     const {id,value}=event.target;
     if(id==='ds-record-search'){recordFilters.student_id=value;clearTimeout(searchTimer);recordsRequest++;searchTimer=setTimeout(()=>{if(page==='records')loadRecords();},200);return;}
-    if(questions[id]?.kind==='slider'||id==='sleep_exact') {
-      const key=id==='sleep_exact'?'sleep_hours_avg':id;
-      answers[key]=value===''?null:+value;
-      const out=main.querySelector('#'+key+'-value');out.textContent=answerText(key);
-      const slider=main.querySelector('#'+key);slider.setAttribute('aria-valuetext',answerText(key));
-      if(id==='sleep_exact')slider.value=value;
-      else if(id==='sleep_hours_avg')main.querySelector('#sleep_exact').value=value;
-      main.querySelector(`[data-confirm="${key}"]`).textContent='Answer selected';
+    if(questions[id]?.kind==='slider') {
+      answers[id]=+value;
+      const shown=answerText(id);
+      const out=main.querySelector('#'+id+'-value');if(out)out.textContent=shown;
+      event.target.setAttribute('aria-valuetext',shown);
+      const confirm=main.querySelector(`[data-confirm="${id}"]`);if(confirm)confirm.textContent='Answer selected';
     } else if(id==='student_id'||id==='feelings_text') {
       answers[id]=value;
       if(id==='feelings_text')main.querySelector('#ds-safety').innerHTML=reflectionSafety()?safetyPrompt():'';
@@ -274,7 +275,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   root.addEventListener('click',async event=>{
     const button=event.target.closest('button');if(!button||busy)return;
     if(button.dataset.confirm){const key=button.dataset.confirm;const control=main.querySelector('#'+key);control.dispatchEvent(new Event('input',{bubbles:true}));return;}
-    if(button.dataset.skip){answers[button.dataset.skip]=null;main.querySelectorAll(`input[name="${button.dataset.skip}"]`).forEach(input=>input.checked=false);return;}
     if(button.dataset.editStep!==undefined){step=+button.dataset.editStep;checkin();main.querySelector('#ds-step-heading').focus();return;}
     if(button.dataset.nav){page=button.dataset.nav;render();return;}
     if(button.dataset.task!==undefined){const id=+button.dataset.task;selected.has(id)?selected.delete(id):selected.add(id);render();return;}

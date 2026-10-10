@@ -346,6 +346,7 @@ def build_prompt(student_dict: dict[str, Any]) -> str:
     """
     payload = {key:student_dict.get(key) for key in STUDENT_PROMPT_FIELDS}
     record_json = json.dumps(payload, ensure_ascii=False, indent=2)
+    wording = "\n".join(f"- {q['key']}: {q['prompt']}" for q in survey.QUESTIONS)
     stressor_list = ", ".join(sorted(ALLOWED_PRIMARY_STRESSORS))
     tip_id_list = ", ".join(sorted(ALLOWED_TIP_IDS))
     soft_label_list = ", ".join(f'"{label}"' for label in SOFT_LABELS)
@@ -357,18 +358,20 @@ def build_prompt(student_dict: dict[str, Any]) -> str:
         "Use the supplied computed risk_category, soft_label and speak_prominence exactly. "
         "They are project heuristics, not clinical cut-offs. "
         "Every question uses a 1–5 scale except sleep_hours_avg, which is entered as hours and "
-        "converted to 1–5 only when scoring. pss_2, pss_3, mspss_friends, mspss_family and mspss_so are "
-        "positively worded and are scored as 6 - answer; after that, higher always means more stress. "
-        "stress_score is the average of all answered items (1.0–5.0): below 2.5 Low, 2.5–3.5 Moderate, above 3.5 High. "
+        "converted to 1–5 only when scoring. All 11 questions are required and carry equal weight. "
+        "pss_2, pss_3, mspss_friends and mspss_family are positively worded and are scored as 6 - answer; "
+        "after that, higher always means more stress. "
+        "stress_score is the average of all 11 answers (1.0–5.0): below 2.5 Low, 2.5–3.5 Moderate, above 3.5 High. "
         "risk_score must equal (stress_score - 1) / 4 and is a normalised score, not a probability. "
-        "PSS items: 1 never to 5 very often in the last month (adapted; not a PSS-4 total). "
+        "PSS items share the stem \"In the past month, how often have you felt\" and use 1 never to 5 very often "
+        "(adapted; not a PSS-4 total). "
         "Sleep (past week): sleep_hours_avg is hours from 0 to 14 in half-hour steps; scoring maps "
         "8+ hours to 1, 7 to under 8 to 2, 6 to under 7 to 3, 5 to under 6 to 4, and under 5 hours to 5. "
         "sleep_quality is 1 very good to 5 very bad. "
         "PAS: 1 strongly disagree to 5 strongly agree, selected items only, not a full validated subscale. "
         "Finance: a 1–5 slider, 1 no stress to 5 overwhelming stress (higher is worse). "
-        "MSPSS: 1 strongly disagree to 5 strongly agree, higher is more support; support_mean is the raw agreement average. "
-        "Optional pas_catchup and mspss_so may be null: never invent missing answers. "
+        "MSPSS: friends and family only, 1 strongly disagree to 5 strongly agree; support_mean is the raw agreement average. "
+        f"Question wording:\n{wording}\n"
         "Use context_flags to choose tips. Do not infer a diagnosis, safety, or a student's state of mind. "
         "Reflection text is excluded and must not be inferred.\n"
         "Speak to the student with warmth and care. Analyse the check-in "

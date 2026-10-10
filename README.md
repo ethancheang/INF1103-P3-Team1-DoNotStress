@@ -32,24 +32,24 @@ The interface opens without a key, but assessment requires Gemini. Missing crede
 
 The questionnaire follows section 2 of `donotstress_question_evidence.docx` (9 October 2026).
 `survey.py` owns question wording, options, chapter explanations and deterministic scoring.
-The browser receives the same definitions from Flask. Required answers start unselected.
+The browser receives the same definitions from Flask. Required answers start unselected, except the sleep slider, which starts at 7 hours and uses that position as the answer.
 
-1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items, 1 (never) to 5 (very often), recall last month. Items 2 and 3 are reverse-scored.
-2. **Rest and recovery:** typical actual sleep in the past week stays a 0–14 hour slider in 0.5 steps. Scoring converts hours to 1–5 stress: 8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5. Sleep quality is 1 (very good) to 5 (very bad).
-3. **Study demands:** PAS workload item, 1 (strongly disagree) to 5 (strongly agree); optional catch-up item. Direction is adapted.
+1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items under one stem, "In the past month, how often have you felt…". Each item is 1 (never) to 5 (very often). Items 2 and 3 are reverse-scored.
+2. **Rest and recovery:** typical sleep this week is a 0–14 hour slider in 0.5 steps. Scoring converts hours to 1–5 stress: 8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5. Sleep quality is 1 (very good) to 5 (very bad).
+3. **Study demands:** workload and catch-up items, both required, 1 (strongly disagree) to 5 (strongly agree). Direction is adapted.
 4. **Money pressures:** IFDFW item 8 adapted to a 1–5 slider, 1 (no stress at all) to 5 (overwhelming stress). Higher means MORE distress.
-5. **Your support:** MSPSS friends and family items, 1 (strongly disagree) to 5 (strongly agree); optional special-person item. Reverse-scored in the stress score.
+5. **Your support:** MSPSS friends and family items, both required, 1 (strongly disagree) to 5 (strongly agree). Reverse-scored in the stress score.
 6. **Reflection:** optional text, up to 2,000 characters; not scored, sent to Gemini, or saved.
 
-Ten core questions, two optional contextual items, plus optional reflection. ID is not scored.
+Eleven required questions, plus optional reflection. ID is not scored. Each question has equal weight in the average.
 
 ### Scoring and interpretation
 
-- Typical sleep is entered in hours and converted to 1–5 only when scoring (8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5). Every other item is answered on a 1–5 scale. Positively worded items (`pss_2`, `pss_3`, `mspss_friends`, `mspss_family`, `mspss_so`) are scored as `6 - answer`.
-- `stress_score` = average of all answered items after that conversion and reverse scoring, range 1.0–5.0. Skipped optional items are left out, never counted as zero.
+- Typical sleep is entered in hours and converted to 1–5 only when scoring (8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5). Every other item is answered on a 1–5 scale. Positively worded items (`pss_2`, `pss_3`, `mspss_friends`, `mspss_family`) are scored as `6 - answer`.
+- `stress_score` = average of all 11 required answers after that conversion and reverse scoring, range 1.0–5.0. Each answer has equal weight.
 - Team guidance bands: below 2.5 Low ("You're doing ok"), 2.5–3.5 Moderate ("Worth a check-in"), above 3.5 High ("Please reach out"). NOT clinical cut-offs or a diagnosis.
-- Context flags (choose tips and factor cards only): sleep under 6 hours OR quality >=4; workload >=4; finance >=4; raw support mean <2.5.
-- Optional catch-up and special-person answers count toward the average when answered.
+- Context flags (choose tips and factor cards only): sleep under 6 hours OR quality >=4; workload >=4; finance >=4; raw support mean of friends and family <2.5.
+- Catch-up counts in the average. It does not raise the workload flag by itself.
 - A basic local crisis-language check highlights “Please reach out” and support contacts without changing the stress score. It can miss language or produce false positives; it is not a safety assessment and no person monitors reflections.
 - `risk_score` is retained for backend compatibility as `(stress_score - 1) / 4`, NOT a probability. AI cannot replace the computed band. Tips combine relevant context suggestions with validated AI tip IDs.
 
