@@ -76,6 +76,20 @@ class AdminAccessTests(unittest.TestCase):
             self.assertEqual(self.client.get('/api/records').status_code,200)
         self.assertEqual(self.app.test_client().get('/api/records').status_code,401)
 
+    def test_admin_keeps_records_from_home_without_signing_in_again(self):
+        login_admin(self.client)
+        home=self.client.get('/').get_data(as_text=True)
+        self.assertIn('Admin view', home)
+        self.assertIn('Log out', home)
+        self.assertIn('data-nav="records"', home)
+        self.assertNotIn('Admin sign in', home)
+        self.assertIn('data-nav="home"', home)
+        records=self.client.get('/records')
+        self.assertEqual(records.status_code,200)
+        self.assertIn('data-nav="records"', records.get_data(as_text=True))
+        with patch('main.data_manager.load_all_records',return_value={'ok':True,'records':[]}):
+            self.assertEqual(self.client.get('/api/records').status_code,200)
+
     def test_untrusted_role_and_unknown_server_token_do_not_authorize(self):
         with self.client.session_transaction() as state:
             state['role']='admin'

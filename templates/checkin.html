@@ -11,20 +11,18 @@
             <button data-nav="home" aria-current="page">Home</button>
             <button data-nav="checkin">Check-in</button>
             <button data-nav="garden">My garden</button>
-            {% if boot.isAdmin %}
-            <button data-nav="records">Saved records</button>
-            {% endif %}
           </nav>
         </details>
         <a class="ds-talk" href="mailto:SITCounselling@SingaporeTech.edu.sg">Talk to someone</a>
         <div class="ds-account">
-          <span class="ds-pill">{{ 'Admin view' if boot.isAdmin else 'Student view' }}</span>
           {% if boot.isAdmin %}
+          <button type="button" data-nav="records">Admin view</button>
           <form action="{{ url_for('admin_logout') }}" method="post">
             <input type="hidden" name="csrf_token" value="{{ boot.csrfToken }}">
             <button class="ds-link" type="submit">Log out</button>
           </form>
           {% else %}
+          <span class="ds-pill">Student view</span>
           <a class="ds-link" href="{{ url_for('admin_login') }}">Admin sign in</a>
           {% endif %}
         </div>

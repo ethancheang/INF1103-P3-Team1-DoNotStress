@@ -143,6 +143,7 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 /* Saved history and risk presentation: labels always accompany colour. */
 #dns-campus .ds-nav{flex-wrap:wrap}
 #dns-campus .ds-account{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#dns-campus .ds-account button[data-nav=records]{border:0;background:var(--ds-soft);border-radius:1.25rem;padding:.55rem .85rem;font-size:.85rem;font-weight:650}
 #dns-campus .ds-account form{margin:0}
 #dns-campus .ds-account .ds-link{font-size:12px;white-space:nowrap}
 #dns-campus .ds-admin-login{max-width:480px;margin:35px auto 70px;padding:26px;background:var(--ds-panel);border:1px solid var(--ds-line);border-radius:22px}
