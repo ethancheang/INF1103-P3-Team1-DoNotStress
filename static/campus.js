@@ -89,12 +89,15 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     const phone = String(advisor.helpline || '').replace(/[^+0-9]/g, '');
     const sos = String(advisor.sos || '1767').replace(/[^+0-9]/g, '');
     const mindline = String(advisor.mindline || '1771').replace(/[^+0-9]/g, '');
+    const contacts = [
+      ['Email', `mailto:${email}`, email],
+      ['SIT Counselling 24-hour helpline', `tel:${phone}`, advisor.helpline || ''],
+      ['Samaritans of Singapore', `tel:${sos}`, advisor.sos || '1767'],
+      ['National mindline', `tel:${mindline}`, advisor.mindline || '1771'],
+    ];
     return `<div class="ds-support ${advisor.prominence==='high'?'ds-support-urgent':''}"><h3>${escape(advisor.heading)}</h3>
-      <p>${escape(advisor.body)}</p><p>${escape(advisor.cta)}</p>
-      <a href="mailto:${escape(email)}">${escape(email)}</a><br>
-      <a href="tel:${escape(phone)}">SIT Counselling 24-hour helpline ${escape(advisor.helpline)}</a><br>
-      <a href="tel:${escape(sos)}">Samaritans of Singapore ${escape(advisor.sos || '1767')}</a><br>
-      <a href="tel:${escape(mindline)}">National mindline ${escape(advisor.mindline || '1771')}</a></div>`;
+      <p>${escape(advisor.body)}</p>
+      <ul class="ds-contacts">${contacts.map(([label,href,value])=>`<li><span class="ds-contact-label">${escape(label)}</span><a href="${escape(href)}">${escape(value)}</a></li>`).join('')}</ul></div>`;
   }
   function result() {
     if (!assessment) {page='checkin';checkin();return;}

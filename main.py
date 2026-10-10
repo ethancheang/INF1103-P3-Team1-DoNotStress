@@ -43,10 +43,12 @@ def process_checkin(record, *, generate_fn=None, max_attempts=3, retry_delay_sec
 
 def result_view(record, saved=False):
     """Only send allow-listed, student-facing copy to the browser."""
+    advisor = io_manager.format_speak_to_advisor_panel(record['speak_prominence'])
+    advisor.pop('cta', None)
     return {
         'soft': io_manager.format_soft_label(record['soft_label']),
         'tips': io_manager.format_tips(record['tips']),
-        'advisor': io_manager.format_speak_to_advisor_panel(record['speak_prominence']),
+        'advisor': advisor,
         'saved': saved,
         'insights': {
             'risk_category': record.get('risk_category', 'Unknown'),
