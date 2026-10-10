@@ -773,9 +773,27 @@ _LOCAL_SAVE_UI_SCRIPT = """<script id="ds-logic-local-save-script">
     if (!main) return;
     const failureSupport = main.querySelector('#ds-failure-support');
     const errorEl = main.querySelector('#ds-error');
-    if (!failureSupport) return;
+    if (!failureSupport) {
+      const existing = document.getElementById('ds-local-save-card');
+      if (existing) existing.remove();
+      return;
+    }
 
-    const hasError = (errorEl && errorEl.textContent.trim().length > 0) || failureSupport.children.length > 0;
+    const errorText = errorEl ? errorEl.textContent.trim() : '';
+    const isBusy = document.getElementById('dns-campus')?.getAttribute('aria-busy') === 'true';
+    const isLoading = isBusy || errorText.includes('Taking a moment');
+    const isValidation = errorText.startsWith('Please answer') || errorText.startsWith('Choose');
+
+    const hasError = !isLoading && !isValidation && (
+      errorText.includes('unexpected error') ||
+      errorText.includes('could not complete') ||
+      errorText.includes('Could not connect') ||
+      errorText.includes('unavailable') ||
+      errorText.includes('login error') ||
+      errorText.includes('busy') ||
+      errorText.includes('missing API key') ||
+      (failureSupport.children.length > 0 && failureSupport.querySelector('.ds-support'))
+    );
     let card = main.querySelector('#ds-local-save-card');
 
     if (hasError && !card) {
