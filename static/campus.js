@@ -4,7 +4,6 @@
   const boot = JSON.parse(document.getElementById('campus-config').textContent);
   let page = boot.page || 'home', step = 0, completed = !!boot.completed;
   let assessment = boot.result || null, busy = false;
-  const selected = new Set();
   const recordFilters = {student_id:'', tier:'', cohort_year:''};
   const tiers = ["You're doing ok", 'Worth a check-in', 'Please reach out'];
   let recordsRequest = 0, searchTimer;
@@ -106,9 +105,8 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <div class="ds-result-hero" data-risk="${riskClass(assessment.insights?.risk_category)}"><div class="ds-kicker">Your check-in</div><h2>${escape(assessment.soft.heading)}</h2>
       <p>${escape(assessment.soft.body)}</p><div class="ds-note">A wellbeing check-in, not a medical diagnosis.</div></div>
       ${insightsPanel()}
-      <h3>${escape(assessment.tips.heading)}</h3><p>Choose what you'd like to try. One is enough to start.</p>
-      ${assessment.tips.items.map((tip,i)=>`<button class="ds-task" data-task="${i}" aria-pressed="${selected.has(i)}"><span class="ds-check">${selected.has(i)?'✓':'+'}</span><span>${escape(tip.text)}</span></button>`).join('')}
-      <div class="ds-status" aria-live="polite">${selected.size?selected.size+' small step(s) chosen.':'Your plan starts with a choice.'}</div>
+      <h3>${escape(assessment.tips.heading)}</h3><p>A few ideas that might help.</p>
+      <ul class="ds-suggestions">${assessment.tips.items.map(tip=>`<li>${escape(tip.text)}</li>`).join('')}</ul>
       <section class="ds-support"><h3>${assessment.saved?'Saved on this computer':'Keep this check-in?'}</h3>
       ${assessment.saved?'<p>You chose to save this check-in. Saved records are available in the admin view.</p>':'<p>Your result is held temporarily in server memory. Saving writes your questionnaire answers, assessment, and whether a safety prompt was shown to this computer. Reflection text is never saved. Only a signed-in admin can view saved records through this app.</p><label><input type="checkbox" id="ds-opt-in"> I want to save my check-in on this computer for admin review.</label><p></p><button class="ds-secondary" data-action="save">Save my check-in</button>'}
       <div class="ds-error" id="ds-save-status" role="status"></div></section>
@@ -227,7 +225,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     setBusy(true);
     main.querySelector('#ds-error').textContent='Taking a moment to understand your check-in…';
     main.querySelector('#ds-failure-support').innerHTML='';
-    assessment=null;completed=false;selected.clear();
+    assessment=null;completed=false;
     try {
       const {response,data}=await post(boot.submitUrl,{...answers,student_id:answers.student_id.trim(),feelings_text:answers.feelings_text.trim()});
       if(!response.ok) {
@@ -277,7 +275,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       if(next==='records'&&!boot.isAdmin)return;
       page=next;remember(page);render();return;
     }
-    if(button.dataset.task!==undefined){const id=+button.dataset.task;selected.has(id)?selected.delete(id):selected.add(id);render();return;}
     switch(button.dataset.action){
       case 'clear-filters':clearTimeout(searchTimer);Object.keys(recordFilters).forEach(key=>recordFilters[key]='');records();return;
       case 'refresh-records':loadRecords();return;

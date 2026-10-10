@@ -85,10 +85,8 @@
 #dns-campus .ds-result{display:grid;grid-template-columns:1fr 270px;gap:24px}
 #dns-campus .ds-result-hero{padding:25px;background:var(--ds-lilac);border-radius:22px;margin:22px 0}
 #dns-campus .ds-result-hero p{margin-bottom:0}
-#dns-campus .ds-task{width:100%;display:flex;align-items:center;gap:15px;text-align:left;border:1px solid var(--ds-line);border-radius:15px;padding:17px;background:var(--ds-panel);margin:10px 0}
-#dns-campus .ds-check{border:1px solid var(--ds-line);width:26px;height:26px;border-radius:50%;display:grid;place-items:center;flex-shrink:0}
-#dns-campus .ds-task[aria-pressed=true] .ds-check{background:var(--ds-accent);color:var(--ds-on)}
-#dns-campus .ds-task small{display:block;color:var(--ds-sub);margin-top:3px}
+#dns-campus .ds-suggestions{list-style:none;margin:0 0 8px;padding:0;display:flex;flex-direction:column;gap:10px}
+#dns-campus .ds-suggestions li{border:1px solid var(--ds-line);border-radius:15px;padding:16px 17px;background:var(--ds-panel)}
 #dns-campus .ds-support{padding:23px;background:var(--ds-soft);border-radius:20px;margin-top:20px;min-width:0;overflow-wrap:anywhere}
 #dns-campus .ds-support p{font-size:13px}
 #dns-campus .ds-support a{overflow-wrap:anywhere;word-break:break-word}
@@ -96,7 +94,6 @@
 #dns-campus .ds-contacts li{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:baseline;gap:4px 12px;min-width:0}
 #dns-campus .ds-contact-label{font-size:12px;color:var(--ds-sub)}
 #dns-campus .ds-contacts a{min-width:0}
-#dns-campus .ds-status{font-size:13px;color:var(--ds-sub);margin-top:12px}
 #dns-campus .ds-garden{text-align:center;max-width:610px;margin:15px auto}
 #dns-campus .ds-garden .ds-art{max-width:330px;margin:25px auto}
 #dns-campus [hidden]{display:none!important}
