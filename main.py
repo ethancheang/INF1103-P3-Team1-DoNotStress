@@ -14,7 +14,6 @@ import ai_manager
 import data_manager
 import io_manager
 import logic_manager
-import survey
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -50,17 +49,22 @@ def result_view(record, saved=False):
         'saved': saved,
         'insights': {
             'risk_category': record.get('risk_category', 'Unknown'),
-            'explanation': str(record.get('reasoning', '')).split(' Logic adjusted:')[0],
+            'explanation': str(record.get('explanation') or record.get('reasoning', '')).split(' Logic adjusted:')[0],
             'stressors': record.get('primary_stressors', []),
-            'survey_version': record.get('survey_version', 'legacy'),
+            'survey_version': record.get('survey_version', 'evidence-v2'),
             'pss_total': record.get('pss_total'),
+            'perceived_stress_score': record.get('perceived_stress_score'),
+            'reference_score': record.get('reference_score'),
+            'score_source': record.get('score_source'),
+            'score_mismatch': record.get('score_mismatch'),
+            'ai_model': record.get('ai_model'),
             'support_mean': record.get('support_mean'),
             'context_flags': record.get('context_flags', {}),
             'factors': record.get('factor_insights', []),
             'safety_flag': record.get('safety_flag', False),
             'snapshot': {key: record.get(key) for key in (
                 'sleep_hours', 'stress_level', 'academic_workload',
-                'financial_stress', 'social_support', *survey.QUESTION_MAP)},
+                'financial_stress', 'social_support', *io_manager.QUESTION_MAP)},
         },
     }
 
@@ -137,7 +141,7 @@ def create_app(test_config=None):
         session.setdefault('csrf_token', secrets.token_urlsafe(32))
         entry = current_entry()
         return render_template('checkin.html', boot={
-            'page': page, 'completed': bool(entry), 'survey': survey.public_config(),
+            'page': page, 'completed': bool(entry), 'survey': io_manager.public_config(),
             'isAdmin': is_admin(), 'adminLoginUrl': url_for('admin_login'),
             'result': result_view(entry['record'], entry['saved']) if entry else None,
             'csrfToken': session['csrf_token'],
@@ -193,7 +197,7 @@ def create_app(test_config=None):
         values = request.get_json(silent=True) if request.is_json else request.form
         if not hasattr(values, 'get'):
             return jsonify(message='Please submit a check-in form.'), 400
-        safety = survey.safety_check(values.get('feelings_text', ''))
+        safety = io_manager.safety_check(values.get('feelings_text', ''))
         ok, record = io_manager.validate_student_form(values)
         if not ok:
             return jsonify(errors=record, safety_flag=safety,

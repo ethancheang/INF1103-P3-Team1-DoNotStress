@@ -3,13 +3,97 @@
 Question wording, scales and scoring definitions live in survey.py.
 Student ID: seven ASCII digits beginning with 2. Reflection is ephemeral.
 """
-import survey
+import math
+import re
 
-FORM_FIELDS = {key:key for key in ['student_id', *survey.QUESTION_MAP, 'feelings_text']}
-FORM_PROMPTS = {'student_id':'Student ID', 'feelings_text':'Anything on your mind about school or life lately?',
-                **{q['key']:q['prompt'] for q in survey.QUESTIONS}}
+VERSION = "evidence-v2"
+PSS_OPTIONS = ["Never", "Almost Never", "Sometimes", "Fairly Often", "Very Often"]
+SLEEP_OPTIONS = ["Very good", "Fairly good", "Fairly bad", "Very bad"]
+PAS_OPTIONS = ["Strongly disagree", "Disagree", "Neither agree nor disagree", "Agree", "Strongly agree"]
+SUPPORT_OPTIONS = [
+    "Very Strongly Disagree", "Strongly Disagree", "Mildly Disagree",
+    "Neutral", "Mildly Agree", "Strongly Agree", "Very Strongly Agree"
+]
+
+def question(key, label, prompt, minimum, maximum, options=None, **extra):
+    return dict(key=key, label=label, prompt=prompt, min=minimum, max=maximum,
+                step=extra.pop('step', 1), options=options, **extra)
+
+QUESTIONS = [
+    question('pss_1', 'Feeling in control', 'In the last month, how often have you felt that you were unable to control the important things in your life?', 1, 5, PSS_OPTIONS),
+    question('pss_2', 'Handling personal problems', 'In the last month, how often have you felt confident about your ability to handle your personal problems?', 1, 5, PSS_OPTIONS),
+    question('pss_3', 'Things going your way', 'In the last month, how often have you felt that things were going your way?', 1, 5, PSS_OPTIONS),
+    question('pss_4', 'Difficulties piling up', 'In the last month, how often have you felt difficulties were piling up so high that you could not overcome them?', 1, 5, PSS_OPTIONS),
+    question('sleep_hours_avg', 'Typical sleep · past week', 'During the past week, how many hours of actual sleep did you get on a typical night? (This may be different than the number of hours you spend in bed.)', 0, 14, step=0.5, kind='slider', default=7, low='0 hours', high='14 hours', unit='hours'),
+    question('sleep_quality', 'Sleep quality · past week', 'During the past week, how would you rate your sleep quality overall?', 0, 3, SLEEP_OPTIONS),
+    question('pas_workload', 'Study workload', 'I believe that the amount of work assignment is too much', 1, 5, PAS_OPTIONS),
+    question('pas_catchup', 'Catching up · optional', 'Am unable to catch up if getting behind the work', 1, 5, PAS_OPTIONS, optional=True),
+    question('fin_stress', 'Personal finances', 'How stressed do you feel about your personal finances in general?', 1, 10, kind='slider', default=5, low='Overwhelming stress', high='No stress at all', unit='out of 10'),
+    question('mspss_friends', 'Support from friends', 'I can count on my friends when things go wrong.', 1, 7, SUPPORT_OPTIONS),
+    question('mspss_family', 'Support from family', 'I get the emotional help & support I need from my family.', 1, 7, SUPPORT_OPTIONS),
+    question('mspss_so', 'A special person · optional', 'There is a special person who is around when I am in need.', 1, 7, SUPPORT_OPTIONS, optional=True),
+]
+QUESTION_MAP = {q['key']: q for q in QUESTIONS}
+
+SECTIONS = [
+    dict(title='Your month', heading='Start with the bigger picture.', period='Think about the last month',
+         intro='Notice how manageable life has felt, including moments when things went well. Choose how often each experience happened.',
+         why='These four questions explore perceived stress: how unpredictable, difficult to control, or overwhelming life has felt. Together they give more context than one stress rating.',
+         source='PSS-4 · Cohen, Kamarck & Mermelstein (1983)', keys=['pss_1','pss_2','pss_3','pss_4']),
+    dict(title='Rest & recovery', heading='How has your sleep been?', period='Think about the past week',
+         intro='Now zoom in on your recent routine. Think about a typical night, rather than only last night.',
+         why='Sleep and stress can affect one another. Hours and quality capture different parts of rest; either can help explain why daily demands feel harder to manage.',
+         source='Two items adapted from PSQI · Buysse et al. (1989). This is not a full PSQI score.', keys=['sleep_hours_avg','sleep_quality']),
+    dict(title='Study demands', heading='Make room for your study load.', period='Your current study experience',
+         intro='With your overall feelings and rest in mind, consider the demands of your coursework.',
+         why='Feeling overloaded by assignments can add pressure and reduce time for recovery. This question identifies a possible source of strain, rather than judging your academic performance.',
+         source='Selected PAS items · Bedewy & Gabriel (2015), CC BY-NC 3.0. Response direction adapted.', keys=['pas_workload','pas_catchup']),
+    dict(title='Money pressures', heading='Life outside the timetable.', period='Your personal finances in general',
+         intro='Everyday expenses can take up mental space too. You do not need to share amounts or financial details.',
+         why='Financial worries may compete for attention alongside study demands. This question helps us suggest relevant support without assuming your income or circumstances.',
+         source='IFDFW item 8 · Prawitz et al. (2006). Higher numbers mean less financial distress.', keys=['fin_stress']),
+    dict(title='Your support', heading='Who can you lean on?', period='The support available to you',
+         intro='After looking at pressures, consider the people who help you face them. Friends and family may support you in different ways.',
+         why='Support can make stressful experiences easier to navigate. These questions look at sources of support; they do not cancel out or invalidate the stress you reported.',
+         source='Selected MSPSS items · Zimet et al. (1988). These items are not a validated short-form scale.', keys=['mspss_friends','mspss_family','mspss_so']),
+    dict(title='A moment to reflect', heading='Anything else on your mind?', period='Optional · not scored',
+         intro='Numbers cannot capture everything. You can reflect here, or continue without writing anything.',
+         why='Your reflection does not contribute to the stress score. A basic safety check can highlight support, but it cannot recognise every situation. You can contact support at any time.',
+         source='Optional reflection · team wording', keys=[]),
+]
+
+SAFETY_PATTERNS = [
+    r"\bsuicid(?:e|al)\b", r"\bself[ -]?harm(?:ing)?\b",
+    r"\b(?:kill|hurt|harm|cut)(?:ing)? myself\b", r"\b(?:end|take) my (?:own )?life\b",
+    r"\b(?:want|wish|going|plan|planning) to die\b", r"\b(?:cannot|can't|dont|don't) (?:go on|keep myself safe|want to live)\b",
+    r"\bbetter off dead\b", r"\b(?:took|taken|take) an overdose\b"
+]
+
+def safety_check(text: Any) -> bool:
+    cleaned = str(text or '').lower().replace('’', "'")
+    return any(re.search(pattern, cleaned) for pattern in SAFETY_PATTERNS)
+
+def public_config() -> dict[str, Any]:
+    return dict(version=VERSION, questions=QUESTIONS, sections=SECTIONS, safetyPatterns=SAFETY_PATTERNS)
+
+def validate_question(raw: Any, q: dict[str, Any]) -> tuple[bool, Any]:
+    if raw is None or str(raw).strip() == '':
+        return (True, None) if q.get('optional') else (False, 'Please answer this question.')
+    if isinstance(raw, (bool, list, dict)):
+        return False, 'Choose one of the available answers.'
+    try:
+        value = float(raw)
+    except (ValueError, TypeError, OverflowError):
+        return False, 'Choose a number in the available range.'
+    if not math.isfinite(value) or not q['min'] <= value <= q['max'] or not (value / q['step']).is_integer():
+        return False, f"Choose {q['min']} to {q['max']} in steps of {q['step']}."
+    return True, value if q['step'] == 0.5 else int(value)
+
+FORM_FIELDS = {key: key for key in ['student_id', *QUESTION_MAP, 'feelings_text']}
+FORM_PROMPTS = {'student_id': 'Student ID', 'feelings_text': 'Anything on your mind about school or life lately?',
+                **{q['key']: q['prompt'] for q in QUESTIONS}}
 RECORD_FIELD_ORDER = tuple(FORM_FIELDS)
-REQUIRED_FORM_FIELDS = ('student_id', *(q['key'] for q in survey.QUESTIONS if not q.get('optional')))
+REQUIRED_FORM_FIELDS = ('student_id', *(q['key'] for q in QUESTIONS if not q.get('optional')))
 STUDENT_ID_EXAMPLE = '2605581'
 
 # ---------------------------------------------------------------------------
@@ -291,23 +375,57 @@ def validate_feelings_text(raw):
     return True, text
 
 
+def prepare_answers(record: dict) -> dict:
+    """
+    Validate answers on 1-5 scale and reverse-score PSS-4 items 2 and 3 as (6 - answer).
+    """
+    if not isinstance(record, dict):
+        raise ValueError("Record must be a dictionary")
+
+    prepared = dict(record)
+    for pss_key in ("pss_1", "pss_2", "pss_3", "pss_4"):
+        if pss_key not in prepared or prepared[pss_key] is None:
+            raise ValueError(f"Missing required question: {pss_key}")
+        try:
+            val = float(prepared[pss_key])
+            if not (1 <= val <= 5) or not val.is_integer():
+                raise ValueError(f"{pss_key} must be an integer between 1 and 5, got {val}")
+            prepared[pss_key] = int(val)
+        except (TypeError, ValueError) as err:
+            raise ValueError(f"Invalid answer for {pss_key}: {err}") from err
+
+    # Reverse-score PSS-4 items 2 and 3 (positively worded) as 6 - answer
+    prepared["pss_2"] = 6 - prepared["pss_2"]
+    prepared["pss_3"] = 6 - prepared["pss_3"]
+    return prepared
+
+
 def validate_student_form(form_dict):
     record, errors = {}, {}
     ok, value = validate_student_id(_form_get(form_dict, 'student_id'))
     (record if ok else errors)['student_id'] = value
-    for q in survey.QUESTIONS:
-        ok, value = survey.validate_question(_form_get(form_dict, q['key']), q)
+    for q in QUESTIONS:
+        ok, value = validate_question(_form_get(form_dict, q['key']), q)
         (record if ok else errors)[q['key']] = value
     ok, text = validate_feelings_text(_form_get(form_dict, 'feelings_text'))
     if not ok:
         errors['feelings_text'] = text
     if errors:
         return False, errors
-    # Reflection is checked locally on the server, then discarded. Never sent
-    # to Gemini or retained in pending/saved records.
-    record['safety_flag'] = survey.safety_check(text)
-    record['survey_version'] = survey.VERSION
-    record.update(survey.score(record))
+
+    # Reverse-score PSS items 2 and 3
+    if 'pss_2' in record and record['pss_2'] is not None and 'pss_3' in record and record['pss_3'] is not None:
+        try:
+            prepared_pss = prepare_answers(record)
+            record['pss_1'] = prepared_pss['pss_1']
+            record['pss_2'] = prepared_pss['pss_2']
+            record['pss_3'] = prepared_pss['pss_3']
+            record['pss_4'] = prepared_pss['pss_4']
+        except ValueError as err:
+            return False, {'answers': str(err)}
+
+    record['safety_flag'] = safety_check(text)
+    record['survey_version'] = VERSION
     return True, record
 
 
@@ -551,13 +669,13 @@ def get_student_id() -> str:
 def collect_student_record():
     """CLI uses the same question definitions and validation as the website."""
     values = {'student_id':get_student_id()}
-    for q in survey.QUESTIONS:
+    for q in QUESTIONS:
         print_message(q['prompt'])
         if q.get('options'):
             print_message(' | '.join(f"{i + q['min']}: {label}" for i, label in enumerate(q['options'])))
         values[q['key']] = _prompt_until_valid(
             f"{q['min']}–{q['max']}" + (' (optional; Enter to skip)' if q.get('optional') else '') + ': ',
-            lambda raw, item=q: survey.validate_question(raw, item))
+            lambda raw, item=q: validate_question(raw, item))
     values['feelings_text'] = _prompt_until_valid('Optional reflection (not saved): ', validate_feelings_text)
     return validate_student_form(values)[1]
 

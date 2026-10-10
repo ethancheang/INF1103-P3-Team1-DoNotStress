@@ -105,6 +105,16 @@ def _is_valid_probability(value: Any) -> bool:
 
 def _validate_ai_fields(record: dict[str, Any]) -> str | None:
     """Validate the required Gemini JSON fields."""
+    if record.get("survey_version") == "evidence-v2" or "perceived_stress_score" in record:
+        if "perceived_stress_score" not in record:
+            return "Save refused: perceived_stress_score missing."
+        try:
+            val = float(record["perceived_stress_score"])
+            if not (1.0 <= val <= 5.0):
+                return "Save refused: perceived_stress_score must be between 1.0 and 5.0."
+        except (TypeError, ValueError):
+            return "Save refused: perceived_stress_score must be a float between 1.0 and 5.0."
+        return None
 
     missing = [
         field

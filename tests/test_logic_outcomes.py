@@ -1,4 +1,4 @@
-"""Extra tests for logic_manager."""
+"""Unit tests for logic_manager under the standardised 1.0-5.0 design."""
 
 from __future__ import annotations
 
@@ -11,26 +11,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import logic_manager as lm
 
 
-OK_LABEL = "You're doing ok"
-
-
 def _enriched(**overrides):
-    """A calm, valid AI-enriched record; each test overrides only what it needs."""
+    """Calm, valid AI-enriched record on the 1.0-5.0 scale."""
     record = {
         "student_id": "2605581",
-        "sleep_hours": 8.0,
-        "stress_level": 3,
-        "academic_workload": 4,
-        "financial_stress": 2,
-        "social_support": 8,
-        "risk_score": 0.22,
-        "risk_category": "Low",
-        "primary_stressors": ["high_stress"],
-        "confidence": 0.80,
-        "reasoning": "Signals look steady overall.",
-        "soft_label": OK_LABEL,
+        "pss_1": 2,
+        "pss_2": 2,
+        "pss_3": 2,
+        "pss_4": 2,
+        "sleep_hours_avg": 7.5,
+        "sleep_quality": 1,
+        "pas_workload": 3,
+        "fin_stress": 8,
+        "mspss_friends": 6,
+        "mspss_family": 6,
+        "perceived_stress_score": 2.0,
+        "explanation": "You seem to be handling your academic routine with manageable levels of stress.",
         "tips": ["sleep_routine", "short_breaks"],
-        "speak_prominence": "low",
     }
     record.update(overrides)
     return record
@@ -39,153 +36,129 @@ def _enriched(**overrides):
 class LogicOutcomeTests(unittest.TestCase):
 
     # -----------------------------------------------------------------------
-    # Safe handling of the caller's data
+    # 1. Reference score calculation (average of 4 PSS items, 1.0-5.0)
     # -----------------------------------------------------------------------
 
-    def test_huge_numbers_are_handled_without_a_crash(self):
-        bad_score = lm.apply_logic(_enriched(risk_score=10 ** 400))
-        self.assertIs(bad_score["ok"], False)
-        self.assertIn("risk_score", bad_score["invalid"])
-
-        huge_stress = lm.apply_logic(_enriched(stress_level=10 ** 400))
-        self.assertIs(huge_stress["ok"], False)
-        self.assertIn("stress_level", huge_stress["invalid"])
-
-    def test_stress_level_is_required(self):
-        record = _enriched()
-        del record["stress_level"]
-        result = lm.apply_logic(record)
-        self.assertIs(result["ok"], False)
-        self.assertIn("stress_level", result["missing"])
-
-    def test_out_of_range_answers_are_clamped(self):
-        result = lm.apply_logic(_enriched(stress_level=50))
-        self.assertEqual(result["stress_score_pss4"], 16)
-        self.assertEqual(result["soft_label"], lm.SOFT_LABEL_REACH_OUT)
+    def test_compute_reference_score_extremes(self):
+        self.assertAlmostEqual(lm.compute_reference_score({"pss_1": 1, "pss_2": 1, "pss_3": 1, "pss_4": 1}), 1.0)
+        self.assertAlmostEqual(lm.compute_reference_score({"pss_1": 5, "pss_2": 5, "pss_3": 5, "pss_4": 5}), 5.0)
+        self.assertAlmostEqual(lm.compute_reference_score({"pss_1": 2, "pss_2": 3, "pss_3": 4, "pss_4": 5}), 3.5)
 
     # -----------------------------------------------------------------------
-    # a. Stress band (stress_level mapped onto PSS-4 0–16)
+    # 2. Tier assignment (below 2.5: ok; 2.5-3.5: check-in; above 3.5: reach out)
     # -----------------------------------------------------------------------
 
-    def test_stress_band_boundaries(self):
-        expected = {
-            1: OK_LABEL, 5: OK_LABEL,
-            6: lm.SOFT_LABEL_CHECK_IN, 7: lm.SOFT_LABEL_CHECK_IN,
-            8: lm.SOFT_LABEL_REACH_OUT, 10: lm.SOFT_LABEL_REACH_OUT,
-        }
-        for stress, label in expected.items():
-            with self.subTest(stress_level=stress):
-                result = lm.apply_logic(_enriched(stress_level=stress))
-                self.assertEqual(result["soft_label"], label)
-                self.assertEqual(result["logic_rule"], "stress_band")
-
-    def test_prominence_and_category_follow_the_label(self):
-        result = lm.apply_logic(_enriched(stress_level=9))
-        self.assertEqual(result["speak_prominence"], "high")
-        self.assertEqual(result["risk_category"], "High")
+    def test_assign_tier_boundaries(self):
+        self.assertEqual(lm.assign_tier(1.0), lm.TIER_OK)
+        self.assertEqual(lm.assign_tier(2.4), lm.TIER_OK)
+        self.assertEqual(lm.assign_tier(2.5), lm.TIER_CHECK_IN)
+        self.assertEqual(lm.assign_tier(3.0), lm.TIER_CHECK_IN)
+        self.assertEqual(lm.assign_tier(3.5), lm.TIER_CHECK_IN)
+        self.assertEqual(lm.assign_tier(3.51), lm.TIER_REACH_OUT)
+        self.assertEqual(lm.assign_tier(5.0), lm.TIER_REACH_OUT)
 
     # -----------------------------------------------------------------------
-    # b. Context flags
+    # 3. Cross-check score with SCORE_TOLERANCE = 0.5
     # -----------------------------------------------------------------------
 
-    def test_each_flag_threshold(self):
-        cases = [
-            ("sleep_hours", 5.5, 6.0, "sleep"),
-            ("academic_workload", 8, 7, "workload"),
-            ("financial_stress", 7, 6, "finance"),
-            ("social_support", 3, 4, "support"),
-        ]
-        for field, raises, stays_off, flag in cases:
-            with self.subTest(field=field):
-                on = lm.apply_logic(_enriched(**{field: raises}))
-                off = lm.apply_logic(_enriched(**{field: stays_off}))
-                self.assertEqual(on["logic_flags"], [flag])
-                self.assertEqual(off["logic_flags"], [])
+    def test_cross_check_score_within_tolerance(self):
+        score, mismatch = lm.cross_check_score(ai_score=2.8, reference=3.0)
+        self.assertAlmostEqual(score, 2.8)
+        self.assertFalse(mismatch)
 
-    def test_one_flag_does_not_change_the_label(self):
-        result = lm.apply_logic(_enriched(sleep_hours=4))
-        self.assertEqual(result["soft_label"], OK_LABEL)
-        self.assertEqual(result["tips"][0], "sleep_routine")
+        score, mismatch = lm.cross_check_score(ai_score=3.5, reference=3.0)
+        self.assertAlmostEqual(score, 3.5)
+        self.assertFalse(mismatch)
 
-    def test_two_flags_raise_ok_to_check_in(self):
-        result = lm.apply_logic(_enriched(sleep_hours=4, financial_stress=9))
-        self.assertEqual(result["soft_label"], lm.SOFT_LABEL_CHECK_IN)
-        self.assertEqual(result["logic_rule"], "context_flags")
-        self.assertEqual(result["tips"][:2], ["sleep_routine", "money_worries"])
+    def test_cross_check_score_exceeds_tolerance(self):
+        score, mismatch = lm.cross_check_score(ai_score=4.0, reference=3.0)
+        self.assertAlmostEqual(score, 3.0)
+        self.assertTrue(mismatch)
 
-    def test_flags_alone_never_reach_out(self):
-        result = lm.apply_logic(_enriched(
-            stress_level=7, sleep_hours=3, academic_workload=10,
-            financial_stress=10, social_support=1,
-        ))
-        self.assertEqual(len(result["logic_flags"]), 4)
-        self.assertEqual(result["soft_label"], lm.SOFT_LABEL_CHECK_IN)
+        score, mismatch = lm.cross_check_score(ai_score=1.5, reference=3.0)
+        self.assertAlmostEqual(score, 3.0)
+        self.assertTrue(mismatch)
 
     # -----------------------------------------------------------------------
-    # c. Crisis-language safety override
+    # 4. Pipeline integration: apply_logic
     # -----------------------------------------------------------------------
 
-    def test_crisis_language_forces_reach_out(self):
-        for text in (
-            "I keep thinking about suicide",
-            "honestly I don’t want to live like this",
-            "I've been hurting myself",
-            "everyone would be better off dead without me",
-            "i wanna die",
-        ):
-            with self.subTest(text=text):
-                result = lm.apply_logic(_enriched(feelings_text=text))
-                self.assertIs(result["crisis_language"], True)
-                self.assertEqual(result["soft_label"], lm.SOFT_LABEL_REACH_OUT)
-                self.assertEqual(result["logic_rule"], "crisis_language")
-                self.assertEqual(result["tips"][:2], ["talk_to_someone", "feelings_check_in"])
-
-    def test_ordinary_text_does_not_change_the_label(self):
-        result = lm.apply_logic(_enriched(
-            feelings_text="Exams are killing me and I'm dying to finish this module.",
-        ))
-        self.assertIs(result["crisis_language"], False)
-        self.assertEqual(result["soft_label"], OK_LABEL)
-        for text in ("Cut myself some slack this week", "it hurt my self-esteem"):
-            with self.subTest(text=text):
-                self.assertIs(lm.apply_logic(_enriched(feelings_text=text))["crisis_language"], False)
-
-    # -----------------------------------------------------------------------
-    # d. Gemini may raise the label, never lower it
-    # -----------------------------------------------------------------------
-
-    def test_ai_can_raise_the_label(self):
-        result = lm.apply_logic(_enriched(
-            soft_label=lm.SOFT_LABEL_REACH_OUT, speak_prominence="high",
-        ))
-        self.assertEqual(result["soft_label"], lm.SOFT_LABEL_REACH_OUT)
-        self.assertEqual(result["logic_rule"], "ai_raised")
-
-    def test_ai_cannot_lower_the_label(self):
-        result = lm.apply_logic(_enriched(stress_level=9))  # AI said "ok"
-        self.assertEqual(result["soft_label"], lm.SOFT_LABEL_REACH_OUT)
-        self.assertEqual(result["speak_prominence"], "high")
-
-    # -----------------------------------------------------------------------
-    # Tip list size
-    # -----------------------------------------------------------------------
-
-    def test_tips_are_capped_when_no_flag_fires(self):
-        result = lm.apply_logic(_enriched(tips=list(lm.TIPS_ALLOWLIST)))
-        self.assertEqual(result["logic_flags"], [])
-        self.assertEqual(len(result["tips"]), lm._MAX_TIPS)
-        self.assertIn("tips", result["logic_clamp_notes"])
-
-    def test_tips_are_capped_when_logic_adds_tips(self):
-        result = lm.apply_logic(_enriched(
-            stress_level=9, social_support=1, tips=list(lm.TIPS_ALLOWLIST),
-        ))
-        self.assertEqual(result["soft_label"], lm.SOFT_LABEL_REACH_OUT)
-        self.assertEqual(len(result["tips"]), lm._MAX_TIPS)
-        self.assertEqual(
-            result["tips"][:3],
-            ["talk_to_someone", "feelings_check_in", "keep_social_contact"],
+    def test_apply_logic_within_tolerance_uses_ai_score(self):
+        record = _enriched(
+            pss_1=2, pss_2=2, pss_3=2, pss_4=2,  # reference = 2.0
+            perceived_stress_score=2.3,           # diff = 0.3 <= 0.5
         )
+        res = lm.apply_logic(record)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["score_source"], "ai")
+        self.assertFalse(res["score_mismatch"])
+        self.assertAlmostEqual(res["perceived_stress_score"], 2.3)
+        self.assertEqual(res["soft_label"], lm.TIER_OK)
+
+    def test_apply_logic_mismatch_uses_reference_score(self):
+        record = _enriched(
+            pss_1=2, pss_2=2, pss_3=2, pss_4=2,  # reference = 2.0
+            perceived_stress_score=4.0,           # diff = 2.0 > 0.5
+        )
+        res = lm.apply_logic(record)
+        self.assertTrue(res["ok"])
+        self.assertEqual(res["score_source"], "reference")
+        self.assertTrue(res["score_mismatch"])
+        self.assertAlmostEqual(res["perceived_stress_score"], 2.0)
+        self.assertEqual(res["soft_label"], lm.TIER_OK)
+
+    # -----------------------------------------------------------------------
+    # 5. Rule removal: 2+ context flags do NOT raise the tier
+    # -----------------------------------------------------------------------
+
+    def test_context_flags_do_not_raise_tier(self):
+        # Stress is low (reference = 1.0, AI = 1.0 -> tier = 'You\'re doing ok')
+        # But sleep, workload, and finance are all flagged (3 flags)
+        record = _enriched(
+            pss_1=1, pss_2=1, pss_3=1, pss_4=1,
+            perceived_stress_score=1.0,
+            sleep_hours_avg=4.0, sleep_quality=3,  # sleep flagged
+            pas_workload=5,                         # workload flagged
+            fin_stress=2,                           # finance flagged
+        )
+        res = lm.apply_logic(record)
+        self.assertTrue(res["context_flags"]["sleep"])
+        self.assertTrue(res["context_flags"]["workload"])
+        self.assertTrue(res["context_flags"]["finances"])
+        # Crucial: tier must NOT be raised to "Worth a check-in"
+        self.assertEqual(res["soft_label"], lm.TIER_OK)
+
+    # -----------------------------------------------------------------------
+    # 6. Safety override: crisis language still gives "Please reach out"
+    # -----------------------------------------------------------------------
+
+    def test_crisis_language_safety_override(self):
+        record = _enriched(
+            pss_1=1, pss_2=1, pss_3=1, pss_4=1,
+            perceived_stress_score=1.0,
+            feelings_text="I want to kill myself",
+        )
+        res = lm.apply_logic(record)
+        self.assertTrue(res["safety_flag"])
+        self.assertEqual(res["soft_label"], lm.TIER_REACH_OUT)
+        self.assertEqual(res["speak_prominence"], "high")
+
+    # -----------------------------------------------------------------------
+    # 7. Safe handling of missing / invalid inputs
+    # -----------------------------------------------------------------------
+
+    def test_missing_pss_or_ai_fields_handled_gracefully(self):
+        record = _enriched()
+        del record["pss_1"]
+        res = lm.apply_logic(record)
+        self.assertFalse(res["ok"])
+        self.assertIn("pss_1", res["missing"])
+
+        record = _enriched()
+        del record["perceived_stress_score"]
+        res = lm.apply_logic(record)
+        self.assertFalse(res["ok"])
+        self.assertIn("perceived_stress_score", res["missing"])
 
 
 if __name__ == "__main__":

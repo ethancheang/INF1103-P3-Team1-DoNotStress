@@ -11,12 +11,9 @@ from main import create_app
 
 def fake_generate(prompt, api_key, model_name):
     return json.dumps({
-        'risk_score': 0.4, 'risk_category': 'Moderate',
-        'primary_stressors': ['academic_overload'],
-        'recommended_support': 'Speak to campus support.', 'confidence': 0.8,
-        'reasoning': 'Test fixture, not a real assessment.',
-        'soft_label': 'Worth a check-in', 'tips': ['workload_chunks', 'short_breaks'],
-        'speak_prominence': 'medium',
+        'perceived_stress_score': 3.0,
+        'explanation': 'It sounds like you have been dealing with a lot of pressure lately, and taking some time to pause could be helpful.',
+        'tips': ['workload_chunks', 'short_breaks'],
     })
 
 
@@ -53,7 +50,7 @@ class CampusTests(unittest.TestCase):
 
     def test_invalid_fields_prevent_ai_call(self):
         for field, value in [('student_id','1200000'), ('sleep_hours_avg','6.75'),
-                             ('pss_1','5'), ('pas_workload','0'),
+                             ('pss_1','6'), ('pas_workload','0'),
                              ('fin_stress','yes'), ('mspss_friends','1.5')]:
             with self.subTest(field=field), patch('main.ai_manager.analyse_student') as ai:
                 response = self.post({**self.values, field:value})
