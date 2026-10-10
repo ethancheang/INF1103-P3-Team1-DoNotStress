@@ -22,22 +22,17 @@ SUPPORT_OPTIONS = AGREE_OPTIONS
 FIN_OPTIONS = ["No stress at all", "A little stress", "Moderate stress", "High stress", "Overwhelming stress"]
 CHECK_IN_FROM = 2.5    # average 2.5 to 3.5 (inclusive) -> 'Worth a check-in'
 REACH_OUT_ABOVE = 3.5  # average above 3.5 -> 'Please reach out'
-PSS_STEM = 'In the past month, how often have you felt'
 SUPPORT_KEYS = ('mspss_friends', 'mspss_family')
 
 def question(key, label, prompt, minimum, maximum, options=None, **extra):
     return dict(key=key, label=label, prompt=prompt, min=minimum, max=maximum,
                 step=extra.pop('step', 1), options=options, **extra)
 
-def pss_question(key, label, ending, **extra):
-    """Card shows the ending; prompt keeps the shared stem plus that ending."""
-    return question(key, label, f'{PSS_STEM} {ending}', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, card=f'…{ending}', **extra)
-
 QUESTIONS = [
-    pss_question('pss_1', 'Losing control', "you couldn't control the important things in your life?"),
-    pss_question('pss_2', 'Handling personal problems', 'confident handling your personal problems?', reverse=True),
-    pss_question('pss_3', 'Things going your way', 'things were going well for you?', reverse=True),
-    pss_question('pss_4', 'Difficulties piling up', 'problems were piling up too much to handle?'),
+    question('pss_1', 'Losing control', "In the past month, how often have you felt you couldn't control the important things in your life?", SCALE_MIN, SCALE_MAX, PSS_OPTIONS),
+    question('pss_2', 'Handling personal problems', 'In the past month, how often have you felt confident handling your personal problems?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, reverse=True),
+    question('pss_3', 'Things going your way', 'In the past month, how often have you felt things were going well for you?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS, reverse=True),
+    question('pss_4', 'Difficulties piling up', 'In the past month, how often have you felt problems were piling up too much to handle?', SCALE_MIN, SCALE_MAX, PSS_OPTIONS),
     question('sleep_hours_avg', 'Typical sleep · past week', 'On average, how many hours of sleep have you gotten each night this week?', 0, 14, step=0.5, kind='slider', default=7, low='0 hours', high='14 hours', unit='hours'),
     question('sleep_quality', 'Sleep quality · past week', 'During the past week, how would you rate your sleep quality overall?', SCALE_MIN, SCALE_MAX, SLEEP_OPTIONS),
     question('pas_workload', 'Study workload', 'I feel my coursework is too much to handle.', SCALE_MIN, SCALE_MAX, PAS_OPTIONS),
@@ -50,7 +45,7 @@ QUESTION_MAP = {q['key']: q for q in QUESTIONS}
 # Positively worded items: a high answer means LESS stress, so they are scored as 6 - answer.
 REVERSED_KEYS = tuple(q['key'] for q in QUESTIONS if q.get('reverse'))
 SECTIONS = [
-    dict(title='Your month', heading=f'{PSS_STEM}…', period='Think about the last month',
+    dict(title='Your month', heading='Start with the bigger picture.', period='Think about the last month',
          intro='Notice how manageable life has felt, including moments when things went well. Choose how often each experience happened.',
          why='These four questions explore perceived stress: how unpredictable, difficult to control, or overwhelming life has felt. Together they give more context than one stress rating.',
          keys=['pss_1','pss_2','pss_3','pss_4']),

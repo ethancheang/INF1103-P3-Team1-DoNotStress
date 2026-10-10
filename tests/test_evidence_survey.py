@@ -89,25 +89,24 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('Move the slider or confirm the displayed position.',js)
         self.assertIn('Higher numbers mean more financial stress.',js)
 
-    def test_prompts_and_pss_stem(self):
-        stem='In the past month, how often have you felt'
-        endings={
-            'pss_1':"you couldn't control the important things in your life?",
-            'pss_2':'confident handling your personal problems?',
-            'pss_3':'things were going well for you?',
-            'pss_4':'problems were piling up too much to handle?',
+    def test_prompts_and_pss_sentences(self):
+        prompts={
+            'pss_1':"In the past month, how often have you felt you couldn't control the important things in your life?",
+            'pss_2':'In the past month, how often have you felt confident handling your personal problems?',
+            'pss_3':'In the past month, how often have you felt things were going well for you?',
+            'pss_4':'In the past month, how often have you felt problems were piling up too much to handle?',
         }
         self.assertEqual(survey.QUESTION_MAP['pss_1']['label'],'Losing control')
-        self.assertEqual(survey.SECTIONS[0]['heading'],f'{stem}…')
+        self.assertEqual(survey.SECTIONS[0]['heading'],'Start with the bigger picture.')
         self.assertTrue(all('source' not in section for section in survey.SECTIONS))
+        self.assertTrue(all('card' not in item for item in survey.QUESTIONS))
         page=(Path(__file__).resolve().parents[1]/'static'/'campus.js').read_text(encoding='utf-8')
         self.assertIn('Backed by research', page)
         self.assertNotIn('ds-source', page)
+        self.assertNotIn('cardText', page)
         self.assertNotIn('team wording', page)
-        for key, ending in endings.items():
-            item=survey.QUESTION_MAP[key]
-            self.assertEqual(item['card'],f'…{ending}')
-            self.assertEqual(item['prompt'],f'{stem} {ending}')
+        for key, prompt in prompts.items():
+            self.assertEqual(survey.QUESTION_MAP[key]['prompt'], prompt)
         self.assertEqual(survey.QUESTION_MAP['pas_workload']['prompt'],'I feel my coursework is too much to handle.')
         self.assertEqual(survey.QUESTION_MAP['pas_catchup']['prompt'],'When I fall behind on my work, I find it hard to catch up.')
         self.assertEqual(survey.QUESTION_MAP['mspss_family']['prompt'],'I get the emotional help and support I need from my family.')
@@ -172,7 +171,7 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('2605581',prompt)
         for key in survey.QUESTION_MAP:self.assertIn(key,prompt)
         self.assertIn(survey.QUESTION_MAP['pss_1']['prompt'],prompt)
-        self.assertIn("you couldn't control the important things in your life?",prompt)
+        self.assertIn("In the past month, how often have you felt you couldn't control the important things in your life?",prompt)
         self.assertNotIn('mspss_so',prompt)
         self.assertNotIn('special person',prompt.lower())
 

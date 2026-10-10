@@ -28,12 +28,11 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     if(q.options)return `${value} · ${q.options[+value-q.min]}`;
     return `${value} ${q.unit}`;
   }
-  function cardText(q){return q.card || q.prompt;}
   function questionControl(q) {
     if(q.kind==='slider' && answers[q.key]===null) answers[q.key]=q.default;
     const value=answers[q.key];
     const helpId=q.key+'-help';
-    const title=`<h3 class="ds-q-title" id="${q.key}-title">${q.kind==='slider'?`<label for="${q.key}">${escape(cardText(q))}</label>`:escape(cardText(q))}</h3>`;
+    const title=`<h3 class="ds-q-title" id="${q.key}-title">${q.kind==='slider'?`<label for="${q.key}">${escape(q.prompt)}</label>`:escape(q.prompt)}</h3>`;
     if(q.kind==='slider'){
       const shown=escape(answerText(q.key, value));
       return `<div class="ds-question" id="question-${q.key}">
