@@ -274,4 +274,12 @@ body{margin:0;padding:0;min-height:100vh;background:light-dark(#f7f8f2,#19221e);
 #dns-campus .ds-primary,#dns-campus .ds-secondary{padding:.75rem 1rem}
 #dns-campus .ds-admin-login{padding:1.15rem;margin:1rem auto 1.5rem}
 #dns-campus .ds-float{max-width:46%}
+#dns-campus .ds-foot-contacts li{display:flex;flex-direction:column;align-items:center;gap:.15rem}
 }
+
+#dns-campus .ds-footer{display:flex;flex-direction:column;align-items:center;text-align:center;gap:.75rem;width:100%;margin:0;flex:0 0 auto;box-sizing:border-box;padding:clamp(1.25rem,3vw,2rem) max(1rem,calc((100% - 80rem) / 2));background:var(--ds-panel)}
+#dns-campus .ds-foot-brand{display:flex;align-items:center;justify-content:center;gap:.55rem;font-weight:750;letter-spacing:-.04em;font-size:clamp(1.05rem,2.5vw,1.25rem);color:var(--ds-ink)}
+#dns-campus .ds-foot-kicker{margin:0;font-weight:650;color:var(--ds-ink)}
+#dns-campus .ds-foot-contacts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;align-items:center;gap:.55rem;max-width:40rem}
+#dns-campus .ds-foot-contacts li,#dns-campus .ds-foot-crisis,#dns-campus .ds-foot-note{margin:0;color:var(--ds-sub);font-size:clamp(.78rem,2vw,.9rem);line-height:1.55}
+#dns-campus .ds-foot-crisis,#dns-campus .ds-foot-note{max-width:42rem}

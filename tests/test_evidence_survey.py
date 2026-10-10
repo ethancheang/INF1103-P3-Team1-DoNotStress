@@ -104,6 +104,10 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('AI Status',js)
         self.assertIn('Stress score (/5)',js)
         self.assertIn("You're doing ok",js)
+        self.assertIn('SIT Counselling 24-hour helpline',js)
+        self.assertIn('href="tel:65922030"',js)
+        self.assertIn('href="tel:1767"',js)
+        self.assertIn('href="tel:1771"',js)
 
     def test_prompts_and_pss_sentences(self):
         prompts={

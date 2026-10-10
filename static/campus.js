@@ -49,7 +49,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       </div>`;
   }
   function safetyPrompt() {
-    return `<div class="ds-support ds-support-urgent" role="status"><h3>Please reach out</h3><p>If your words reflect how you feel right now, you deserve support. This basic word check cannot determine your safety.</p><p>Talk to someone now: <a href="tel:1767">SOS 1767</a> or <a href="tel:1771">mindline 1771</a> (24 hours).</p><a href="mailto:SITCounselling@SingaporeTech.edu.sg">SIT Counselling</a></div>`;
+    return `<div class="ds-support ds-support-urgent" role="status"><h3>Please reach out</h3><p>If your words reflect how you feel right now, you deserve support. This basic word check cannot determine your safety.</p><p><a href="tel:65922030">SIT Counselling 24-hour helpline 6592 2030</a><br><a href="tel:1767">Samaritans of Singapore 1767</a><br><a href="tel:1771">National mindline 1771</a></p><a href="mailto:SITCounselling@SingaporeTech.edu.sg">SITCounselling@SingaporeTech.edu.sg</a></div>`;
   }
   function reflectionSafety() {
     const text=answers.feelings_text.toLowerCase().replaceAll('’',"'");
@@ -87,9 +87,14 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     // URLs are constructed from the existing I/O contact fields, never model text.
     const email = String(advisor.email || '');
     const phone = String(advisor.helpline || '').replace(/[^+0-9]/g, '');
+    const sos = String(advisor.sos || '1767').replace(/[^+0-9]/g, '');
+    const mindline = String(advisor.mindline || '1771').replace(/[^+0-9]/g, '');
     return `<div class="ds-support ${advisor.prominence==='high'?'ds-support-urgent':''}"><h3>${escape(advisor.heading)}</h3>
       <p>${escape(advisor.body)}</p><p>${escape(advisor.cta)}</p>
-      <a href="mailto:${escape(email)}">${escape(email)}</a><br><a href="tel:${escape(phone)}">${escape(advisor.helpline)}</a></div>`;
+      <a href="mailto:${escape(email)}">${escape(email)}</a><br>
+      <a href="tel:${escape(phone)}">SIT Counselling 24-hour helpline ${escape(advisor.helpline)}</a><br>
+      <a href="tel:${escape(sos)}">Samaritans of Singapore ${escape(advisor.sos || '1767')}</a><br>
+      <a href="tel:${escape(mindline)}">National mindline ${escape(advisor.mindline || '1771')}</a></div>`;
   }
   function result() {
     if (!assessment) {page='checkin';checkin();return;}

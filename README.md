@@ -67,7 +67,7 @@ Questionnaire pages do not show a source line. The home page has a short "Backed
 
 The supplied brief identifies permissions to resolve before distribution: PSS permission through Mapi/ePROVIDE and the copyrighted IFDFW wording. PSQI educational/research use is non-commercial; adaptations and commercial use need appropriate review. Attribution does not itself grant permission. No permission request has been sent by this implementation.
 
-Support contacts are always available, including without an AI result: SIT Counselling, SOS **1767**, national mindline **1771**. The latter two are 24-hour services, verified 9 October 2026 at https://www.sos.org.sg/contact-us/ and https://www.moh.gov.sg/newsroom/national-mindline-1771-to-provide--round-the-clock-support-for-mental-health/.
+Support contacts are always available, including without an AI result, in the page footer and in the check-in support panels: SIT Counselling 24-hour helpline **6592 2030** (SITCounselling@SingaporeTech.edu.sg), Samaritans of Singapore **1767** and CareText **9151 1767** (WhatsApp), and national mindline **1771**. SOS and mindline are 24-hour services, verified 9 October 2026 at https://www.sos.org.sg/contact-us/ and https://www.moh.gov.sg/newsroom/national-mindline-1771-to-provide--round-the-clock-support-for-mental-health/.
 
 ## Flow and storage
 

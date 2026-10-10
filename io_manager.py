@@ -91,10 +91,14 @@ SPEAK_PROMINENCE = ("low", "medium", "high")
 ADVISOR_EMAIL = "SITCounselling@SingaporeTech.edu.sg"
 ADVISOR_HELPLINE = "6592 2030"
 ADVISOR_MAILTO = "mailto:SITCounselling@SingaporeTech.edu.sg"
+SOS_HELPLINE = "1767"
+MINDLINE_HELPLINE = "1771"
 
 ADVISOR_CONTACTS = {
     "email": ADVISOR_EMAIL,
     "helpline": ADVISOR_HELPLINE,
+    "sos": SOS_HELPLINE,
+    "mindline": MINDLINE_HELPLINE,
     "mailto": ADVISOR_MAILTO,
 }
 
@@ -390,7 +394,9 @@ def format_speak_to_advisor_panel(speak_prominence) -> dict:
     speak_prominence is "low" | "medium" | "high" and changes tone only.
     Contacts are always the same real values — never invented:
       email    SITCounselling@SingaporeTech.edu.sg
-      helpline 6592 2030
+      helpline 6592 2030 (SIT Counselling 24-hour helpline)
+      sos      1767
+      mindline 1771
       mailto   mailto:SITCounselling@SingaporeTech.edu.sg
 
     Unknown prominence still includes those contacts and uses medium copy.
@@ -410,12 +416,10 @@ def format_speak_to_advisor_panel(speak_prominence) -> dict:
         "cta": copy["cta"],
         "email": ADVISOR_EMAIL,
         "helpline": ADVISOR_HELPLINE,
+        "sos": SOS_HELPLINE,
+        "mindline": MINDLINE_HELPLINE,
         "mailto": ADVISOR_MAILTO,
-        "contacts": {
-            "email": ADVISOR_EMAIL,
-            "helpline": ADVISOR_HELPLINE,
-            "mailto": ADVISOR_MAILTO,
-        },
+        "contacts": dict(ADVISOR_CONTACTS),
         "error": error,
     }
 
