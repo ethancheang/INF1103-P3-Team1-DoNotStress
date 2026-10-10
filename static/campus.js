@@ -118,8 +118,23 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <p>No streaks to keep. No scores to beat. Just a little growth, at your pace.</p><button class="ds-link" data-nav="garden">Visit my garden →</button></div>
       ${supportPanel(assessment.advisor)}</aside></div>`;
   }
+  function pathFor(next) {
+    if(next==='result')return boot.resultUrl;
+    if(next==='records')return boot.recordsPageUrl;
+    return boot.homeUrl;
+  }
+  function remember(next) {
+    const path=pathFor(next);
+    if(!path)return;
+    const state={page:next};
+    if(location.pathname===path)history.replaceState(state,'',path);
+    else history.pushState(state,'',path);
+  }
   function render() {
-    if(page==='records' && !boot.isAdmin)page='home';
+    if(page==='records' && !boot.isAdmin){
+      page='home';
+      if(boot.homeUrl&&location.pathname!==boot.homeUrl)history.replaceState({page:'home'},'',boot.homeUrl);
+    }
     root.querySelectorAll('[data-nav]').forEach(button => {
       if(button.dataset.nav===(page==='result'?'checkin':page))button.setAttribute('aria-current','page');
       else button.removeAttribute('aria-current');
@@ -221,7 +236,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
         if(data.advisor)main.querySelector('#ds-failure-support').innerHTML=(data.safety_flag?safetyPrompt():'')+supportPanel(data.advisor);
         return;
       }
-      assessment=data.result;completed=true;page='result';render();
+      assessment=data.result;completed=true;page='result';remember('result');render();
     } catch(error) {main.querySelector('#ds-error').textContent='Could not connect. Your answers are still here; please try again.';}
     finally {setBusy(false);}
   }
@@ -257,7 +272,11 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   root.addEventListener('click',async event=>{
     const button=event.target.closest('button');if(!button||busy)return;
     if(button.dataset.editStep!==undefined){step=+button.dataset.editStep;checkin();main.querySelector('#ds-step-heading').focus();return;}
-    if(button.dataset.nav){page=button.dataset.nav;render();return;}
+    if(button.dataset.nav){
+      const next=button.dataset.nav;
+      if(next==='records'&&!boot.isAdmin)return;
+      page=next;remember(page);render();return;
+    }
     if(button.dataset.task!==undefined){const id=+button.dataset.task;selected.has(id)?selected.delete(id):selected.add(id);render();return;}
     switch(button.dataset.action){
       case 'clear-filters':clearTimeout(searchTimer);Object.keys(recordFilters).forEach(key=>recordFilters[key]='');records();return;
@@ -271,6 +290,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       case 'new':location.assign(boot.newUrl);return;
       default:return;
     }
+    remember(page);
     render();
     if(page==='checkin')main.querySelector('#ds-step-heading')?.focus();
   });
@@ -284,5 +304,17 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   document.addEventListener('visibilitychange',()=>{
     if(page==='records'&&!document.hidden)loadRecords();
   });
+  window.addEventListener('popstate',event=>{
+    const next=event.state&&event.state.page;
+    if(!next)return;
+    if((next==='records'&&!boot.isAdmin)||(next==='result'&&!assessment)){
+      page='home';
+      if(boot.homeUrl)history.replaceState({page:'home'},'',boot.homeUrl);
+      render();
+      return;
+    }
+    page=next;render();
+  });
+  history.replaceState({page},'',location.pathname);
   render();
 })();

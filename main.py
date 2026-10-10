@@ -144,7 +144,8 @@ def create_app(test_config=None):
             'result': result_view(entry['record'], entry['saved']) if entry else None,
             'csrfToken': session['csrf_token'],
             'submitUrl': url_for('submit_checkin'), 'saveUrl': url_for('save_checkin'),
-            'newUrl': url_for('new_checkin'),
+            'newUrl': url_for('new_checkin'), 'homeUrl': url_for('checkin'),
+            'resultUrl': url_for('result'), 'recordsPageUrl': url_for('records_page'),
             'recordsUrl': url_for('saved_records'),
         })
 

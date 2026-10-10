@@ -40,6 +40,35 @@ class CampusTests(unittest.TestCase):
         return self.client.post(url, json=self.values if values is None else values,
                                 headers={'X-CSRF-Token': self.token})
 
+    def test_student_result_and_records_routes(self):
+        denied = self.client.get('/records')
+        self.assertEqual(denied.status_code, 302)
+        self.assertTrue(denied.location.endswith('/admin/login'))
+        self.assertEqual(self.client.get('/result').status_code, 302)
+        self.assertEqual(self.post().status_code, 200)
+        result = self.client.get('/result')
+        self.assertEqual(result.status_code, 200)
+        body = result.get_data(as_text=True)
+        self.assertIn('"page": "result"', body)
+        self.assertNotIn('"page": "records"', body)
+        self.assertIn('"resultUrl": "/result"', body)
+        self.assertIn('"recordsPageUrl": "/records"', body)
+        still_denied = self.client.get('/records')
+        self.assertEqual(still_denied.status_code, 302)
+        self.assertTrue(still_denied.location.endswith('/admin/login'))
+        from test_admin_access import login_admin
+        login_admin(self.client)
+        records = self.client.get('/records')
+        self.assertEqual(records.status_code, 200)
+        records_body = records.get_data(as_text=True)
+        self.assertIn('"page": "records"', records_body)
+        self.assertNotIn('"page": "result"', records_body)
+        js = Path(__file__).resolve().parents[1].joinpath('static', 'campus.js').read_text(encoding='utf-8')
+        self.assertIn('boot.resultUrl', js)
+        self.assertIn('boot.recordsPageUrl', js)
+        self.assertIn('history.pushState', js)
+        self.assertIn("page='result'", js)
+
     def test_success_uses_backend_result_and_keeps_answers_out_of_cookie(self):
         response = self.post()
         self.assertEqual(response.status_code, 200)
