@@ -41,6 +41,8 @@ class AdminAccessTests(unittest.TestCase):
         self.assertIn('href="mailto:SITCounselling@SingaporeTech.edu.sg"', text)
         self.assertIn('class="ds-brand"', text)
         self.assertNotIn('data-nav="records"', text)
+        self.assertNotIn('My ' + 'gar' + 'den', text)
+        self.assertNotIn('data-nav="' + 'gar' + 'den' + '"', text)
         self.assertIn('"isAdmin": false', text)
         self.assertNotIn('DoNotStress2026!', text)
         self.assertNotIn('scrypt:', text)

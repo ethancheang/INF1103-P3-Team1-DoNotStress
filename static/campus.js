@@ -2,7 +2,7 @@
   const root = document.getElementById('dns-campus');
   const main = root.querySelector('#ds-main');
   const boot = JSON.parse(document.getElementById('campus-config').textContent);
-  let page = boot.page || 'home', step = 0, completed = !!boot.completed;
+  let page = boot.page || 'home', step = 0;
   let assessment = boot.result || null, busy = false;
   const recordFilters = {student_id:'', tier:'', cohort_year:''};
   const tiers = ["You're doing ok", 'Worth a check-in', 'Please reach out'];
@@ -15,9 +15,7 @@
   const reviewStep = chapters.length;
   const escape = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   function plant(g=1){return `<div class="ds-plant" aria-hidden="true" style="--grow:${g}"><div class="ds-stem"><div class="ds-leaf"></div><div class="ds-leaf r"></div><div class="ds-leaf s"></div></div><div class="ds-pot"></div></div>`}
-function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pill">✦ A small pause. A fresh perspective.</span><h1>Uni is a lot.<br>Let's check in<br><em style="font-family:Georgia,serif;font-weight:400">with you.</em></h1><p>Sleep, deadlines, life. Make a little room to notice how you're doing — and find your next small step.</p><div class="ds-actions"><button class="ds-primary" data-action="start">Start my check-in <span>↗</span></button><span class="ds-note">11 core questions · 6 chapters<br>Go at your own pace</span></div></section><div class="ds-art ds-companion"><div class="ds-orbit"></div><span class="ds-float a">☾ Rest counts, too.</span><span class="ds-float b">One thing at a time.</span><span class="ds-float c">✦ Showing up is enough.</span>${plant()}<div class="ds-ground"></div><span class="ds-art-label">Meet your little growth buddy</span></div></div><div class="ds-bottom"><section class="ds-feature"><span class="ds-num">01 / NOTICE</span><h3>A check-in, on your terms.</h3><p>Simple taps and sliders. No right answers, no pressure to feel a certain way.</p></section><section class="ds-feature"><span class="ds-num">02 / UNDERSTAND</span><h3>See the bigger picture.</h3><p>Bring your academic load and everyday wellbeing into one view.</p></section><section class="ds-feature"><span class="ds-num">03 / RESET</span><h3>Pick one small next step.</h3><p>Leave with a manageable plan. Grow your plant by taking time for yourself.</p></section></div><section class="ds-research"><h2>Backed by research</h2><p>Every question in this check-in is adapted from established, peer-reviewed questionnaires on stress, sleep, study load, finances and social support.</p><p>Sources: Cohen et al. (1983); Buysse et al. (1989); Bedewy &amp; Gabriel (2015); Prawitz et al. (2006); Zimet et al. (1988).</p></section>`}
-function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">My little garden</span><h2>Growth, without the pressure.</h2><p>Your completed check-in plants a seed.<br>Missing a day never takes anything away.</p><div class="ds-art">${plant(completed?1:.45)}<div class="ds-ground"></div><span class="ds-art-label">${completed?'Your first check-in plant':'Your first seed is waiting'}</span></div><h3>${completed?'1 check-in · 1 moment for you':'A fresh start, whenever you’re ready.'}</h3><p>${completed?'You earned this by checking in — whatever your answers were.':'Take a moment for yourself and watch your first plant grow.'}</p><button class="ds-primary" data-action="${completed?'plan':'start'}">${completed?'Return to my plan':'Plant my first seed →'}</button></div>`}
-
+function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pill">✦ A small pause. A fresh perspective.</span><h1>Uni is a lot.<br>Let's check in<br><em style="font-family:Georgia,serif;font-weight:400">with you.</em></h1><p>Sleep, deadlines, life. Make a little room to notice how you're doing — and find your next small step.</p><div class="ds-actions"><button class="ds-primary" data-action="start">Start my check-in <span>↗</span></button><span class="ds-note">11 core questions · 6 chapters<br>Go at your own pace</span></div></section><div class="ds-art ds-companion"><div class="ds-orbit"></div><span class="ds-float a">☾ Rest counts, too.</span><span class="ds-float b">One thing at a time.</span><span class="ds-float c">✦ Showing up is enough.</span>${plant()}<div class="ds-ground"></div><span class="ds-art-label">Meet your little growth buddy</span></div></div><div class="ds-bottom"><section class="ds-feature"><span class="ds-num">01 / NOTICE</span><h3>A check-in, on your terms.</h3><p>Simple taps and sliders. No right answers, no pressure to feel a certain way.</p></section><section class="ds-feature"><span class="ds-num">02 / UNDERSTAND</span><h3>See the bigger picture.</h3><p>Bring your academic load and everyday wellbeing into one view.</p></section><section class="ds-feature"><span class="ds-num">03 / RESET</span><h3>Pick one small next step.</h3><p>Leave with a manageable plan.</p></section></div><section class="ds-research"><h2>Backed by research</h2><p>Every question in this check-in is adapted from established, peer-reviewed questionnaires on stress, sleep, study load, finances and social support.</p><p>Sources: Cohen et al. (1983); Buysse et al. (1989); Bedewy &amp; Gabriel (2015); Prawitz et al. (2006); Zimet et al. (1988).</p></section>`}
   function field(label, id, control, help='') {
     return `<div class="ds-field"><label class="ds-label" for="${id}">${label}</label>${control}<div class="ds-help">${help}</div></div>`;
   }
@@ -109,8 +107,8 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <ul class="ds-suggestions">${assessment.tips.items.map(tip=>`<li>${escape(tip.text)}</li>`).join('')}</ul>
       <p class="ds-save-note">Your answers are saved so SIT wellbeing staff can follow up if needed. Anything you wrote in the reflection box is not stored.</p>
       <button class="ds-link" data-action="new">Back to homepage</button></section>
-      <aside><div class="ds-mini ds-companion">${plant()}<span class="ds-pill">First seed planted</span><h3>You made space for you.</h3>
-      <p>No streaks to keep. No scores to beat. Just a little growth, at your pace.</p><button class="ds-link" data-nav="garden">Visit my garden →</button></div>
+      <aside><div class="ds-mini ds-companion">${plant()}<span class="ds-pill">Check-in complete</span><h3>You made space for you.</h3>
+      <p>Taking a moment to check in is a good step. Come back whenever you need to.</p></div>
       ${supportPanel(assessment.advisor)}</aside></div>`;
   }
   function pathFor(next) {
@@ -134,7 +132,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       if(button.dataset.nav===(page==='result'?'checkin':page))button.setAttribute('aria-current','page');
       else button.removeAttribute('aria-current');
     });
-    ({home,checkin,result,garden,records}[page] || home)();
+    ({home,checkin,result,records}[page] || home)();
   }
   function riskClass(value) {
     return {Low:'low',Moderate:'moderate',High:'high'}[value] || 'unknown';
@@ -234,7 +232,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     setBusy(true);
     main.querySelector('#ds-error').textContent='Taking a moment to understand your check-in…';
     main.querySelector('#ds-failure-support').innerHTML='';
-    assessment=null;completed=false;
+    assessment=null;
     try {
       const {response,data}=await post(boot.submitUrl,{...answers,student_id:answers.student_id.trim(),feelings_text:answers.feelings_text.trim()});
       if(!response.ok) {
@@ -243,7 +241,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
         if(data.advisor)main.querySelector('#ds-failure-support').innerHTML=(data.safety_flag?safetyPrompt():'')+supportPanel(data.advisor);
         return;
       }
-      assessment=data.result;completed=true;page='result';remember('result');render();
+      assessment=data.result;page='result';remember('result');render();
     } catch(error) {main.querySelector('#ds-error').textContent='Could not connect. Your answers are still here; please try again.';}
     finally {setBusy(false);}
   }
@@ -277,7 +275,6 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       case 'clear-filters':clearTimeout(searchTimer);Object.keys(recordFilters).forEach(key=>recordFilters[key]='');records();return;
       case 'refresh-records':loadRecords();return;
       case 'start':page='checkin';break;
-      case 'plan':page=assessment?'result':'checkin';break;
       case 'back':if(step===0)page='home';else step--;break;
       case 'next':if(!valid())return;if(step<reviewStep)step++;else{await submit();return;}break;
       case 'new':location.assign(boot.homeUrl);return;

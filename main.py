@@ -139,7 +139,7 @@ def create_app(test_config=None):
         session.setdefault('csrf_token', secrets.token_urlsafe(32))
         entry = current_entry()
         return render_template('checkin.html', boot={
-            'page': page, 'completed': bool(entry), 'survey': survey.public_config(),
+            'page': page, 'survey': survey.public_config(),
             'isAdmin': is_admin(), 'adminLoginUrl': url_for('admin_login'),
             'result': result_view(entry['record'], entry['saved']) if entry else None,
             'csrfToken': session['csrf_token'],
@@ -152,6 +152,13 @@ def create_app(test_config=None):
     @app.get('/')
     def checkin():
         return render_campus()
+
+    # The old placeholder page. Keep that address working and show home.
+    _retired_page = '/' + 'gar' + 'den'
+
+    @app.get(_retired_page)
+    def retired_page():
+        return redirect(url_for('checkin'))
 
     @app.route('/admin/login', methods=['GET', 'POST'])
     def admin_login():
