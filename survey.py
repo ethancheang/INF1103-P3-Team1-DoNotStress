@@ -142,28 +142,28 @@ def score(record):
 def explanation(record, scores):
     stress = scores['stress_score']
     text = (f"Your {scores['scored_item_count']} answers give an average stress score of {stress:g} out of 5 "
-            '(1 = least stress, 5 = most). Positively worded questions were reversed, so higher always means more stress.')
+            '(1 = least stress, 5 = most). Positively worded questions were reversed, so a higher score always means more stress.')
     if record.get('safety_flag'):
         text += ' Your reflection prompted us to highlight support. This does not change your stress score and is not a diagnosis.'
     elif scores['risk_category'] == 'High':
-        text += ' The project uses averages above 3.5 to encourage reaching out to someone for support.'
+        text += ' An average above 3.5 is a sign to reach out to someone for support.'
     elif scores['risk_category'] == 'Moderate':
-        text += ' The project uses averages from 2.5 to 3.5 to suggest a check-in with someone you trust.'
+        text += ' An average from 2.5 to 3.5 suggests a check-in with someone you trust.'
     else:
-        text += ' Your answers fall in the lower project band (below 2.5). You can still ask for support whenever you need it.'
-    return text + ' These bands are team heuristics, not clinical cut-offs.'
+        text += ' Your answers sit below 2.5. You can still ask for support whenever you need it.'
+    return text + ' These bands are a simple guide, not clinical cut-offs.'
 
 def factor_insights(record, scores):
     flags = scores['context_flags']
     return [
         dict(title='Rest & recovery', flagged=flags['sleep'], value=f"{record['sleep_hours_avg']:g} hours · {SLEEP_OPTIONS[record['sleep_quality']-1]} quality",
-             text='Short or unsatisfying sleep can make daily demands harder to manage. Stress may also disrupt sleep. The project flags under 6 hours or fairly/very bad quality (answers of 4 or 5).'),
+             text='Short or unsatisfying sleep can make daily demands harder to manage. Stress may also disrupt sleep. Under 6 hours, or fairly or very bad quality (answers of 4 or 5), is highlighted here.'),
         dict(title='Study demands', flagged=flags['workload'], value=f"{record['pas_workload']}/5 · {PAS_OPTIONS[record['pas_workload']-1]}",
-             text='Feeling overloaded may leave less room for rest. Agreeing that coursework is too much raises a workload flag. The catch-up answer counts in the stress score, not as a separate flag.'),
+             text='Feeling overloaded may leave less room for rest. Agreeing that coursework is too much highlights workload. The catch-up answer counts in the stress score, not as its own highlight.'),
         dict(title='Money pressures', flagged=flags['finances'], value=f"{record['fin_stress']}/5 · {FIN_OPTIONS[record['fin_stress']-1]}",
-             text='Money worries may add to study pressures. Answers of 4–5 (high or overwhelming stress) raise a financial flag and guide money-support suggestions; no amounts or income are inferred.'),
+             text='Money worries may add to study pressures. Answers of 4–5 (high or overwhelming stress) highlight finances and guide money-support suggestions. No amounts or income are inferred.'),
         dict(title='Support & connection', flagged=flags['support'], value=f"{scores['support_mean']:g}/5 agreement across {scores['support_item_count']} answers",
-             text='Available support may help you cope with pressures. An average below 2.5 raises a support flag. In the overall stress score these answers are reversed (6 − answer). This is an indicator, not a validated MSPSS score.'),
+             text='Available support may help you cope with pressures. An average below 2.5 highlights support. In the overall stress score these answers are reversed (6 − answer).'),
     ]
 
 def finalise(record):

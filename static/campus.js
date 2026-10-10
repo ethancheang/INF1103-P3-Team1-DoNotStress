@@ -60,17 +60,17 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       const section=survey.sections[step];
       content=`<span class="ds-pill">${escape(section.period)}</span><h2 tabindex="-1" id="ds-step-heading">${escape(section.heading)}</h2><p>${escape(section.intro)}</p>
         <div class="ds-why"><strong>Why this matters</strong><p>${escape(section.why)}</p></div>
-        ${step===0?field('Student ID','student_id','<input class="ds-input" id="student_id" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="e.g. 2605581">','7 digits starting with 2. Your ID is not sent to the AI provider.'):''}
+        ${step===0?field('Student ID','student_id','<input class="ds-input" id="student_id" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="e.g. 2605581">','7 digits starting with 2. Your student ID stays private.'):''}
         ${section.keys.map(key=>questionControl(questions[key])).join('')}
-        ${step===5?field('Anything on your mind about school or life lately? (Optional)','feelings_text','<textarea class="ds-input" id="feelings_text" rows="4" maxlength="2000" placeholder="A space to reflect, if you want it."></textarea>','Not scored or saved. Checked by this app for possible crisis language, then discarded by the server. Not sent to Gemini. No person monitors this text.'):''}
+        ${step===5?field('Anything on your mind about school or life lately? (Optional)','feelings_text','<textarea class="ds-input" id="feelings_text" rows="4" maxlength="2000" placeholder="A space to reflect, if you want it."></textarea>','This space is just for you. It isn\'t scored or saved. If anything you write suggests you might need support right away, we\'ll show you who to contact.'):''}
         <div id="ds-safety">${reflectionSafety()?safetyPrompt():''}</div>`;
     } else {
       content=`<span class="ds-pill">✦ Your check-in, together</span><h2 tabindex="-1" id="ds-step-heading">A moment to look back.</h2><p>Check the time periods and answers below. You can edit any chapter before continuing.</p>
       <p><strong>Student ID:</strong> ${escape(answers.student_id)}</p>
       ${survey.sections.map((section,index)=>`<section class="ds-review-block"><div class="ds-actions"><h3>${escape(section.title)}</h3><button class="ds-link" data-edit-step="${index}">Edit</button></div><p class="ds-help">${escape(section.period)}</p>
-      <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(questions[key].prompt)}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Included for the local safety check only; not saved or sent to AI.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
+      <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(questions[key].prompt)}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Written for you only. It isn\'t scored or saved.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
       ${reflectionSafety()?safetyPrompt():''}
-      <div class="ds-why"><strong>What happens next</strong><p>Your questionnaire answers (without your ID or reflection) go to Gemini for supporting suggestions. The app calculates your average stress score (1–5) and applies the documented project rules. This is not a diagnosis. Saving is optional afterwards.</p></div>`;
+      <div class="ds-why"><strong>What happens next</strong><p>After you submit, we'll look at your answers and share a few suggestions that may help. Your student ID and personal reflection stay private. This check-in isn't a diagnosis, and you can choose whether to save your results at the end.</p></div>`;
     }
     main.innerHTML=`<div class="ds-journey"><aside class="ds-rail"><div class="ds-kicker">Your little reset</div>
       ${chapters.map((title,i)=>`<div class="ds-stop ${i===step?'current':i<step?'done':''}"><b>${i<step?'✓':i+1}</b><span>${escape(title)}</span></div>`).join('')}
@@ -94,7 +94,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     if (!assessment) {page='checkin';checkin();return;}
     main.innerHTML = `<span class="ds-pill">✦ Check-in complete</span><div class="ds-result"><section>
       <h2>You don't have to do<br>everything at once.</h2><p>A little perspective, and a small step forward.</p>
-      <div class="ds-result-hero" data-risk="${riskClass(assessment.insights?.risk_category)}"><div class="ds-kicker">Your check-in · project guidance</div><h2>${escape(assessment.soft.heading)}</h2>
+      <div class="ds-result-hero" data-risk="${riskClass(assessment.insights?.risk_category)}"><div class="ds-kicker">Your check-in</div><h2>${escape(assessment.soft.heading)}</h2>
       <p>${escape(assessment.soft.body)}</p><div class="ds-note">A wellbeing check-in, not a medical diagnosis.</div></div>
       ${insightsPanel()}
       <h3>${escape(assessment.tips.heading)}</h3><p>Choose what you'd like to try. One is enough to start.</p>
@@ -123,18 +123,13 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   function riskBadge(value) {
     return `<span class="ds-risk ds-risk-${riskClass(value)}">${escape(value || 'Unknown')}</span>`;
   }
-  function stressBadge(value) {
-    if(value===null || value===undefined || !Number.isFinite(+value))return '—';
-    const level=+value<=3?'low':+value<=6?'moderate':'high';
-    return `<span class="ds-risk ds-risk-${level}">${escape(value)}/10</span>`;
-  }
   function insightsPanel() {
     const info=assessment.insights;
     if(!info)return '';
     return `<section class="ds-insights"><div class="ds-actions"><h3>Your stress picture</h3>${riskBadge(info.risk_category)}</div>
       <div class="ds-score"><strong>${escape(info.stress_score ?? '—')}<small> / 5</small></strong><span>Average stress score · 1 (low) to 5 (high)<br>Across all your answers</span></div>
       <p class="ds-explanation">${escape(info.explanation)}</p>
-      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>Every question uses a 1–5 scale except typical sleep, which you enter in hours. Those hours are converted when scoring (8 or more hours is 1, under 5 hours is 5). Positively worded questions (confident handling personal problems, things going well, and support from friends and family) are reversed as 6 − answer, so a higher number always means more stress. Your score is the average of all 11 answers, each with equal weight. The project uses below 2.5, 2.5–3.5 and above 3.5 for its Low, Moderate and High guidance bands. Context flags choose which tips appear first. A safety prompt can produce High without changing the score.</p><p>These are project heuristics, not validated clinical cut-offs. This mix of selected and adapted questions is not a validated combined screening instrument.</p></details>
+      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>Every question uses a 1–5 scale except typical sleep, which you enter in hours. Those hours are converted when scoring (8 or more hours is 1, under 5 hours is 5). Positively worded questions (confident handling personal problems, things going well, and support from friends and family) are reversed as 6 − answer, so a higher number always means more stress. Your score is the average of all 11 answers, each with equal weight. Below 2.5 means you're doing ok, 2.5 to 3.5 is worth a check-in, and above 3.5 means please reach out. Some answers choose which suggestions appear first. A support prompt can show “Please reach out” without changing the score.</p><p>These bands are a simple guide, not clinical cut-offs.</p></details>
       </section><section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3><span class="ds-pill">${factor.flagged?'Worth some attention':'Context noted'}</span></div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('')}</div></section>
       ${info.safety_flag?safetyPrompt():''}`;
   }

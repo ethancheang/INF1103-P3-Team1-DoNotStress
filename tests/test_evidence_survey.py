@@ -88,6 +88,17 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('Answer selected',js)
         self.assertNotIn('Move the slider or confirm the displayed position.',js)
         self.assertIn('Higher numbers mean more financial stress.',js)
+        self.assertIn('Your student ID stays private.',js)
+        self.assertIn("This space is just for you.",js)
+        self.assertIn("This check-in isn't a diagnosis",js)
+        self.assertIn('>Your check-in<',js)
+        self.assertNotIn('stressBadge',js)
+        self.assertNotIn('not sent to the AI provider',js)
+        self.assertNotIn('Not sent to Gemini',js)
+        self.assertNotIn('project guidance',js)
+        self.assertNotIn('project heuristics',js)
+        self.assertNotIn('documented project rules',js)
+        self.assertNotIn('not a validated combined screening instrument',js)
 
     def test_prompts_and_pss_sentences(self):
         prompts={
