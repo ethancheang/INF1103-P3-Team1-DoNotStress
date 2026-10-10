@@ -14,9 +14,12 @@ fake_generate = frontend.fake_generate
 
 
 def raw(**changes):
-    return dict(student_id='2605581', pss_1=0, pss_2=4, pss_3=4, pss_4=0,
-                sleep_hours_avg=7, sleep_quality=0, pas_workload=1, fin_stress=10,
-                mspss_friends=7, mspss_family=7, **changes)
+    return dict(student_id='2605581', pss_1=1, pss_2=5, pss_3=5, pss_4=1,
+                sleep_hours_avg=8, sleep_quality=1, pas_workload=1, fin_stress=1,
+                mspss_friends=5, mspss_family=5, **changes)
+
+MAX_STRESS = dict(pss_1=5, pss_2=1, pss_3=1, pss_4=5, sleep_hours_avg=4, sleep_quality=5,
+                  pas_workload=5, fin_stress=5, mspss_friends=1, mspss_family=1)
 
 
 def record(**changes):
@@ -29,42 +32,82 @@ def record(**changes):
 
 class ScoringTests(unittest.TestCase):
     def test_reverse_coding_extremes(self):
-        self.assertEqual(record()['pss_total'],0)
-        self.assertEqual(record(pss_1=4,pss_2=0,pss_3=0,pss_4=4)['pss_total'],16)
-        self.assertEqual(record(pss_1=1,pss_2=2,pss_3=3,pss_4=4)['pss_total'],8)
+        self.assertEqual(record()['stress_score'],1.0)
+        self.assertEqual(record(**MAX_STRESS)['stress_score'],5.0)
+        self.assertEqual(record(pss_2=1)['stress_score'],1.4)  # reversed: 6-1 = 5
+        self.assertEqual(record(pss_1=5)['stress_score'],1.4)  # not reversed
+        self.assertEqual(survey.REVERSED_KEYS,('pss_2','pss_3','mspss_friends','mspss_family','mspss_so'))
 
-    def test_every_possible_pss_total_and_band_boundary(self):
-        for a in range(5):
-            for b in range(5):
-                for c in range(5):
-                    for d in range(5):
-                        r=record(pss_1=a,pss_2=b,pss_3=c,pss_4=d)
-                        total=a+4-b+4-c+d
-                        self.assertEqual(r['pss_total'],total)
-                        self.assertEqual(r['risk_category'],'High' if total>=12 else 'Moderate' if total>=8 else 'Low')
+    def test_average_and_band_boundaries(self):
+        base=dict(pss_1=5,pss_4=5,sleep_hours_avg=4.5)  # 4.5 h scores as 5; 10 items, sum 22
+        for quality, expected, band in [(3,2.4,'Low'),(4,2.5,'Moderate')]:
+            r=record(**base,sleep_quality=quality)
+            self.assertEqual((r['stress_score'],r['risk_category']),(expected,band))
+        high=dict(base,sleep_quality=5,pas_workload=5,mspss_friends=2)  # scored sum 33 before finance
+        for fin, expected, band in [(3,3.5,'Moderate'),(4,3.6,'High')]:
+            r=record(**high,fin_stress=fin)
+            self.assertEqual((r['stress_score'],r['risk_category']),(expected,band))
+            self.assertEqual(r['soft_label'],{'Moderate':'Worth a check-in','High':'Please reach out'}[band])
+        self.assertEqual(record()['soft_label'],"You're doing ok")
+
+    def test_every_single_answer_on_every_question(self):
+        for q in survey.QUESTIONS:
+            if q['key']=='sleep_hours_avg':
+                continue
+            for value in range(1,6):
+                r=record(**{q['key']:value})
+                scored=6-value if q.get('reverse') else value
+                others=10 if q.get('optional') else 9  # the other required items all score 1
+                self.assertEqual(r['stress_score'],round((others+scored)/(others+1),2),q['key'])
+                self.assertTrue(1<=r['stress_score']<=5)
+
+    def test_sleep_hours_stay_hours_and_score_as_stress(self):
+        bands=[(14,1),(8.5,1),(8,1),(7.5,2),(7,2),(6.5,3),(6,3),(5.5,4),(5,4),(4.5,5),(0,5)]
+        for hours, scored in bands:
+            r=record(sleep_hours_avg=hours)
+            self.assertEqual(r['sleep_hours_avg'],hours)
+            self.assertEqual(r['stress_score'],round((9+scored)/10,2),hours)
+        self.assertFalse(io_manager.validate_student_form({**raw(),'sleep_hours_avg':6.75})[0])
+        q=survey.QUESTION_MAP['sleep_hours_avg']
+        self.assertEqual((q['kind'],q['min'],q['max'],q['step']),('slider',0,14,0.5))
+        fin=survey.QUESTION_MAP['fin_stress']
+        self.assertEqual((fin['kind'],fin['min'],fin['max'],fin['step'],fin['low'],fin['high']),
+                         ('slider',1,5,1,'No stress at all','Overwhelming stress'))
+
+    def test_one_based_labels(self):
+        r=record(sleep_hours_avg=7.5,sleep_quality=5,fin_stress=1)
+        factors={item['title']:item['value'] for item in survey.factor_insights(r,r)}
+        self.assertEqual(factors['Rest & recovery'],'7.5 hours · Very bad quality')
+        self.assertEqual(factors['Money pressures'],'1/5 · No stress at all')
+        shown={field['key']:field['value'] for field in io_manager.format_student_record(r)['fields']}
+        self.assertEqual(shown['sleep_hours_avg'],'7.5')
+        self.assertEqual(shown['sleep_quality'],'5 · Very bad')
+        self.assertEqual(shown['fin_stress'],'1 · No stress at all')
+        self.assertEqual(shown['pss_1'],'1 · Never')
 
     def test_sleep_boundary_and_quality(self):
-        self.assertFalse(record(sleep_hours_avg=6,sleep_quality=1)['context_flags']['sleep'])
+        self.assertFalse(record(sleep_hours_avg=6,sleep_quality=3)['context_flags']['sleep'])
         self.assertTrue(record(sleep_hours_avg=5.5)['context_flags']['sleep'])
-        self.assertTrue(record(sleep_quality=2)['context_flags']['sleep'])
+        self.assertTrue(record(sleep_quality=4)['context_flags']['sleep'])
 
-    def test_finance_direction_and_context_cap(self):
-        self.assertFalse(record(fin_stress=5)['context_flags']['finances'])
+    def test_finance_direction_and_flags_only_steer_tips(self):
+        self.assertFalse(record(fin_stress=3)['context_flags']['finances'])
         self.assertTrue(record(fin_stress=4)['context_flags']['finances'])
-        self.assertEqual(record(fin_stress=1)['risk_category'],'Low')
-        self.assertEqual(record(fin_stress=1,pas_workload=4)['risk_category'],'Moderate')
-        self.assertEqual(record(fin_stress=1,pas_workload=5,sleep_hours_avg=0,mspss_friends=1,mspss_family=1)['risk_category'],'Moderate')
+        r=record(fin_stress=5,pas_workload=5)  # average 1.8: flags no longer lift the band
+        self.assertEqual(r['risk_category'],'Low')
+        self.assertTrue(r['context_flags']['finances'] and r['context_flags']['workload'])
 
     def test_optional_questions_and_mean(self):
-        r=record(mspss_friends=1,mspss_family=4)
-        self.assertEqual(r['support_mean'],2.5)
+        r=record(mspss_friends=1,mspss_family=3)
+        self.assertEqual(r['support_mean'],2)
         self.assertTrue(r['context_flags']['support'])
-        r=record(mspss_friends=1,mspss_family=4,mspss_so=7,pas_catchup=5)
-        self.assertEqual(r['support_mean'],4)
+        r=record(mspss_friends=1,mspss_family=3,mspss_so=5,pas_catchup=5)
+        self.assertEqual(r['support_mean'],3)
         self.assertEqual(r['support_item_count'],3)
+        self.assertEqual(r['scored_item_count'],12)
         self.assertFalse(r['context_flags']['support'])
         self.assertFalse(r['context_flags']['workload'])
-        self.assertFalse(record(mspss_friends=3,mspss_family=3)['context_flags']['support'])
+        self.assertFalse(record(mspss_friends=3,mspss_family=2)['context_flags']['support'])
 
     def test_required_and_invalid_answers(self):
         for q in survey.QUESTIONS:
@@ -88,11 +131,11 @@ class ScoringTests(unittest.TestCase):
             r=record(feelings_text=text)
             self.assertTrue(r['safety_flag'],text)
             self.assertEqual(r['risk_category'],'High')
-            self.assertEqual(r['pss_total'],0)
+            self.assertEqual(r['stress_score'],1.0)
 
     def test_no_client_score_or_flag_trusted(self):
-        r=record(pss_total=16,survey_version='fake',safety_flag=True,risk_category='High')
-        self.assertEqual(r['pss_total'],0)
+        r=record(stress_score=5,survey_version='fake',safety_flag=True,risk_category='High')
+        self.assertEqual(r['stress_score'],1.0)
         self.assertFalse(r['safety_flag'])
         self.assertEqual(r['survey_version'],survey.VERSION)
 
@@ -115,19 +158,20 @@ class RevisedPipelineTests(unittest.TestCase):
     setUp = frontend.CampusTests.setUp
     post = frontend.CampusTests.post
     def test_new_record_storage_and_history(self):
-        self.values.update(feelings_text='SENSITIVE NOTE that must not be retained',mspss_so=7,pas_catchup=4)
+        self.values.update(feelings_text='SENSITIVE NOTE that must not be retained',mspss_so=5,pas_catchup=4)
         self.assertEqual(self.post().status_code,200)
         self.assertEqual(self.post({'opt_in':True},'/save').status_code,200)
         stored=json.loads(self.path.read_text(encoding='utf-8'))[0]
         self.assertNotIn('feelings_text',stored)
         self.assertNotIn('SENSITIVE NOTE',self.path.read_text(encoding='utf-8'))
-        self.assertEqual(stored['pss_total'],8)
+        self.assertEqual(stored['sleep_hours_avg'],6.5)  # hours are stored, not a 1-5 band
+        self.assertEqual(stored['stress_score'],2.92)  # 6.5 h scores as 3; (10 x 3 + catch-up 4 + (6-5)) / 12
         self.assertEqual(self.client.get('/api/records').status_code,401)
         login_admin(self.client)
         row=self.client.get('/api/records').json['records'][0]
         self.assertEqual(row['survey_version'],survey.VERSION)
-        self.assertEqual(row['fin_stress'],8)
-        self.assertEqual(row['mspss_so'],7)
+        self.assertEqual(row['fin_stress'],3)
+        self.assertEqual(row['mspss_so'],5)
         self.assertIsNone(row['stress_level'])
 
     def test_safety_remains_visible_when_ai_fails(self):
