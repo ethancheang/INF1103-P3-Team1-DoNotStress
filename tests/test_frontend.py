@@ -70,18 +70,17 @@ class CampusTests(unittest.TestCase):
         self.assertIn("page='result'", js)
 
     def test_retired_page_shows_home(self):
-        path = '/' + 'gar' + 'den'
-        response = self.client.get(path)
+        response = self.client.get('/garden')
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.location.endswith('/'))
-        page = self.client.get(path, follow_redirects=True)
+        page = self.client.get('/garden', follow_redirects=True)
         text = page.get_data(as_text=True)
         self.assertIn('>Home<', text)
         self.assertIn('Student view', text)
-        self.assertNotIn('My ' + 'gar' + 'den', text)
-        self.assertNotIn('data-nav="' + 'gar' + 'den' + '"', text)
+        self.assertNotIn('My garden', text)
+        self.assertNotIn('data-nav="garden"', text)
         login = self.client.get('/admin/login').get_data(as_text=True)
-        self.assertNotIn('My ' + 'gar' + 'den', login)
+        self.assertNotIn('My garden', login)
 
     def test_success_uses_backend_result_and_keeps_answers_out_of_cookie(self):
         response = self.post()

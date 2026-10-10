@@ -153,10 +153,8 @@ def create_app(test_config=None):
     def checkin():
         return render_campus()
 
-    # The old placeholder page. Keep that address working and show home.
-    _retired_page = '/' + 'gar' + 'den'
-
-    @app.get(_retired_page)
+    # Legacy URL from the removed garden page; send visitors home.
+    @app.get('/garden')
     def retired_page():
         return redirect(url_for('checkin'))
 
