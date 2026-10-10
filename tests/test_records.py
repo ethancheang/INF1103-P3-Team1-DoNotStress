@@ -20,7 +20,8 @@ class RecordsTests(unittest.TestCase):
         login_admin(self.client)
         labels={'Low':"You're doing ok",'Moderate':'Worth a check-in','High':'Please reach out'}
         self.rows = [dict(student_id=sid, survey_version=survey.VERSION, stress_score=score,
-                          stress_level=5, sleep_hours_avg=7.5, sleep_quality=2, pas_workload=3,
+                          stress_level=5, pss_1=2, pss_2=4, pss_3=3, pss_4=1,
+                          sleep_hours_avg=7.5, sleep_quality=2, pas_workload=3,
                           pas_catchup=2, fin_stress=4, mspss_friends=4, mspss_family=5,
                           risk_category=risk, soft_label=labels[risk], ai_ok=True, source='ai_logic',
                           saved_at=date, feelings_text='Private response that must not appear in history',
@@ -51,8 +52,11 @@ class RecordsTests(unittest.TestCase):
         self.assertEqual(response.json['total'],3)
         self.assertEqual(response.json['records'][0]['student_id'],'2000123')
         self.assertEqual(set(response.json['records'][0]),{'student_id','stress_score','risk_category','soft_label',
+                         'pss_1','pss_2','pss_3','pss_4',
                          'sleep_hours_avg','sleep_quality','pas_workload','pas_catchup','fin_stress','mspss_friends',
                          'mspss_family','saved_at','survey_version','status'})
+        self.assertEqual(response.json['records'][0]['pss_1'],2)
+        self.assertEqual(response.json['records'][0]['sleep_hours_avg'],7.5)
         self.assertNotIn('stress_level',response.json['records'][0])
         self.assertNotIn('ai_status',response.json['records'][0])
         self.assertNotIn('Private',response.get_data(as_text=True))
@@ -113,6 +117,14 @@ class RecordsTests(unittest.TestCase):
         response=self.client.get('/records')
         self.assertEqual(response.status_code,200)
         self.assertIn('"page": "records"',response.get_data(as_text=True))
+        js=(Path(__file__).resolve().parents[1]/'static'/'campus.js').read_text(encoding='utf-8')
+        css=(Path(__file__).resolve().parents[1]/'static'/'style.css').read_text(encoding='utf-8')
+        for header in ('Control (pss_1)','Coping (pss_2)','Going well (pss_3)','Piling up (pss_4)',
+                       'Sleep (hours)','Answers: 1 = lowest, 5 = highest · Sleep in hours'):
+            self.assertIn(header,js)
+        self.assertIn('title="${escape(title)}"',js)
+        self.assertIn('overflow-x:auto',css)
+        self.assertIn('max-width:75rem',css)
 
 
 if __name__=='__main__':

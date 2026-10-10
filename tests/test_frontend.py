@@ -40,6 +40,35 @@ class CampusTests(unittest.TestCase):
         return self.client.post(url, json=self.values if values is None else values,
                                 headers={'X-CSRF-Token': self.token})
 
+    def test_student_result_and_records_routes(self):
+        denied = self.client.get('/records')
+        self.assertEqual(denied.status_code, 302)
+        self.assertTrue(denied.location.endswith('/admin/login'))
+        self.assertEqual(self.client.get('/result').status_code, 302)
+        self.assertEqual(self.post().status_code, 200)
+        result = self.client.get('/result')
+        self.assertEqual(result.status_code, 200)
+        body = result.get_data(as_text=True)
+        self.assertIn('"page": "result"', body)
+        self.assertNotIn('"page": "records"', body)
+        self.assertIn('"resultUrl": "/result"', body)
+        self.assertIn('"recordsPageUrl": "/records"', body)
+        still_denied = self.client.get('/records')
+        self.assertEqual(still_denied.status_code, 302)
+        self.assertTrue(still_denied.location.endswith('/admin/login'))
+        from test_admin_access import login_admin
+        login_admin(self.client)
+        records = self.client.get('/records')
+        self.assertEqual(records.status_code, 200)
+        records_body = records.get_data(as_text=True)
+        self.assertIn('"page": "records"', records_body)
+        self.assertNotIn('"page": "result"', records_body)
+        js = Path(__file__).resolve().parents[1].joinpath('static', 'campus.js').read_text(encoding='utf-8')
+        self.assertIn('boot.resultUrl', js)
+        self.assertIn('boot.recordsPageUrl', js)
+        self.assertIn('history.pushState', js)
+        self.assertIn("page='result'", js)
+
     def test_success_uses_backend_result_and_keeps_answers_out_of_cookie(self):
         response = self.post()
         self.assertEqual(response.status_code, 200)
@@ -48,8 +77,11 @@ class CampusTests(unittest.TestCase):
             self.assertEqual(set(session), {'csrf_token', 'checkin_token'})
         record = next(iter(self.app.extensions['pending_checkins'].values()))['record']
         self.assertEqual(record['source'], 'ai_logic')
-        self.assertFalse(self.path.exists())
+        stored = json.loads(self.path.read_text(encoding='utf-8'))
+        self.assertEqual(len(stored), 1)
+        self.assertNotIn('feelings_text', stored[0])
         self.assertEqual(self.client.get('/result').status_code, 200)
+        self.assertEqual(len(json.loads(self.path.read_text(encoding='utf-8'))), 1)
 
     def test_invalid_fields_prevent_ai_call(self):
         for field, value in [('student_id','1200000'), ('sleep_hours_avg','6.75'),
@@ -86,15 +118,65 @@ class CampusTests(unittest.TestCase):
         self.assertFalse(self.app.extensions['pending_checkins'])
         self.assertEqual(self.client.get('/result').status_code, 302)
 
-    def test_save_requires_consent_and_is_idempotent(self):
+    def test_save_is_automatic_and_refresh_does_not_duplicate(self):
         self.post()
-        self.assertEqual(self.post({'opt_in':False}, '/save').status_code, 400)
-        self.assertEqual(self.post({'opt_in':'no'}, '/save').status_code, 400)
-        self.assertFalse(self.path.exists())
+        self.assertEqual(len(json.loads(self.path.read_text(encoding='utf-8'))), 1)
+        self.assertEqual(self.client.get('/result').status_code, 200)
         self.assertEqual(self.post({'opt_in':True}, '/save').status_code, 200)
-        self.assertEqual(self.post({'opt_in':True}, '/save').status_code, 200)
+        self.assertEqual(self.post({}, '/save').status_code, 200)
         records = json.loads(self.path.read_text(encoding='utf-8'))
         self.assertEqual(len(records), 1)
+
+    def test_submit_saves_record_for_admin_without_reflection(self):
+        self.values['feelings_text'] = 'PRIVATE REFLECTION that must not be stored'
+        response = self.post()
+        self.assertEqual(response.status_code, 200)
+        stored = json.loads(self.path.read_text(encoding='utf-8'))
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]['student_id'], '2605581')
+        self.assertEqual(stored[0]['pss_1'], 3)
+        self.assertEqual(stored[0]['sleep_hours_avg'], 6.5)
+        self.assertNotIn('feelings_text', stored[0])
+        self.assertNotIn('PRIVATE REFLECTION', self.path.read_text(encoding='utf-8'))
+        self.assertEqual(self.client.get('/result').status_code, 200)
+        self.assertEqual(len(json.loads(self.path.read_text(encoding='utf-8'))), 1)
+        self.assertEqual(self.client.get('/api/records').status_code, 401)
+        from test_admin_access import login_admin
+        login_admin(self.client)
+        records_page = self.client.get('/records')
+        self.assertEqual(records_page.status_code, 200)
+        self.assertIn('"page": "records"', records_page.get_data(as_text=True))
+        payload = self.client.get('/api/records').json
+        self.assertEqual(payload['matching'], 1)
+        row = payload['records'][0]
+        self.assertEqual(row['student_id'], '2605581')
+        self.assertEqual(row['status'], 'Evaluated')
+        self.assertNotIn('feelings_text', row)
+        self.assertNotIn('reflection', row)
+        self.assertNotIn('PRIVATE REFLECTION', json.dumps(payload))
+
+    def test_ai_down_saves_pending_record_without_reflection(self):
+        self.values['feelings_text'] = 'PRIVATE REFLECTION that must not be stored'
+        self.app.config['AI_GENERATE_FN'] = lambda *args: '{}'
+        response = self.post()
+        self.assertEqual(response.status_code, 503)
+        self.assertNotIn('result', response.json)
+        self.assertFalse(self.app.extensions['pending_checkins'])
+        stored = json.loads(self.path.read_text(encoding='utf-8'))
+        self.assertEqual(len(stored), 1)
+        self.assertEqual(stored[0]['status'], 'pending')
+        self.assertEqual(stored[0]['student_id'], '2605581')
+        self.assertEqual(stored[0]['sleep_hours_avg'], 6.5)
+        self.assertIs(stored[0]['ai_ok'], False)
+        self.assertNotIn('feelings_text', stored[0])
+        self.assertNotIn('PRIVATE REFLECTION', self.path.read_text(encoding='utf-8'))
+        from test_admin_access import login_admin
+        login_admin(self.client)
+        row = self.client.get('/api/records').json['records'][0]
+        self.assertEqual(row['student_id'], '2605581')
+        self.assertEqual(row['status'], 'Pending')
+        self.assertNotIn('feelings_text', row)
+        self.assertNotIn('PRIVATE REFLECTION', json.dumps(row))
 
     def test_csrf_and_malformed_requests(self):
         self.assertEqual(self.client.post('/', json=self.values).status_code, 403)
@@ -112,10 +194,11 @@ class CampusTests(unittest.TestCase):
         self.assertEqual(self.post({'opt_in':True}, '/save').status_code, 409)
 
     def test_save_failure_is_retryable(self):
-        self.post()
         with patch('main.data_manager.save_record', return_value={'ok':False}):
-            self.assertEqual(self.post({'opt_in':True}, '/save').status_code, 500)
-        self.assertEqual(self.post({'opt_in':True}, '/save').status_code, 200)
+            self.assertEqual(self.post().status_code, 500)
+        self.assertFalse(self.path.exists())
+        self.assertEqual(self.post().status_code, 200)
+        self.assertEqual(len(json.loads(self.path.read_text(encoding='utf-8'))), 1)
 
 
 if __name__ == '__main__':

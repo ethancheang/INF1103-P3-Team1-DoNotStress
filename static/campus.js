@@ -4,7 +4,6 @@
   const boot = JSON.parse(document.getElementById('campus-config').textContent);
   let page = boot.page || 'home', step = 0, completed = !!boot.completed;
   let assessment = boot.result || null, busy = false;
-  const selected = new Set();
   const recordFilters = {student_id:'', tier:'', cohort_year:''};
   const tiers = ["You're doing ok", 'Worth a check-in', 'Please reach out'];
   let recordsRequest = 0, searchTimer;
@@ -71,7 +70,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       ${survey.sections.map((section,index)=>`<section class="ds-review-block"><div class="ds-actions"><h3>${escape(section.title)}</h3><button class="ds-link" data-edit-step="${index}">Edit</button></div><p class="ds-help">${escape(section.period)}</p>
       <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(questions[key].prompt)}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Written for you only. It isn\'t scored or saved.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
       ${reflectionSafety()?safetyPrompt():''}
-      <div class="ds-why"><strong>What happens next</strong><p>After you submit, we'll look at your answers and share a few suggestions that may help. Your student ID and personal reflection stay private. This check-in isn't a diagnosis, and you can choose whether to save your results at the end.</p></div>`;
+      <div class="ds-why"><strong>What happens next</strong><p>After you submit, we'll look at your answers and share a few suggestions that may help. Your student ID stays private. Anything you write in the reflection box is not stored. This check-in isn't a diagnosis.</p></div>`;
     }
     main.innerHTML=`<div class="ds-journey"><aside class="ds-rail"><div class="ds-kicker">Your little reset</div>
       ${chapters.map((title,i)=>`<div class="ds-stop ${i===step?'current':i<step?'done':''}"><b>${i<step?'✓':i+1}</b><span>${escape(title)}</span></div>`).join('')}
@@ -89,12 +88,15 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     const phone = String(advisor.helpline || '').replace(/[^+0-9]/g, '');
     const sos = String(advisor.sos || '1767').replace(/[^+0-9]/g, '');
     const mindline = String(advisor.mindline || '1771').replace(/[^+0-9]/g, '');
+    const contacts = [
+      ['Email', `mailto:${email}`, email],
+      ['SIT Counselling 24-hour helpline', `tel:${phone}`, advisor.helpline || ''],
+      ['Samaritans of Singapore', `tel:${sos}`, advisor.sos || '1767'],
+      ['National mindline', `tel:${mindline}`, advisor.mindline || '1771'],
+    ];
     return `<div class="ds-support ${advisor.prominence==='high'?'ds-support-urgent':''}"><h3>${escape(advisor.heading)}</h3>
-      <p>${escape(advisor.body)}</p><p>${escape(advisor.cta)}</p>
-      <a href="mailto:${escape(email)}">${escape(email)}</a><br>
-      <a href="tel:${escape(phone)}">SIT Counselling 24-hour helpline ${escape(advisor.helpline)}</a><br>
-      <a href="tel:${escape(sos)}">Samaritans of Singapore ${escape(advisor.sos || '1767')}</a><br>
-      <a href="tel:${escape(mindline)}">National mindline ${escape(advisor.mindline || '1771')}</a></div>`;
+      <p>${escape(advisor.body)}</p>
+      <ul class="ds-contacts">${contacts.map(([label,href,value])=>`<li><span class="ds-contact-label">${escape(label)}</span><a href="${escape(href)}">${escape(value)}</a></li>`).join('')}</ul></div>`;
   }
   function result() {
     if (!assessment) {page='checkin';checkin();return;}
@@ -103,20 +105,31 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <div class="ds-result-hero" data-risk="${riskClass(assessment.insights?.risk_category)}"><div class="ds-kicker">Your check-in</div><h2>${escape(assessment.soft.heading)}</h2>
       <p>${escape(assessment.soft.body)}</p><div class="ds-note">A wellbeing check-in, not a medical diagnosis.</div></div>
       ${insightsPanel()}
-      <h3>${escape(assessment.tips.heading)}</h3><p>Choose what you'd like to try. One is enough to start.</p>
-      ${assessment.tips.items.map((tip,i)=>`<button class="ds-task" data-task="${i}" aria-pressed="${selected.has(i)}"><span class="ds-check">${selected.has(i)?'✓':'+'}</span><span>${escape(tip.text)}</span></button>`).join('')}
-      <div class="ds-status" aria-live="polite">${selected.size?selected.size+' small step(s) chosen.':'Your plan starts with a choice.'}</div>
-      <section class="ds-support"><h3>${assessment.saved?'Saved on this computer':'Keep this check-in?'}</h3>
-      ${assessment.saved?'<p>You chose to save this check-in. Saved records are available in the admin view.</p>':'<p>Your result is held temporarily in server memory. Saving writes your questionnaire answers, assessment, and whether a safety prompt was shown to this computer. Reflection text is never saved. Only a signed-in admin can view saved records through this app.</p><label><input type="checkbox" id="ds-opt-in"> I want to save my check-in on this computer for admin review.</label><p></p><button class="ds-secondary" data-action="save">Save my check-in</button>'}
-      <div class="ds-error" id="ds-save-status" role="status"></div></section>
-      <button class="ds-link" data-action="edit">${answers.student_id?'Review my answers':'Start another check-in'}</button>
-      <span> · </span><button class="ds-link" data-action="new">Start fresh</button></section>
+      <h3>${escape(assessment.tips.heading)}</h3><p>A few ideas that might help.</p>
+      <ul class="ds-suggestions">${assessment.tips.items.map(tip=>`<li>${escape(tip.text)}</li>`).join('')}</ul>
+      <p class="ds-save-note">Your answers are saved so SIT wellbeing staff can follow up if needed. Anything you wrote in the reflection box is not stored.</p>
+      <button class="ds-link" data-action="new">Back to homepage</button></section>
       <aside><div class="ds-mini ds-companion">${plant()}<span class="ds-pill">First seed planted</span><h3>You made space for you.</h3>
       <p>No streaks to keep. No scores to beat. Just a little growth, at your pace.</p><button class="ds-link" data-nav="garden">Visit my garden →</button></div>
       ${supportPanel(assessment.advisor)}</aside></div>`;
   }
+  function pathFor(next) {
+    if(next==='result')return boot.resultUrl;
+    if(next==='records')return boot.recordsPageUrl;
+    return boot.homeUrl;
+  }
+  function remember(next) {
+    const path=pathFor(next);
+    if(!path)return;
+    const state={page:next};
+    if(location.pathname===path)history.replaceState(state,'',path);
+    else history.pushState(state,'',path);
+  }
   function render() {
-    if(page==='records' && !boot.isAdmin)page='home';
+    if(page==='records' && !boot.isAdmin){
+      page='home';
+      if(boot.homeUrl&&location.pathname!==boot.homeUrl)history.replaceState({page:'home'},'',boot.homeUrl);
+    }
     root.querySelectorAll('[data-nav]').forEach(button => {
       if(button.dataset.nav===(page==='result'?'checkin':page))button.setAttribute('aria-current','page');
       else button.removeAttribute('aria-current');
@@ -126,18 +139,12 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   function riskClass(value) {
     return {Low:'low',Moderate:'moderate',High:'high'}[value] || 'unknown';
   }
-  function riskBadge(value) {
-    return `<span class="ds-risk ds-risk-${riskClass(value)}">${escape(value || 'Unknown')}</span>`;
-  }
   function insightsPanel() {
     const info=assessment.insights;
     if(!info)return '';
-    return `<section class="ds-insights"><div class="ds-actions"><h3>Your stress picture</h3>${riskBadge(info.risk_category)}</div>
-      <div class="ds-score"><strong>${escape(info.stress_score ?? '—')}<small> / 5</small></strong><span>Average stress score · 1 (low) to 5 (high)<br>Across all your answers</span></div>
-      <p class="ds-explanation">${escape(info.explanation)}</p>
-      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>Every question uses a 1–5 scale except typical sleep, which you enter in hours. Those hours are converted when scoring (8 or more hours is 1, under 5 hours is 5). Positively worded questions (confident handling personal problems, things going well, and support from friends and family) are reversed as 6 − answer, so a higher number always means more stress. Your score is the average of all 11 answers, each with equal weight. Below 2.5 means you're doing ok, 2.5 to 3.5 is worth a check-in, and above 3.5 means please reach out. Some answers choose which suggestions appear first. A support prompt can show “Please reach out” without changing the score.</p><p>These bands are a simple guide, not clinical cut-offs.</p></details>
-      </section><section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3><span class="ds-pill">${factor.flagged?'Worth some attention':'Context noted'}</span></div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('')}</div></section>
-      ${info.safety_flag?safetyPrompt():''}`;
+    const factors=(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3>${factor.flagged?'<span class="ds-pill ds-pill-gentle">Worth some attention</span>':''}</div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('');
+    const section=factors?`<section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${factors}</div></section>`:'';
+    return section+(info.safety_flag?safetyPrompt():'');
   }
   function records() {
     if(!boot.isAdmin){page='home';home();return;}
@@ -150,8 +157,9 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       </div>
       <p class="ds-help">Cohort year uses the first two ID digits (26 → 2026). Dates use Singapore time.</p>
       <div id="ds-record-status" role="status" aria-live="polite"></div>
+      <p class="ds-answer-key">Answers: 1 = lowest, 5 = highest · Sleep in hours</p>
       <div class="ds-record-table" role="region" aria-label="Saved check-ins table" tabindex="0">
-      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Stress score (/5)','Tier','Sleep (hours)','Sleep quality','Workload','Catch-up','Finances','Friends','Family','Status','Date saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
+      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Stress score (/5)','Tier','Control (pss_1)','Coping (pss_2)','Going well (pss_3)','Piling up (pss_4)','Sleep (hours)','Sleep quality','Workload','Catch-up','Finances','Friends','Family','Status','Date saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
       <button class="ds-link" data-action="refresh-records">Refresh records</button></section>`;
     loadRecords();
   }
@@ -184,9 +192,20 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       cohort.value=recordFilters.cohort_year;
       status.textContent=`${data.matching} of ${data.total} saved check-ins`;
       const cell=value=>escape(value===null||value===undefined||value===''?'—':value);
-      const opt=(key,value)=>value===null||value===undefined||value===''?'—':cell(value+' · '+questions[key].options[value-questions[key].min]);
+      const answerCell=(key,value)=>{
+        if(value===null||value===undefined||value==='')return '<td class="ds-num">—</td>';
+        const q=questions[key];
+        const shown=typeof value==='number'?String(value):String(value);
+        let title=shown;
+        if(q&&Array.isArray(q.options)){
+          const label=q.options[+value-q.min];
+          if(label)title=`${shown} · ${label}`;
+        }else if(q&&q.unit)title=`${shown} ${q.unit}`;
+        return `<td class="ds-num" title="${escape(title)}">${escape(shown)}</td>`;
+      };
       const tierName=row=>row.soft_label||{Low:"You're doing ok",Moderate:'Worth a check-in',High:'Please reach out'}[row.risk_category]||'—';
-      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td>${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td><td>${cell(row.sleep_hours_avg)}</td><td>${opt('sleep_quality',row.sleep_quality)}</td><td>${opt('pas_workload',row.pas_workload)}</td><td>${opt('pas_catchup',row.pas_catchup)}</td><td>${opt('fin_stress',row.fin_stress)}</td><td>${opt('mspss_friends',row.mspss_friends)}</td><td>${opt('mspss_family',row.mspss_family)}</td><td>${cell(row.status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="12" class="ds-empty">No records found</td></tr>';
+      const answersFor=row=>['pss_1','pss_2','pss_3','pss_4','sleep_hours_avg','sleep_quality','pas_workload','pas_catchup','fin_stress','mspss_friends','mspss_family'].map(key=>answerCell(key,row[key])).join('');
+      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td class="ds-num">${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td>${answersFor(row)}<td>${cell(row.status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="16" class="ds-empty">No records found</td></tr>';
 
     }catch(error){if(page==='records'&&requestId===recordsRequest){status.textContent='Could not load saved records. Use Refresh records to try again.';main.querySelector('#ds-record-rows').innerHTML='';}}
   }
@@ -215,7 +234,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     setBusy(true);
     main.querySelector('#ds-error').textContent='Taking a moment to understand your check-in…';
     main.querySelector('#ds-failure-support').innerHTML='';
-    assessment=null;completed=false;selected.clear();
+    assessment=null;completed=false;
     try {
       const {response,data}=await post(boot.submitUrl,{...answers,student_id:answers.student_id.trim(),feelings_text:answers.feelings_text.trim()});
       if(!response.ok) {
@@ -224,20 +243,9 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
         if(data.advisor)main.querySelector('#ds-failure-support').innerHTML=(data.safety_flag?safetyPrompt():'')+supportPanel(data.advisor);
         return;
       }
-      assessment=data.result;completed=true;page='result';render();
+      assessment=data.result;completed=true;page='result';remember('result');render();
     } catch(error) {main.querySelector('#ds-error').textContent='Could not connect. Your answers are still here; please try again.';}
     finally {setBusy(false);}
-  }
-  async function save() {
-    const status=main.querySelector('#ds-save-status');
-    if(!main.querySelector('#ds-opt-in').checked){status.textContent='Tick the consent box before saving.';return;}
-    setBusy(true);
-    try {
-      const {response,data}=await post(boot.saveUrl,{opt_in:true});
-      if(!response.ok){status.textContent=data.message;return;}
-      assessment.saved=true;render();
-    }catch(error){status.textContent='Could not save your check-in. Please try again.';}
-    finally{setBusy(false);}
   }
   root.addEventListener('input',event=>{
     const {id,value}=event.target;
@@ -260,8 +268,11 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   root.addEventListener('click',async event=>{
     const button=event.target.closest('button');if(!button||busy)return;
     if(button.dataset.editStep!==undefined){step=+button.dataset.editStep;checkin();main.querySelector('#ds-step-heading').focus();return;}
-    if(button.dataset.nav){page=button.dataset.nav;render();return;}
-    if(button.dataset.task!==undefined){const id=+button.dataset.task;selected.has(id)?selected.delete(id):selected.add(id);render();return;}
+    if(button.dataset.nav){
+      const next=button.dataset.nav;
+      if(next==='records'&&!boot.isAdmin)return;
+      page=next;remember(page);render();return;
+    }
     switch(button.dataset.action){
       case 'clear-filters':clearTimeout(searchTimer);Object.keys(recordFilters).forEach(key=>recordFilters[key]='');records();return;
       case 'refresh-records':loadRecords();return;
@@ -269,11 +280,10 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       case 'plan':page=assessment?'result':'checkin';break;
       case 'back':if(step===0)page='home';else step--;break;
       case 'next':if(!valid())return;if(step<reviewStep)step++;else{await submit();return;}break;
-      case 'edit':page='checkin';step=answers.student_id?reviewStep:0;break;
-      case 'save':await save();return;
-      case 'new':location.assign(boot.newUrl);return;
+      case 'new':location.assign(boot.homeUrl);return;
       default:return;
     }
+    remember(page);
     render();
     if(page==='checkin')main.querySelector('#ds-step-heading')?.focus();
   });
@@ -287,5 +297,17 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   document.addEventListener('visibilitychange',()=>{
     if(page==='records'&&!document.hidden)loadRecords();
   });
+  window.addEventListener('popstate',event=>{
+    const next=event.state&&event.state.page;
+    if(!next)return;
+    if((next==='records'&&!boot.isAdmin)||(next==='result'&&!assessment)){
+      page='home';
+      if(boot.homeUrl)history.replaceState({page:'home'},'',boot.homeUrl);
+      render();
+      return;
+    }
+    page=next;render();
+  });
+  history.replaceState({page},'',location.pathname);
   render();
 })();

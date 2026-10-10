@@ -1,4 +1,4 @@
-"""DoNotStress entry point: campus UI → I/O → Gemini → Logic → opt-in storage."""
+"""DoNotStress entry point: campus UI → I/O → Gemini → Logic → saved records."""
 
 import logging
 import os
@@ -43,10 +43,12 @@ def process_checkin(record, *, generate_fn=None, max_attempts=3, retry_delay_sec
 
 def result_view(record, saved=False):
     """Only send allow-listed, student-facing copy to the browser."""
+    advisor = io_manager.format_speak_to_advisor_panel(record['speak_prominence'])
+    advisor.pop('cta', None)
     return {
         'soft': io_manager.format_soft_label(record['soft_label']),
         'tips': io_manager.format_tips(record['tips']),
-        'advisor': io_manager.format_speak_to_advisor_panel(record['speak_prominence']),
+        'advisor': advisor,
         'saved': saved,
         'insights': {
             'risk_category': record.get('risk_category', 'Unknown'),
@@ -142,7 +144,8 @@ def create_app(test_config=None):
             'result': result_view(entry['record'], entry['saved']) if entry else None,
             'csrfToken': session['csrf_token'],
             'submitUrl': url_for('submit_checkin'), 'saveUrl': url_for('save_checkin'),
-            'newUrl': url_for('new_checkin'),
+            'newUrl': url_for('new_checkin'), 'homeUrl': url_for('checkin'),
+            'resultUrl': url_for('result'), 'recordsPageUrl': url_for('records_page'),
             'recordsUrl': url_for('saved_records'),
         })
 
@@ -209,16 +212,34 @@ def create_app(test_config=None):
             logger.warning('Check-in pipeline could not complete')
             ok, outcome = False, 'unavailable'
         if not ok:
+            # AI did not finish. Keep the answers as a pending record; the
+            # result page is unchanged and a refresh does not write again.
+            try:
+                with lock:
+                    data_manager.save_pending_record(
+                        record, data_path=app.config['DATA_PATH'], opt_in=True,
+                    )
+            except Exception:
+                logger.warning('Pending check-in could not be saved')
             copy = io_manager.format_ai_error(outcome)
             return jsonify(
                 message='We could not complete your check-in right now. Your answers are still here; please try again.',
                 error_code=outcome, safety_flag=safety, advisor=copy['speak_to_advisor'],
             ), 503
+        try:
+            with lock:
+                saved = data_manager.save_record(
+                    outcome, data_path=app.config['DATA_PATH'], opt_in=True,
+                )
+        except Exception:
+            saved = {'ok': False}
+        if not saved.get('ok'):
+            return jsonify(message='We could not save your check-in just now. Your answers are still here; please try again.'), 500
         token = secrets.token_urlsafe(32)
         with lock:
-            pending[token] = {'record': outcome, 'saved': False, 'created': time.monotonic()}
+            pending[token] = {'record': outcome, 'saved': True, 'created': time.monotonic()}
         session['checkin_token'] = token
-        return jsonify(ok=True, result=result_view(outcome))
+        return jsonify(ok=True, result=result_view(outcome, saved=True))
 
     @app.get('/records')
     def records_page():
@@ -256,6 +277,7 @@ def create_app(test_config=None):
         })
         filtered = [item for item in filtered if query in str(item.get('student_id', ''))]
         columns = ('student_id', 'stress_score', 'risk_category', 'soft_label',
+                   'pss_1', 'pss_2', 'pss_3', 'pss_4',
                    'sleep_hours_avg', 'sleep_quality', 'pas_workload', 'pas_catchup',
                    'fin_stress', 'mspss_friends', 'mspss_family', 'saved_at', 'survey_version')
         rows = []
@@ -274,15 +296,15 @@ def create_app(test_config=None):
 
     @app.get('/result')
     def result():
+        # Refreshing the result only reads the session. The check-in was
+        # already written once, when it was submitted.
         if not current_entry():
             return redirect(url_for('checkin'))
         return render_campus('result')
 
     @app.post('/save')
     def save_checkin():
-        values = request.get_json(silent=True) if request.is_json else request.form
-        if not hasattr(values, 'get') or values.get('opt_in') not in (True, 'yes', 'on'):
-            return jsonify(message='Tick the consent box before saving.'), 400
+        """Retry a missed write. A result that is already saved is left as-is."""
         with lock:
             entry = current_entry()
             if not entry:
