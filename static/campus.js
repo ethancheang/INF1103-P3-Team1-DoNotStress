@@ -5,7 +5,8 @@
   let page = boot.page || 'home', step = 0, completed = !!boot.completed;
   let assessment = boot.result || null, busy = false;
   const selected = new Set();
-  const recordFilters = {student_id:'', risk_category:'', cohort_year:''};
+  const recordFilters = {student_id:'', tier:'', cohort_year:''};
+  const tiers = ["You're doing ok", 'Worth a check-in', 'Please reach out'];
   let recordsRequest = 0, searchTimer;
   const survey = boot.survey;
   const questions = Object.fromEntries(survey.questions.map(q=>[q.key,q]));
@@ -135,18 +136,17 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   }
   function records() {
     if(!boot.isAdmin){page='home';home();return;}
-    main.innerHTML=`<section><span class="ds-pill">Check-in history</span><h2>Saved student check-ins.</h2><p>Explore saved records by student, risk category, or cohort.</p>
+    main.innerHTML=`<section><span class="ds-pill">Check-in history</span><h2>Saved student check-ins.</h2><p>Explore saved records by student, tier, or cohort.</p>
       <div class="ds-record-filters">
         <label>Student ID<input class="ds-input" id="ds-record-search" type="search" inputmode="numeric" placeholder="Search all or part of an ID" value="${escape(recordFilters.student_id)}"></label>
-        <label>Risk category<select class="ds-input" id="ds-record-risk"><option value="">All risk categories</option>${['Low','Moderate','High'].map(r=>`<option${r===recordFilters.risk_category?' selected':''}>${r}</option>`).join('')}</select></label>
+        <label>Tier<select class="ds-input" id="ds-record-tier"><option value="">All tiers</option>${tiers.map(name=>`<option value="${escape(name)}"${name===recordFilters.tier?' selected':''}>${escape(name)}</option>`).join('')}</select></label>
         <label>Cohort year<select class="ds-input" id="ds-record-cohort"><option value="">All cohorts</option>${recordFilters.cohort_year?`<option value="${escape(recordFilters.cohort_year)}" selected>20${escape(recordFilters.cohort_year)}</option>`:''}</select></label>
         <button class="ds-secondary" data-action="clear-filters">Clear Filters</button>
       </div>
       <p class="ds-help">Cohort year uses the first two ID digits (26 → 2026). Dates use Singapore time.</p>
       <div id="ds-record-status" role="status" aria-live="polite"></div>
       <div class="ds-record-table" role="region" aria-label="Saved check-ins table" tabindex="0">
-      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Questionnaire','Typical Sleep','Sleep Quality','Perceived Stress','Study Workload','Finances','Friends / Family','Support Mean','Risk Category','AI Status','Date Saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
-      <p class="ds-help">Project bands: ${riskBadge('Low')} ${riskBadge('Moderate')} ${riskBadge('High')}. Answers are 1–5, except typical sleep, which is still hours. Stress score is the 1–5 average (higher = more stress); finance is a 1–5 slider (higher = more stress); support mean is raw agreement /5 (higher = more support). Legacy /10 and evidence-v2 records use different scales and cannot be directly compared.</p>
+      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Stress score (/5)','Tier','Sleep (hours)','Sleep quality','Workload','Catch-up','Finances','Friends','Family','Status','Date saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
       <button class="ds-link" data-action="refresh-records">Refresh records</button></section>`;
     loadRecords();
   }
@@ -179,19 +179,9 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       cohort.value=recordFilters.cohort_year;
       status.textContent=`${data.matching} of ${data.total} saved check-ins`;
       const cell=value=>escape(value===null||value===undefined||value===''?'—':value);
-      const opt=(key,value)=>value===null||value===undefined?'—':cell(value+' · '+questions[key].options[value-questions[key].min]);
-      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>{
-        const revised=row.survey_version===survey.version;
-        return `<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td>${revised?'Evidence v3 · 1–5':cell(row.survey_version||'Legacy /10')}</td>
-        <td>${cell(revised?row.sleep_hours_avg:row.sleep_hours)} h${revised?'':' · last night'}</td>
-        <td>${revised?opt('sleep_quality',row.sleep_quality):'—'}</td>
-        <td>${revised?cell(row.stress_score)+'/5':cell(row.stress_level)+'/10 · legacy'}</td>
-        <td>${revised?cell(row.pas_workload)+'/5'+(row.pas_catchup==null?'':`<small>Catch-up: ${cell(row.pas_catchup)}/5</small>`):cell(row.academic_workload)+'/10'}</td>
-        <td>${revised?opt('fin_stress',row.fin_stress)+'<small>Higher = more stress</small>':cell(row.financial_stress)+'/10<small>Legacy: higher = more distress</small>'}</td>
-        <td>${revised?[row.mspss_friends,row.mspss_family].map(cell).join(' / '):'—'}</td>
-        <td>${revised?cell(row.support_mean)+'/5':cell(row.social_support)+'/10 · legacy'}</td>
-        <td>${riskBadge(row.risk_category)}</td><td>${cell(row.ai_status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`;
-      }).join(''):'<tr><td colspan="12" class="ds-empty">No records found</td></tr>';
+      const opt=(key,value)=>value===null||value===undefined||value===''?'—':cell(value+' · '+questions[key].options[value-questions[key].min]);
+      const tierName=row=>row.soft_label||{Low:"You're doing ok",Moderate:'Worth a check-in',High:'Please reach out'}[row.risk_category]||'—';
+      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td>${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td><td>${cell(row.sleep_hours_avg)}</td><td>${opt('sleep_quality',row.sleep_quality)}</td><td>${opt('pas_workload',row.pas_workload)}</td><td>${opt('pas_catchup',row.pas_catchup)}</td><td>${opt('fin_stress',row.fin_stress)}</td><td>${opt('mspss_friends',row.mspss_friends)}</td><td>${opt('mspss_family',row.mspss_family)}</td><td>${cell(row.status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="12" class="ds-empty">No records found</td></tr>';
 
     }catch(error){if(page==='records'&&requestId===recordsRequest){status.textContent='Could not load saved records. Use Refresh records to try again.';main.querySelector('#ds-record-rows').innerHTML='';}}
   }
@@ -259,7 +249,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   });
   root.addEventListener('change',event=>{
     if(questions[event.target.name]&&event.target.type==='radio')answers[event.target.name]=+event.target.value;
-    if(event.target.id==='ds-record-risk'){recordFilters.risk_category=event.target.value;loadRecords();}
+    if(event.target.id==='ds-record-tier'){recordFilters.tier=event.target.value;loadRecords();}
     if(event.target.id==='ds-record-cohort'){recordFilters.cohort_year=event.target.value;loadRecords();}
   });
   root.addEventListener('click',async event=>{

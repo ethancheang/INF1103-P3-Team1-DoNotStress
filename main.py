@@ -238,34 +238,36 @@ def create_app(test_config=None):
             loaded = {'ok': False}
         if not loaded.get('ok') or loaded.get('error'):
             return jsonify(message='Saved records could not be loaded. Please try again.'), 500
-        records = [item for item in loaded.get('records', []) if isinstance(item, dict)]
+        records = [item for item in loaded.get('records', [])
+                   if isinstance(item, dict) and item.get('survey_version') == survey.VERSION]
         cohorts = sorted({str(item.get('student_id', ''))[:2] for item in records
                           if len(str(item.get('student_id', ''))) >= 2
                           and str(item.get('student_id', ''))[:2].isascii()
                           and str(item.get('student_id', ''))[:2].isdigit()}, reverse=True)
         query = request.args.get('student_id', '').strip()
-        risk = request.args.get('risk_category', '').strip()
+        tier = request.args.get('tier', '').strip()
         cohort = request.args.get('cohort_year', '').strip()
-        if risk and risk not in {'Low', 'Moderate', 'High'}:
-            return jsonify(message='Choose Low, Moderate, or High risk.'), 400
+        if tier and tier not in data_manager.TIER_TO_CATEGORY:
+            return jsonify(message="Choose a tier: You're doing ok, Worth a check-in, or Please reach out."), 400
         if cohort and (len(cohort) not in (2, 4) or not cohort.isascii() or not cohort.isdigit()):
             return jsonify(message='Choose a valid cohort year.'), 400
         filtered = data_manager.filter_records(records, **{
-            key: value for key, value in {'risk_category': risk, 'cohort_year': cohort}.items() if value
+            key: value for key, value in {'tier': tier, 'cohort_year': cohort}.items() if value
         })
         filtered = [item for item in filtered if query in str(item.get('student_id', ''))]
-        columns = ('student_id', 'sleep_hours', 'stress_level', 'academic_workload',
-                   'financial_stress', 'social_support', 'risk_category', 'saved_at',
-                   'survey_version', 'stress_score', 'sleep_hours_avg', 'sleep_quality',
-                   'pas_workload', 'pas_catchup', 'fin_stress', 'mspss_friends',
-                   'mspss_family', 'support_mean')
+        columns = ('student_id', 'stress_score', 'risk_category', 'soft_label',
+                   'sleep_hours_avg', 'sleep_quality', 'pas_workload', 'pas_catchup',
+                   'fin_stress', 'mspss_friends', 'mspss_family', 'saved_at', 'survey_version')
         rows = []
         for item in filtered:
             row = {key: item.get(key) for key in columns}
-            failed = item.get('ai_ok') is False or item.get('ok') is False
-            processed = item.get('ai_ok') is True or str(item.get('source', '')).lower() in {
+            if not row.get('soft_label'):
+                row['soft_label'] = {value: name for name, value in data_manager.TIER_TO_CATEGORY.items()}.get(row.get('risk_category'))
+            source = str(item.get('source', '')).lower()
+            processed = item.get('ai_ok') is True or source in {
                 'gemini', 'ai', 'ai_manager', 'gemini+logic', 'ai_logic'}
-            row['ai_status'] = 'Failed' if failed else 'Processed' if processed else 'Unknown'
+            pending = str(item.get('status', '')).strip().lower() == 'pending'
+            row['status'] = 'Pending' if pending or not processed else 'Evaluated'
             rows.append(row)
         rows.sort(key=lambda row: str(row.get('saved_at') or ''), reverse=True)
         return jsonify(records=rows, total=len(records), matching=len(rows), cohorts=cohorts)

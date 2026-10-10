@@ -99,6 +99,11 @@ class ScoringTests(unittest.TestCase):
         self.assertNotIn('project heuristics',js)
         self.assertNotIn('documented project rules',js)
         self.assertNotIn('not a validated combined screening instrument',js)
+        self.assertNotIn('Legacy /10',js)
+        self.assertNotIn('Risk category',js)
+        self.assertNotIn('AI Status',js)
+        self.assertIn('Stress score (/5)',js)
+        self.assertIn("You're doing ok",js)
 
     def test_prompts_and_pss_sentences(self):
         prompts={
@@ -234,7 +239,8 @@ class RevisedPipelineTests(unittest.TestCase):
         self.assertEqual(row['survey_version'],survey.VERSION)
         self.assertEqual(row['fin_stress'],3)
         self.assertNotIn('mspss_so',row)
-        self.assertIsNone(row['stress_level'])
+        self.assertNotIn('stress_level',row)
+        self.assertEqual(row['status'],'Evaluated')
 
     def test_safety_remains_visible_when_ai_fails(self):
         self.values['feelings_text']='I want to end my life'
