@@ -126,18 +126,12 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   function riskClass(value) {
     return {Low:'low',Moderate:'moderate',High:'high'}[value] || 'unknown';
   }
-  function riskBadge(value) {
-    return `<span class="ds-risk ds-risk-${riskClass(value)}">${escape(value || 'Unknown')}</span>`;
-  }
   function insightsPanel() {
     const info=assessment.insights;
     if(!info)return '';
-    return `<section class="ds-insights"><div class="ds-actions"><h3>Your stress picture</h3>${riskBadge(info.risk_category)}</div>
-      <div class="ds-score"><strong>${escape(info.stress_score ?? '—')}<small> / 5</small></strong><span>Average stress score · 1 (low) to 5 (high)<br>Across all your answers</span></div>
-      <p class="ds-explanation">${escape(info.explanation)}</p>
-      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>Every question uses a 1–5 scale except typical sleep, which you enter in hours. Those hours are converted when scoring (8 or more hours is 1, under 5 hours is 5). Positively worded questions (confident handling personal problems, things going well, and support from friends and family) are reversed as 6 − answer, so a higher number always means more stress. Your score is the average of all 11 answers, each with equal weight. Below 2.5 means you're doing ok, 2.5 to 3.5 is worth a check-in, and above 3.5 means please reach out. Some answers choose which suggestions appear first. A support prompt can show “Please reach out” without changing the score.</p><p>These bands are a simple guide, not clinical cut-offs.</p></details>
-      </section><section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3><span class="ds-pill">${factor.flagged?'Worth some attention':'Context noted'}</span></div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('')}</div></section>
-      ${info.safety_flag?safetyPrompt():''}`;
+    const factors=(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3><span class="ds-pill">${factor.flagged?'Worth some attention':'Context noted'}</span></div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('');
+    const section=factors?`<section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${factors}</div></section>`:'';
+    return section+(info.safety_flag?safetyPrompt():'');
   }
   function records() {
     if(!boot.isAdmin){page='home';home();return;}
