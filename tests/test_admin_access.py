@@ -29,6 +29,7 @@ class AdminAccessTests(unittest.TestCase):
         text = self.client.get('/').get_data(as_text=True)
         self.assertIn('Student view', text)
         self.assertIn('Admin sign in', text)
+        self.assertNotIn('/ campus', text)
         self.assertNotIn('data-nav="records"', text)
         self.assertIn('"isAdmin": false', text)
         self.assertNotIn('DoNotStress2026!', text)
@@ -109,6 +110,7 @@ class AdminAccessTests(unittest.TestCase):
     def test_password_not_echoed_or_embedded_in_static_assets(self):
         text=self.client.get('/admin/login').get_data(as_text=True)
         self.assertIn('type="password"',text)
+        self.assertNotIn('/ campus',text)
         self.assertNotIn('DoNotStress2026!',text)
         with self.client.get('/static/campus.js') as response:
             self.assertNotIn('DoNotStress2026!',response.get_data(as_text=True))

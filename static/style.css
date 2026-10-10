@@ -134,8 +134,6 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 
 #dns-campus .ds-nav{margin-right:0}
 
-#dns-campus .ds-campus-label{font-size:12px;letter-spacing:0;font-weight:400}
-
 #dns-campus button:focus-visible,#dns-campus input:focus-visible,#dns-campus textarea:focus-visible{outline:3px solid light-dark(#78649d,#cabbeb);outline-offset:4px}
 
 @media(max-width:700px){body{padding:0}
