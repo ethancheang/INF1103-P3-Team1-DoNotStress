@@ -108,8 +108,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <h3>${escape(assessment.tips.heading)}</h3><p>A few ideas that might help.</p>
       <ul class="ds-suggestions">${assessment.tips.items.map(tip=>`<li>${escape(tip.text)}</li>`).join('')}</ul>
       <p class="ds-save-note">Your answers are saved so SIT wellbeing staff can follow up if needed. Anything you wrote in the reflection box is not stored.</p>
-      <button class="ds-link" data-action="edit">${answers.student_id?'Review my answers':'Start another check-in'}</button>
-      <span> · </span><button class="ds-link" data-action="new">Start fresh</button></section>
+      <button class="ds-link" data-action="new">Back to homepage</button></section>
       <aside><div class="ds-mini ds-companion">${plant()}<span class="ds-pill">First seed planted</span><h3>You made space for you.</h3>
       <p>No streaks to keep. No scores to beat. Just a little growth, at your pace.</p><button class="ds-link" data-nav="garden">Visit my garden →</button></div>
       ${supportPanel(assessment.advisor)}</aside></div>`;
@@ -269,8 +268,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       case 'plan':page=assessment?'result':'checkin';break;
       case 'back':if(step===0)page='home';else step--;break;
       case 'next':if(!valid())return;if(step<reviewStep)step++;else{await submit();return;}break;
-      case 'edit':page='checkin';step=answers.student_id?reviewStep:0;break;
-      case 'new':location.assign(boot.newUrl);return;
+      case 'new':location.assign(boot.homeUrl);return;
       default:return;
     }
     remember(page);
