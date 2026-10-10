@@ -277,6 +277,7 @@ def create_app(test_config=None):
         })
         filtered = [item for item in filtered if query in str(item.get('student_id', ''))]
         columns = ('student_id', 'stress_score', 'risk_category', 'soft_label',
+                   'pss_1', 'pss_2', 'pss_3', 'pss_4',
                    'sleep_hours_avg', 'sleep_quality', 'pas_workload', 'pas_catchup',
                    'fin_stress', 'mspss_friends', 'mspss_family', 'saved_at', 'survey_version')
         rows = []

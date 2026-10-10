@@ -157,8 +157,9 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       </div>
       <p class="ds-help">Cohort year uses the first two ID digits (26 → 2026). Dates use Singapore time.</p>
       <div id="ds-record-status" role="status" aria-live="polite"></div>
+      <p class="ds-answer-key">Answers: 1 = lowest, 5 = highest · Sleep in hours</p>
       <div class="ds-record-table" role="region" aria-label="Saved check-ins table" tabindex="0">
-      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Stress score (/5)','Tier','Sleep (hours)','Sleep quality','Workload','Catch-up','Finances','Friends','Family','Status','Date saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
+      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Stress score (/5)','Tier','Control (pss_1)','Coping (pss_2)','Going well (pss_3)','Piling up (pss_4)','Sleep (hours)','Sleep quality','Workload','Catch-up','Finances','Friends','Family','Status','Date saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
       <button class="ds-link" data-action="refresh-records">Refresh records</button></section>`;
     loadRecords();
   }
@@ -191,9 +192,20 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       cohort.value=recordFilters.cohort_year;
       status.textContent=`${data.matching} of ${data.total} saved check-ins`;
       const cell=value=>escape(value===null||value===undefined||value===''?'—':value);
-      const opt=(key,value)=>value===null||value===undefined||value===''?'—':cell(value+' · '+questions[key].options[value-questions[key].min]);
+      const answerCell=(key,value)=>{
+        if(value===null||value===undefined||value==='')return '<td class="ds-num">—</td>';
+        const q=questions[key];
+        const shown=typeof value==='number'?String(value):String(value);
+        let title=shown;
+        if(q&&Array.isArray(q.options)){
+          const label=q.options[+value-q.min];
+          if(label)title=`${shown} · ${label}`;
+        }else if(q&&q.unit)title=`${shown} ${q.unit}`;
+        return `<td class="ds-num" title="${escape(title)}">${escape(shown)}</td>`;
+      };
       const tierName=row=>row.soft_label||{Low:"You're doing ok",Moderate:'Worth a check-in',High:'Please reach out'}[row.risk_category]||'—';
-      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td>${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td><td>${cell(row.sleep_hours_avg)}</td><td>${opt('sleep_quality',row.sleep_quality)}</td><td>${opt('pas_workload',row.pas_workload)}</td><td>${opt('pas_catchup',row.pas_catchup)}</td><td>${opt('fin_stress',row.fin_stress)}</td><td>${opt('mspss_friends',row.mspss_friends)}</td><td>${opt('mspss_family',row.mspss_family)}</td><td>${cell(row.status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="12" class="ds-empty">No records found</td></tr>';
+      const answersFor=row=>['pss_1','pss_2','pss_3','pss_4','sleep_hours_avg','sleep_quality','pas_workload','pas_catchup','fin_stress','mspss_friends','mspss_family'].map(key=>answerCell(key,row[key])).join('');
+      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td class="ds-num">${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td>${answersFor(row)}<td>${cell(row.status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="16" class="ds-empty">No records found</td></tr>';
 
     }catch(error){if(page==='records'&&requestId===recordsRequest){status.textContent='Could not load saved records. Use Refresh records to try again.';main.querySelector('#ds-record-rows').innerHTML='';}}
   }
