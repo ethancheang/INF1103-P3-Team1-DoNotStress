@@ -104,7 +104,7 @@ Use **Admin sign in** (or `/admin/login`) with the fixed coursework account:
 
 The credential check runs on the server; `main.py` contains a password hash. Credentials are not embedded in the login page, JavaScript or browser configuration. This shared, documented demo account is for the local prototype, not public deployment with real student records.
 
-Successful sign-in opens **Saved records**. `/records` redirects unauthenticated users to sign-in, and `/api/records` returns 401 before loading any records. Admin access expires after 30 minutes. **Sign out** revokes the server-side admin token, clears the current browser session, and returns to Student view. Restarting the app revokes admin sessions. Five failed sign-in attempts within five minutes temporarily block further attempts from that address.
+Successful sign-in opens **Saved records**. `/records` redirects unauthenticated users to sign-in, and `/api/records` returns 401 before loading any records. Admin access expires after 30 minutes. **Log out** revokes the server-side admin token, clears the current browser session, and returns to Student view. Restarting the app revokes admin sessions. Five failed sign-in attempts within five minutes temporarily block further attempts from that address.
 
 Admins can search any part of a Student ID and combine the Low/Moderate/High risk and cohort-year filters. Clear Filters restores the full list. Cohort year uses the first two ID digits (26 means 2026); dates display in Singapore time. Only records saved through opt-in are shown; unsaved results stay out of the table. Load errors are distinguished from an empty result. The history endpoint omits free-text concerns and AI reasoning.
 
