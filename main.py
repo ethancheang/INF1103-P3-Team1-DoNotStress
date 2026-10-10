@@ -53,7 +53,7 @@ def result_view(record, saved=False):
             'explanation': str(record.get('reasoning', '')).split(' Logic adjusted:')[0],
             'stressors': record.get('primary_stressors', []),
             'survey_version': record.get('survey_version', 'legacy'),
-            'pss_total': record.get('pss_total'),
+            'stress_score': record.get('stress_score'),
             'support_mean': record.get('support_mean'),
             'context_flags': record.get('context_flags', {}),
             'factors': record.get('factor_insights', []),
@@ -256,7 +256,7 @@ def create_app(test_config=None):
         filtered = [item for item in filtered if query in str(item.get('student_id', ''))]
         columns = ('student_id', 'sleep_hours', 'stress_level', 'academic_workload',
                    'financial_stress', 'social_support', 'risk_category', 'saved_at',
-                   'survey_version', 'pss_total', 'sleep_hours_avg', 'sleep_quality',
+                   'survey_version', 'stress_score', 'sleep_hours_avg', 'sleep_quality',
                    'pas_workload', 'pas_catchup', 'fin_stress', 'mspss_friends',
                    'mspss_family', 'mspss_so', 'support_mean')
         rows = []

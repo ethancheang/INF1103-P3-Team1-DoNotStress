@@ -1,4 +1,4 @@
-"""Student input validation and presentation for the evidence-v2 survey.
+"""Student input validation and presentation for the evidence-v3 (1-5) survey.
 
 Question wording, scales and scoring definitions live in survey.py.
 Student ID: seven ASCII digits beginning with 2. Reflection is ephemeral.
@@ -503,8 +503,11 @@ def format_student_record(record: dict) -> dict:
             display = str(value).strip() if value is not None else ""
             if not display:
                 display = "(skipped)"
-        elif key == "sleep_hours_avg":
+        elif key == "sleep_hours_avg" and value is not None:
             display = f"{float(value):.1f}"
+        elif value is not None and survey.QUESTION_MAP.get(key, {}).get("options"):
+            q = survey.QUESTION_MAP[key]
+            display = f"{value} · {q['options'][int(value) - q['min']]}"
         else:
             display = "(skipped)" if value is None else str(value)
         fields.append({
