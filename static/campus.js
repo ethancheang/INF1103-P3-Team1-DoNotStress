@@ -147,7 +147,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
   function insightsPanel() {
     const info=assessment.insights;
     if(!info)return '';
-    const factors=(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3><span class="ds-pill">${factor.flagged?'Worth some attention':'Context noted'}</span></div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('');
+    const factors=(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3>${factor.flagged?'<span class="ds-pill ds-pill-gentle">Worth some attention</span>':''}</div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('');
     const section=factors?`<section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${factors}</div></section>`:'';
     return section+(info.safety_flag?safetyPrompt():'');
   }

@@ -157,13 +157,13 @@ def factor_insights(record, scores):
     flags = scores['context_flags']
     return [
         dict(title='Rest & recovery', flagged=flags['sleep'], value=f"{record['sleep_hours_avg']:g} hours · {SLEEP_OPTIONS[record['sleep_quality']-1]} quality",
-             text='Short or unsatisfying sleep can make daily demands harder to manage. Stress may also disrupt sleep. Under 6 hours, or fairly or very bad quality (answers of 4 or 5), is highlighted here.'),
+             text='Sleep and stress affect each other. When sleep is short or restless, everyday tasks can feel harder, and stress can make it harder to sleep well.'),
         dict(title='Study demands', flagged=flags['workload'], value=f"{record['pas_workload']}/5 · {PAS_OPTIONS[record['pas_workload']-1]}",
-             text='Feeling overloaded may leave less room for rest. Agreeing that coursework is too much highlights workload. The catch-up answer counts in the stress score, not as its own highlight.'),
+             text='A heavy workload can leave less time to rest and recharge. Feeling behind or overloaded is one of the most common sources of student stress.'),
         dict(title='Money pressures', flagged=flags['finances'], value=f"{record['fin_stress']}/5 · {FIN_OPTIONS[record['fin_stress']-1]}",
-             text='Money worries may add to study pressures. Answers of 4–5 (high or overwhelming stress) highlight finances and guide money-support suggestions. No amounts or income are inferred.'),
+             text='Financial worries can add to the pressure of studying. Concerns about money often weigh on focus and sleep.'),
         dict(title='Support & connection', flagged=flags['support'], value=f"{scores['support_mean']:g}/5 agreement across {scores['support_item_count']} answers",
-             text='Available support may help you cope with pressures. An average below 2.5 highlights support. In the overall stress score these answers are reversed (6 − answer).'),
+             text='Having people to turn to can make stressful times easier to handle. Strong support from friends or family helps protect against stress.'),
     ]
 
 def finalise(record):

@@ -138,9 +138,18 @@ class ScoringTests(unittest.TestCase):
 
     def test_one_based_labels(self):
         r=record(sleep_hours_avg=7.5,sleep_quality=5,fin_stress=1)
-        factors={item['title']:item['value'] for item in survey.factor_insights(r,r)}
+        shown_factors=survey.factor_insights(r,r)
+        factors={item['title']:item['value'] for item in shown_factors}
         self.assertEqual(factors['Rest & recovery'],'7.5 hours · Very bad quality')
         self.assertEqual(factors['Money pressures'],'1/5 · No stress at all')
+        texts={item['title']:item['text'] for item in shown_factors}
+        self.assertEqual(texts['Rest & recovery'],'Sleep and stress affect each other. When sleep is short or restless, everyday tasks can feel harder, and stress can make it harder to sleep well.')
+        self.assertEqual(texts['Study demands'],'A heavy workload can leave less time to rest and recharge. Feeling behind or overloaded is one of the most common sources of student stress.')
+        self.assertEqual(texts['Money pressures'],'Financial worries can add to the pressure of studying. Concerns about money often weigh on focus and sleep.')
+        self.assertEqual(texts['Support & connection'],'Having people to turn to can make stressful times easier to handle. Strong support from friends or family helps protect against stress.')
+        flagged={item['title']:item['flagged'] for item in shown_factors}
+        self.assertTrue(flagged['Rest & recovery'])
+        self.assertFalse(flagged['Money pressures'])
         shown={field['key']:field['value'] for field in io_manager.format_student_record(r)['fields']}
         self.assertEqual(shown['sleep_hours_avg'],'7.5')
         self.assertEqual(shown['sleep_quality'],'5 · Very bad')
