@@ -4,12 +4,12 @@
 <div id="dns-campus">
   <header class="ds-top">
     <div class="ds-bar">
-      <div class="ds-brand"><span class="ds-logo" aria-hidden="true">✿</span>DoNotStress</div>
+      <a class="ds-brand" href="{{ url_for('checkin') }}"><span class="ds-logo" aria-hidden="true">✿</span>DoNotStress</a>
       <div class="ds-bar-end">
         <details class="ds-nav-wrap">
           <summary class="ds-menu">Menu</summary>
           <nav class="ds-nav" aria-label="Main">
-            <a href="{{ url_for('checkin') }}">Overview</a>
+            <a href="{{ url_for('checkin') }}">Home</a>
             <a href="{{ url_for('checkin') }}">Check-in</a>
             <a href="{{ url_for('checkin') }}">My garden</a>
           </nav>

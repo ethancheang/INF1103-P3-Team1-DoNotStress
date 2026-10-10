@@ -79,7 +79,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <section><div class="ds-kicker">${step===reviewStep?'Review your check-in':`Chapter ${step+1} of ${reviewStep} · ${escape(chapters[step])}`}</div>
       <div class="ds-track" role="progressbar" aria-label="Chapters completed" aria-valuemin="0" aria-valuemax="${reviewStep}" aria-valuenow="${step}"><div style="width:${step/reviewStep*100}%"></div></div>
       ${content}<div class="ds-error" role="alert" id="ds-error"></div><div id="ds-failure-support"></div>
-      <div class="ds-form-foot"><button class="ds-secondary" data-action="back">← ${step===0?'Overview':'Back'}</button><button class="ds-primary" data-action="next">${step===reviewStep?'Get my check-in':step===reviewStep-1?'Review my check-in':'Continue'} →</button></div></section></div>`;
+      <div class="ds-form-foot"><button class="ds-secondary" data-action="back">← ${step===0?'Home':'Back'}</button><button class="ds-primary" data-action="next">${step===reviewStep?'Get my check-in':step===reviewStep-1?'Review my check-in':'Continue'} →</button></div></section></div>`;
     if(step===0)main.querySelector('#student_id').value=answers.student_id;
     if(step===5)main.querySelector('#feelings_text').value=answers.feelings_text;
   }

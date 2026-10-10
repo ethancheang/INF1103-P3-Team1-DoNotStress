@@ -3,12 +3,12 @@
 <div id="dns-campus" aria-label="DoNotStress student wellbeing app">
   <header class="ds-top">
     <div class="ds-bar">
-      <div class="ds-brand"><span class="ds-logo" aria-hidden="true">✿</span>DoNotStress</div>
+      <button class="ds-brand" type="button" data-nav="home"><span class="ds-logo" aria-hidden="true">✿</span>DoNotStress</button>
       <div class="ds-bar-end">
         <details class="ds-nav-wrap">
           <summary class="ds-menu">Menu</summary>
           <nav class="ds-nav" aria-label="Main">
-            <button data-nav="home" aria-current="page">Overview</button>
+            <button data-nav="home" aria-current="page">Home</button>
             <button data-nav="checkin">Check-in</button>
             <button data-nav="garden">My garden</button>
             {% if boot.isAdmin %}

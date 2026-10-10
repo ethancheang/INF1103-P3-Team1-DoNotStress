@@ -30,6 +30,9 @@ class AdminAccessTests(unittest.TestCase):
         self.assertIn('Student view', text)
         self.assertIn('Admin sign in', text)
         self.assertNotIn('/ campus', text)
+        self.assertIn('>Home<', text)
+        self.assertNotIn('>Overview<', text)
+        self.assertIn('class="ds-brand"', text)
         self.assertNotIn('data-nav="records"', text)
         self.assertIn('"isAdmin": false', text)
         self.assertNotIn('DoNotStress2026!', text)
@@ -111,6 +114,8 @@ class AdminAccessTests(unittest.TestCase):
         text=self.client.get('/admin/login').get_data(as_text=True)
         self.assertIn('type="password"',text)
         self.assertNotIn('/ campus',text)
+        self.assertIn('>Home<',text)
+        self.assertNotIn('>Overview<',text)
         self.assertNotIn('DoNotStress2026!',text)
         with self.client.get('/static/campus.js') as response:
             self.assertNotIn('DoNotStress2026!',response.get_data(as_text=True))
