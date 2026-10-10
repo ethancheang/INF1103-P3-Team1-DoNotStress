@@ -65,7 +65,7 @@ class AdminAccessTests(unittest.TestCase):
         self.assertTrue(response.location.endswith('/records'))
         text=self.client.get('/records').get_data(as_text=True)
         self.assertIn('Admin view',text)
-        self.assertIn('Sign out',text)
+        self.assertIn('Log out',text)
         self.assertIn('data-nav="records"',text)
         self.assertNotIn('DoNotStress2026!',text)
         with patch('main.data_manager.load_all_records',return_value={'ok':True,'records':[]}):

@@ -49,7 +49,7 @@ class RecordsTests(unittest.TestCase):
         self.assertEqual(set(response.json['records'][0]),{'student_id','sleep_hours','stress_level',
                          'academic_workload','financial_stress','social_support','risk_category','ai_status','saved_at',
                          'survey_version','stress_score','sleep_hours_avg','sleep_quality','pas_workload','pas_catchup',
-                         'fin_stress','mspss_friends','mspss_family','mspss_so','support_mean'})
+                         'fin_stress','mspss_friends','mspss_family','support_mean'})
         self.assertNotIn('Private',response.get_data(as_text=True))
         self.assertEqual(response.headers['Cache-Control'],'no-store')
 

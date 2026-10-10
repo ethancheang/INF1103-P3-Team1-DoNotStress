@@ -33,8 +33,8 @@ class CampusTests(unittest.TestCase):
         with self.client.session_transaction() as session:
             self.token = session['csrf_token']
         self.values = dict(student_id='2605581', pss_1=3, pss_2=3, pss_3=3, pss_4=3,
-                           sleep_hours_avg=6.5, sleep_quality=3, pas_workload=3, fin_stress=3,
-                           mspss_friends=3, mspss_family=3, feelings_text='Example concern')
+                           sleep_hours_avg=6.5, sleep_quality=3, pas_workload=3, pas_catchup=3,
+                           fin_stress=3, mspss_friends=3, mspss_family=3, feelings_text='Example concern')
 
     def post(self, values=None, url='/'):
         return self.client.post(url, json=self.values if values is None else values,
