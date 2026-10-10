@@ -32,9 +32,9 @@ class CampusTests(unittest.TestCase):
         self.client.get('/')
         with self.client.session_transaction() as session:
             self.token = session['csrf_token']
-        self.values = dict(student_id='2605581', pss_1=2, pss_2=2, pss_3=2, pss_4=2,
-                           sleep_hours_avg=6.5, sleep_quality=1, pas_workload=3, fin_stress=8,
-                           mspss_friends=6, mspss_family=6, feelings_text='Example concern')
+        self.values = dict(student_id='2605581', pss_1=3, pss_2=3, pss_3=3, pss_4=3,
+                           sleep_hours_avg=6.5, sleep_quality=3, pas_workload=3, fin_stress=3,
+                           mspss_friends=3, mspss_family=3, feelings_text='Example concern')
 
     def post(self, values=None, url='/'):
         return self.client.post(url, json=self.values if values is None else values,
@@ -53,7 +53,7 @@ class CampusTests(unittest.TestCase):
 
     def test_invalid_fields_prevent_ai_call(self):
         for field, value in [('student_id','1200000'), ('sleep_hours_avg','6.75'),
-                             ('pss_1','5'), ('pas_workload','0'),
+                             ('pss_1','6'), ('pas_workload','0'),
                              ('fin_stress','yes'), ('mspss_friends','1.5')]:
             with self.subTest(field=field), patch('main.ai_manager.analyse_student') as ai:
                 response = self.post({**self.values, field:value})

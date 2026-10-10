@@ -38,9 +38,8 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <div class="ds-big-value"><output id="${q.key}-value" for="${q.key}" aria-live="polite">${chosen?escape(answerText(q.key)):'Choose your answer'}</output></div>
       <input type="range" id="${q.key}" min="${q.min}" max="${q.max}" step="${q.step}" value="${value}" aria-describedby="${helpId}" aria-valuetext="${chosen?escape(answerText(q.key)):'Not answered; slider starts at '+value}">
       <div class="ds-ends"><span>${q.min} · ${escape(q.low)}</span><span>${q.max} · ${escape(q.high)}</span></div>
-      ${q.key==='fin_stress'?'<div class="ds-finance-anchors"><span>≈4 · High stress</span><span>≈7 · Low stress</span></div>':''}
-      <p id="${helpId}" class="ds-help">${q.key==='sleep_hours_avg'?'Use half-hour steps.':'Higher numbers mean less financial distress.'} Move the slider or confirm the displayed position.</p>
-      <button class="ds-secondary ds-confirm" data-confirm="${q.key}">${chosen?'Answer selected':'Use '+value+(q.key==='sleep_hours_avg'?' hours':' / 10')}</button>
+      <p id="${helpId}" class="ds-help">${q.key==='sleep_hours_avg'?'Use half-hour steps.':'Higher numbers mean more financial stress.'} Move the slider or confirm the displayed position.</p>
+      <button class="ds-secondary ds-confirm" data-confirm="${q.key}">${chosen?'Answer selected':'Use '+value+(q.key==='sleep_hours_avg'?' hours':' / 5')}</button>
       ${q.key==='sleep_hours_avg'?`<label class="ds-help" for="sleep_exact">Or enter hours directly</label><input class="ds-input ds-exact" id="sleep_exact" type="number" min="0" max="14" step="0.5" value="${chosen?value:''}" placeholder="e.g. 6.5">`:''}
       </div>`;
     return `<fieldset class="ds-question" id="question-${q.key}"><legend>${escape(q.prompt)} ${q.optional?'<span class="ds-optional">Optional</span>':''}</legend>
@@ -71,7 +70,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       ${survey.sections.map((section,index)=>`<section class="ds-review-block"><div class="ds-actions"><h3>${escape(section.title)}</h3><button class="ds-link" data-edit-step="${index}">Edit</button></div><p class="ds-help">${escape(section.period)}</p>
       <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(labels[key])}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Included for the local safety check only; not saved or sent to AI.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
       ${reflectionSafety()?safetyPrompt():''}
-      <div class="ds-why"><strong>What happens next</strong><p>Your questionnaire answers (without your ID or reflection) go to Gemini for supporting suggestions. The app calculates your PSS-4 score and applies the documented project rules. This is not a diagnosis. Saving is optional afterwards.</p></div>`;
+      <div class="ds-why"><strong>What happens next</strong><p>Your questionnaire answers (without your ID or reflection) go to Gemini for supporting suggestions. The app calculates your average stress score (1–5) and applies the documented project rules. This is not a diagnosis. Saving is optional afterwards.</p></div>`;
     }
     main.innerHTML=`<div class="ds-journey"><aside class="ds-rail"><div class="ds-kicker">Your little reset</div>
       ${chapters.map((title,i)=>`<div class="ds-stop ${i===step?'current':i<step?'done':''}"><b>${i<step?'✓':i+1}</b><span>${escape(title)}</span></div>`).join('')}
@@ -133,9 +132,9 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
     const info=assessment.insights;
     if(!info)return '';
     return `<section class="ds-insights"><div class="ds-actions"><h3>Your stress picture</h3>${riskBadge(info.risk_category)}</div>
-      <div class="ds-score"><strong>${escape(info.pss_total ?? '—')}<small> / 16</small></strong><span>PSS-4 · perceived stress<br>During the last month</span></div>
+      <div class="ds-score"><strong>${escape(info.stress_score ?? '—')}<small> / 5</small></strong><span>Average stress score · 1 (low) to 5 (high)<br>Across all your answers</span></div>
       <p class="ds-explanation">${escape(info.explanation)}</p>
-      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>PSS-4 adds four answers after reversing items 2 and 3. Higher totals mean more perceived stress. The project uses 0–7, 8–11 and 12–16 for its Low, Moderate and High guidance bands. Two or more context flags raise Low to Moderate; context flags alone never produce High. A safety prompt can produce High without changing the PSS score.</p><p>These are project heuristics, not validated clinical cut-offs. This mix of selected and adapted questions is not a validated combined screening instrument.</p></details>
+      <details class="ds-scoring"><summary>How this guidance is calculated</summary><p>Every question uses a 1–5 scale except typical sleep, which you enter in hours. Those hours are converted when scoring (8 or more hours is 1, under 5 hours is 5). Positively worded questions (handling problems, things going your way, and the three support questions) are reversed as 6 − answer, so a higher number always means more stress. Your score is the average of all the questions you answered. The project uses below 2.5, 2.5–3.5 and above 3.5 for its Low, Moderate and High guidance bands. Context flags choose which tips appear first. A safety prompt can produce High without changing the score.</p><p>These are project heuristics, not validated clinical cut-offs. This mix of selected and adapted questions is not a validated combined screening instrument.</p></details>
       </section><section class="ds-factor-section"><h3>How the pieces fit together</h3><p>These factors provide context and guide your next steps. They do not prove what caused your stress.</p><div class="ds-factor-grid">${(info.factors||[]).map(factor=>`<article class="ds-factor ${factor.flagged?'is-flagged':''}"><div class="ds-actions"><h3>${escape(factor.title)}</h3><span class="ds-pill">${factor.flagged?'Worth some attention':'Context noted'}</span></div><strong>${escape(factor.value)}</strong><p>${escape(factor.text)}</p></article>`).join('')}</div></section>
       ${info.safety_flag?safetyPrompt():''}`;
   }
@@ -152,7 +151,7 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       <div id="ds-record-status" role="status" aria-live="polite"></div>
       <div class="ds-record-table" role="region" aria-label="Saved check-ins table" tabindex="0">
       <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Questionnaire','Typical Sleep','Sleep Quality','Perceived Stress','Study Workload','Finances','Friends / Family / Other','Support Mean','Risk Category','AI Status','Date Saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
-      <p class="ds-help">Project bands: ${riskBadge('Low')} ${riskBadge('Moderate')} ${riskBadge('High')}. PSS-4 is /16; workload /5; support /7; finance /10 (higher = less distress). Legacy /10 records use different questions and cannot be directly compared.</p>
+      <p class="ds-help">Project bands: ${riskBadge('Low')} ${riskBadge('Moderate')} ${riskBadge('High')}. Answers are 1–5, except typical sleep, which is still hours. Stress score is the 1–5 average (higher = more stress); finance is a 1–5 slider (higher = more stress); support mean is raw agreement /5 (higher = more support). Legacy /10 and evidence-v2 records use different scales and cannot be directly compared.</p>
       <button class="ds-link" data-action="refresh-records">Refresh records</button></section>${footer()}`;
     loadRecords();
   }
@@ -185,16 +184,17 @@ function garden(){main.innerHTML=`<div class="ds-garden"><span class="ds-pill">M
       cohort.value=recordFilters.cohort_year;
       status.textContent=`${data.matching} of ${data.total} saved check-ins`;
       const cell=value=>escape(value===null||value===undefined||value===''?'—':value);
+      const opt=(key,value)=>value===null||value===undefined?'—':cell(value+' · '+questions[key].options[value-questions[key].min]);
       main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>{
         const revised=row.survey_version===survey.version;
-        return `<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td>${revised?'Evidence v2':'Legacy /10'}</td>
+        return `<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td>${revised?'Evidence v3 · 1–5':cell(row.survey_version||'Legacy /10')}</td>
         <td>${cell(revised?row.sleep_hours_avg:row.sleep_hours)} h${revised?'':' · last night'}</td>
-        <td>${revised&&row.sleep_quality!==null?cell(questions.sleep_quality.options[row.sleep_quality]):'—'}</td>
-        <td>${revised?cell(row.pss_total)+'/16':cell(row.stress_level)+'/10 · legacy'}</td>
+        <td>${revised?opt('sleep_quality',row.sleep_quality):'—'}</td>
+        <td>${revised?cell(row.stress_score)+'/5':cell(row.stress_level)+'/10 · legacy'}</td>
         <td>${revised?cell(row.pas_workload)+'/5'+(row.pas_catchup==null?'':`<small>Catch-up: ${cell(row.pas_catchup)}/5</small>`):cell(row.academic_workload)+'/10'}</td>
-        <td>${cell(revised?row.fin_stress:row.financial_stress)}/10<small>${revised?'Higher = less distress':'Legacy: higher = more distress'}</small></td>
+        <td>${revised?opt('fin_stress',row.fin_stress)+'<small>Higher = more stress</small>':cell(row.financial_stress)+'/10<small>Legacy: higher = more distress</small>'}</td>
         <td>${revised?[row.mspss_friends,row.mspss_family,row.mspss_so].map(cell).join(' / '):'—'}</td>
-        <td>${revised?cell(row.support_mean)+'/7':cell(row.social_support)+'/10 · legacy'}</td>
+        <td>${revised?cell(row.support_mean)+'/5':cell(row.social_support)+'/10 · legacy'}</td>
         <td>${riskBadge(row.risk_category)}</td><td>${cell(row.ai_status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`;
       }).join(''):'<tr><td colspan="12" class="ds-empty">No records found</td></tr>';
 

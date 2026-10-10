@@ -5,9 +5,10 @@ Post-AI finalizer. Gemini is mandatory for every record.
 
 Logic decides the soft label from the student's answers, following the
 team's evidence brief (donotstress_question_evidence.docx, 9 Oct 2026).
-For evidence-v2 records, survey.py computes the actual four-item PSS score
-and applies the documented project bands. Gemini contributes suggestions
-but cannot replace those bands. If the AI step failed, Logic does not run.
+For evidence-v3 records, survey.py computes the 1–5 average stress score
+(sleep hours are converted to that scale only when scoring) and applies
+the documented project bands. Gemini contributes suggestions but cannot
+replace those bands. If the AI step failed, Logic does not run.
 
 The legacy path below preserves the team's logic for older 1–10 records,
 including AI escalation and bounded tip lists.

@@ -363,7 +363,7 @@ def save_record(
         records = []
 
     stored = dict(record)
-    if stored.get('survey_version') == 'evidence-v2':
+    if str(stored.get('survey_version', '')).startswith('evidence-'):
         stored.pop('feelings_text', None)
     stored["save_opt_in"] = True
 

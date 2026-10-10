@@ -28,30 +28,30 @@ Do not commit `.env`, API keys, saved student data, or Python cache files. No AP
 
 The interface opens without a key, but assessment requires Gemini. Missing credentials, provider errors, or invalid responses show a retry message and support contacts; there is no fabricated sample result or Logic-only fallback.
 
-## Evidence questionnaire v2
+## Evidence questionnaire v3 (single 1–5 scale)
 
 The questionnaire follows section 2 of `donotstress_question_evidence.docx` (9 October 2026).
 `survey.py` owns question wording, options, chapter explanations and deterministic scoring.
 The browser receives the same definitions from Flask. Required answers start unselected.
 
-1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items, 0–4 frequency, recall last month.
-2. **Rest and recovery:** typical actual sleep in the past week, 0–14 hours in 0.5 steps; sleep quality 0 (very good) to 3 (very bad).
-3. **Study demands:** PAS workload item, 1–5 agreement; optional catch-up item. Direction is adapted.
-4. **Money pressures:** IFDFW item 8, 1 (overwhelming stress) to 10 (no stress). Higher means LESS distress. Intermediate original anchor placements are approximate.
-5. **Your support:** MSPSS friends and family items, 1–7 agreement; optional special-person item.
+1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items, 1 (never) to 5 (very often), recall last month. Items 2 and 3 are reverse-scored.
+2. **Rest and recovery:** typical actual sleep in the past week stays a 0–14 hour slider in 0.5 steps. Scoring converts hours to 1–5 stress: 8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5. Sleep quality is 1 (very good) to 5 (very bad).
+3. **Study demands:** PAS workload item, 1 (strongly disagree) to 5 (strongly agree); optional catch-up item. Direction is adapted.
+4. **Money pressures:** IFDFW item 8 adapted to a 1–5 slider, 1 (no stress at all) to 5 (overwhelming stress). Higher means MORE distress.
+5. **Your support:** MSPSS friends and family items, 1 (strongly disagree) to 5 (strongly agree); optional special-person item. Reverse-scored in the stress score.
 6. **Reflection:** optional text, up to 2,000 characters; not scored, sent to Gemini, or saved.
 
 Ten core questions, two optional contextual items, plus optional reflection. ID is not scored.
 
 ### Scoring and interpretation
 
-- PSS-4 = `pss_1 + (4 - pss_2) + (4 - pss_3) + pss_4`, range 0–16.
-- Team guidance bands: 0–7 Low, 8–11 Moderate, 12–16 High. These are NOT official PSS cut-offs or a diagnosis.
-- Context flags: sleep <6 hours OR quality >=2; workload >=4; finance <=4; mean of answered support items <3.
-- At least two context flags lift Low to Moderate. They never produce High by themselves and never reduce an existing band.
-- Optional catch-up adds context only. Optional special-person answer contributes to the support mean if answered; missing optional responses are never replaced with zero.
-- A basic local crisis-language check highlights “Please reach out” and support contacts without changing PSS total. It can miss language or produce false positives; it is not a safety assessment and no person monitors reflections.
-- `risk_score` is retained for backend compatibility as PSS total /16, NOT a probability. AI cannot replace the computed band. Tips combine relevant context suggestions with validated AI tip IDs.
+- Typical sleep is entered in hours and converted to 1–5 only when scoring (8+ hours = 1, 7 to under 8 = 2, 6 to under 7 = 3, 5 to under 6 = 4, under 5 = 5). Every other item is answered on a 1–5 scale. Positively worded items (`pss_2`, `pss_3`, `mspss_friends`, `mspss_family`, `mspss_so`) are scored as `6 - answer`.
+- `stress_score` = average of all answered items after that conversion and reverse scoring, range 1.0–5.0. Skipped optional items are left out, never counted as zero.
+- Team guidance bands: below 2.5 Low ("You're doing ok"), 2.5–3.5 Moderate ("Worth a check-in"), above 3.5 High ("Please reach out"). NOT clinical cut-offs or a diagnosis.
+- Context flags (choose tips and factor cards only): sleep under 6 hours OR quality >=4; workload >=4; finance >=4; raw support mean <2.5.
+- Optional catch-up and special-person answers count toward the average when answered.
+- A basic local crisis-language check highlights “Please reach out” and support contacts without changing the stress score. It can miss language or produce false positives; it is not a safety assessment and no person monitors reflections.
+- `risk_score` is retained for backend compatibility as `(stress_score - 1) / 4`, NOT a probability. AI cannot replace the computed band. Tips combine relevant context suggestions with validated AI tip IDs.
 
 Sleep items are adapted; PAS and MSPSS are selected items, not complete scales. The combined questionnaire and its guidance bands have not been clinically validated. Each result explains its factors and the project rules.
 
@@ -108,4 +108,4 @@ Successful sign-in opens **Saved records**. `/records` redirects unauthenticated
 
 Admins can search any part of a Student ID and combine the Low/Moderate/High risk and cohort-year filters. Clear Filters restores the full list. Cohort year uses the first two ID digits (26 means 2026); dates display in Singapore time. Only records saved through opt-in are shown; unsaved results stay out of the table. Load errors are distinguished from an empty result. The history endpoint omits free-text concerns and AI reasoning.
 
-Results include the PSS-4 total, an explanation of the computed guidance band, and four factor cards. Colours accompany Low/Moderate/High text. New records carry `survey_version: evidence-v2`; legacy records remain unchanged and are explicitly labelled with their old scales and finance direction. They are not converted to PSS scores or directly comparable with the revised questionnaire.
+Results include the 1–5 average stress score, an explanation of the computed guidance band, and four factor cards. Colours accompany Low/Moderate/High text. New records carry `survey_version: evidence-v3`; legacy /10 and evidence-v2 records remain unchanged and are labelled with their own version. They are not converted or directly comparable with the 1–5 questionnaire.

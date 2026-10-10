@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 # No student identifier or optional reflection is sent to the AI provider.
 STUDENT_PROMPT_FIELDS = tuple(survey.QUESTION_MAP) + (
-    'survey_version', 'pss_total', 'support_mean', 'support_item_count',
+    'survey_version', 'stress_score', 'scored_item_count', 'support_mean', 'support_item_count',
     'context_flags', 'risk_category', 'soft_label', 'speak_prominence',
 )
 
@@ -353,22 +353,28 @@ def build_prompt(student_dict: dict[str, Any]) -> str:
     return (
         "You are a supportive student-wellbeing assistant for DoNotStress, "
         "a local check-in tool used by students (not an advisor dashboard).\n"
-        "The questionnaire is evidence-v2. Explain associations, not causation or diagnosis. "
+        "The questionnaire is evidence-v3. Explain associations, not causation or diagnosis. "
         "Use the supplied computed risk_category, soft_label and speak_prominence exactly. "
-        "They are project heuristics, not clinical cut-offs. PSS-4 has no official cut-offs. "
-        "risk_score must equal pss_total / 16 and is a normalised score, not a probability. "
-        "PSS items use 0–4 frequency in the last month; reverse items 2 and 3. "
-        "Sleep: typical actual hours 0–14 and quality 0 good to 3 bad in the past week. "
-        "PAS: 1 disagree to 5 agree, selected items only, not a full validated subscale. "
-        "Finance: 1 overwhelming stress to 10 no stress (lower is worse). "
-        "MSPSS: 1–7 agreement, higher is more support; selected-item mean is approximate. "
+        "They are project heuristics, not clinical cut-offs. "
+        "Every question uses a 1–5 scale except sleep_hours_avg, which is entered as hours and "
+        "converted to 1–5 only when scoring. pss_2, pss_3, mspss_friends, mspss_family and mspss_so are "
+        "positively worded and are scored as 6 - answer; after that, higher always means more stress. "
+        "stress_score is the average of all answered items (1.0–5.0): below 2.5 Low, 2.5–3.5 Moderate, above 3.5 High. "
+        "risk_score must equal (stress_score - 1) / 4 and is a normalised score, not a probability. "
+        "PSS items: 1 never to 5 very often in the last month (adapted; not a PSS-4 total). "
+        "Sleep (past week): sleep_hours_avg is hours from 0 to 14 in half-hour steps; scoring maps "
+        "8+ hours to 1, 7 to under 8 to 2, 6 to under 7 to 3, 5 to under 6 to 4, and under 5 hours to 5. "
+        "sleep_quality is 1 very good to 5 very bad. "
+        "PAS: 1 strongly disagree to 5 strongly agree, selected items only, not a full validated subscale. "
+        "Finance: a 1–5 slider, 1 no stress to 5 overwhelming stress (higher is worse). "
+        "MSPSS: 1 strongly disagree to 5 strongly agree, higher is more support; support_mean is the raw agreement average. "
         "Optional pas_catchup and mspss_so may be null: never invent missing answers. "
         "Use context_flags to choose tips. Do not infer a diagnosis, safety, or a student's state of mind. "
         "Reflection text is excluded and must not be inferred.\n"
         "Speak to the student with warmth and care. Analyse the check-in "
         "holistically and return ONLY a single JSON object (no markdown "
         "fences, no commentary) with exactly these keys:\n"
-        '- "risk_score": float between 0.0 and 1.0 (normalised PSS-4 score, not a probability)\n'
+        '- "risk_score": float between 0.0 and 1.0 ((stress_score - 1) / 4, not a probability)\n'
         '- "risk_category": one of "Low", "Moderate", "High"\n'
         '- "primary_stressors": list of short snake_case strings chosen ONLY '
         f"from this allow-list: {stressor_list}\n"
