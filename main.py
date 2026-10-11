@@ -1,9 +1,12 @@
 """DoNotStress entry point: campus UI → I/O → Gemini → Logic → saved records."""
 
+import hashlib
+import json
 import logging
 import os
 import secrets
 import time
+import uuid
 from threading import RLock
 
 from dotenv import load_dotenv
@@ -23,6 +26,19 @@ logger = logging.getLogger(__name__)
 # include credentials in templates, JavaScript or the browser boot payload.
 ADMIN_USERNAME = 'admin'
 ADMIN_PASSWORD_HASH = 'scrypt:32768:8:1$zoikUrXAJEAJCQlR$83ec3b2a32cedeb5721031e22f7fedc19ed5eea40c5995aa11d2c2ea1cc40845b393de85d68cda54706b5714293fc49ec360a477913186f00b46be7a6c31e8c1'
+
+
+def submission_fingerprint(record):
+    """sha256 of student_id, the 11 answers, and survey_version.
+
+    The same answers are one submission. A changed answer is a new one.
+    """
+    answers = [record.get(question['key']) for question in survey.QUESTIONS]
+    payload = json.dumps(
+        [record.get('student_id'), answers, record.get('survey_version')],
+        separators=(',', ':'), ensure_ascii=False,
+    )
+    return hashlib.sha256(payload.encode('utf-8')).hexdigest()
 
 
 def process_checkin(record, *, generate_fn=None, max_attempts=3, retry_delay_sec=0.5):
@@ -83,8 +99,14 @@ def create_app(test_config=None):
     # Single-process local app: retain records temporarily in server memory,
     # never inside Flask's client-readable signed session cookie.
     pending = {}
+    # csrf token -> {fingerprint, record_id} for the submission in this session.
+    # The session cookie is not visible to a second request until the first
+    # response is sent, so the lock-protected claim stops a rapid pair of
+    # posts from appending two rows.
+    submissions = {}
     lock = RLock()
     app.extensions['pending_checkins'] = pending
+    app.extensions['pending_submissions'] = submissions
     # Server-side tokens make logout/expiry revoke access even if a previous
     # signed session cookie is replayed. No role is trusted from client input.
     admin_sessions = {}
@@ -108,6 +130,31 @@ def create_app(test_config=None):
     def clear_pending():
         with lock:
             pending.pop(session.pop('checkin_token', None), None)
+
+    def matched_pending_id(fingerprint):
+        """Id of the pending row for this submission, if this session already saved one."""
+        record_id = session.get('pending_record_id')
+        if (session.get('pending_fingerprint') == fingerprint
+                and isinstance(record_id, str) and record_id.strip()):
+            return record_id.strip()
+        claim = submissions.get(session.get('csrf_token'))
+        if isinstance(claim, dict) and claim.get('fingerprint') == fingerprint:
+            found = claim.get('record_id')
+            if isinstance(found, str) and found.strip():
+                return found.strip()
+        return None
+
+    def remember_submission(fingerprint, record_id, *, pending_save):
+        """Keep the submission id. Pending saves also go in the session cookie."""
+        token = session.get('csrf_token')
+        if token:
+            submissions[token] = {'fingerprint': fingerprint, 'record_id': record_id}
+        if pending_save:
+            session['pending_fingerprint'] = fingerprint
+            session['pending_record_id'] = record_id
+        else:
+            session.pop('pending_fingerprint', None)
+            session.pop('pending_record_id', None)
 
     def current_entry():
         with lock:
@@ -193,6 +240,8 @@ def create_app(test_config=None):
     def admin_logout():
         revoke_admin()
         clear_pending()
+        with lock:
+            submissions.pop(session.get('csrf_token'), None)
         session.clear()
         return redirect(url_for('checkin'))
 
@@ -207,6 +256,7 @@ def create_app(test_config=None):
             return jsonify(errors=record, safety_flag=safety,
                            advisor=io_manager.format_speak_to_advisor_panel('high') if safety else None), 400
         clear_pending()
+        fingerprint = submission_fingerprint(record)
         try:
             ok, outcome = process_checkin(
                 record, generate_fn=app.config['AI_GENERATE_FN'],
@@ -217,13 +267,26 @@ def create_app(test_config=None):
             logger.warning('Check-in pipeline could not complete')
             ok, outcome = False, 'unavailable'
         if not ok:
-            # AI did not finish. Keep the answers as a pending record; the
-            # result page is unchanged and a refresh does not write again.
+            # AI did not finish. The same answers in this session are one
+            # pending row. A refresh does not write, and a later success
+            # upgrades that row instead of appending another.
             try:
                 with lock:
-                    data_manager.save_pending_record(
-                        record, data_path=app.config['DATA_PATH'], opt_in=True,
-                    )
+                    pending_id = matched_pending_id(fingerprint)
+                    if pending_id is None:
+                        record_id = uuid.uuid4().hex
+                        saved = data_manager.save_pending_record(
+                            {**record, 'record_id': record_id},
+                            data_path=app.config['DATA_PATH'], opt_in=True,
+                        )
+                        if saved.get('ok') and isinstance(saved.get('record'), dict):
+                            remember_submission(
+                                fingerprint,
+                                saved['record'].get('record_id') or record_id,
+                                pending_save=True,
+                            )
+                    else:
+                        remember_submission(fingerprint, pending_id, pending_save=True)
             except Exception:
                 logger.warning('Pending check-in could not be saved')
             copy = io_manager.format_ai_error(outcome)
@@ -233,9 +296,21 @@ def create_app(test_config=None):
             ), 503
         try:
             with lock:
-                saved = data_manager.save_record(
-                    outcome, data_path=app.config['DATA_PATH'], opt_in=True,
-                )
+                pending_id = matched_pending_id(fingerprint)
+                if pending_id:
+                    outcome = {**outcome, 'record_id': pending_id}
+                    saved = data_manager.replace_pending_record(
+                        pending_id, outcome,
+                        data_path=app.config['DATA_PATH'], opt_in=True,
+                    )
+                else:
+                    saved = data_manager.save_record(
+                        outcome, data_path=app.config['DATA_PATH'], opt_in=True,
+                    )
+                if saved.get('ok'):
+                    stored_id = (saved.get('record') or {}).get('record_id')
+                    if stored_id:
+                        remember_submission(fingerprint, stored_id, pending_save=False)
         except Exception:
             saved = {'ok': False}
         if not saved.get('ok'):
