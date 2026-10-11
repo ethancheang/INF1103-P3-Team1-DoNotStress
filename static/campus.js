@@ -58,7 +58,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       const section=survey.sections[step];
       content=`<span class="ds-pill">${escape(section.period)}</span><h2 tabindex="-1" id="ds-step-heading">${escape(section.heading)}</h2><p>${escape(section.intro)}</p>
         <div class="ds-why"><strong>Why this matters</strong><p>${escape(section.why)}</p></div>
-        ${step===0?field('Student ID','student_id','<input class="ds-input" id="student_id" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="e.g. 2605581">','7 digits starting with 2. Your student ID stays private.'):''}
+        ${step===0?field('Student ID','student_id','<input class="ds-input" id="student_id" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="e.g. 2605581">','7 digits starting with 2. Only SIT wellbeing staff can see your ID, and it\'s never sent to the AI.'):''}
         ${section.keys.map(key=>questionControl(questions[key])).join('')}
         ${step===5?field('Anything on your mind about school or life lately? (Optional)','feelings_text','<textarea class="ds-input" id="feelings_text" rows="4" maxlength="2000" placeholder="A space to reflect, if you want it."></textarea>','This space is just for you. It isn\'t scored or saved. If anything you write suggests you might need support right away, we\'ll show you who to contact.'):''}
         <div id="ds-safety">${reflectionSafety()?safetyPrompt():''}</div>`;
@@ -68,7 +68,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       ${survey.sections.map((section,index)=>`<section class="ds-review-block"><div class="ds-actions"><h3>${escape(section.title)}</h3><button class="ds-link" data-edit-step="${index}">Edit</button></div><p class="ds-help">${escape(section.period)}</p>
       <dl class="ds-summary">${section.keys.map(key=>`<div><dt>${escape(questions[key].prompt)}</dt><dd>${escape(answerText(key))}</dd></div>`).join('')}${index===5?`<div><dt>Reflection</dt><dd>${answers.feelings_text?'Written for you only. It isn\'t scored or saved.':'Skipped'}</dd></div>`:''}</dl></section>`).join('')}
       ${reflectionSafety()?safetyPrompt():''}
-      <div class="ds-why"><strong>What happens next</strong><p>After you submit, we'll look at your answers and share a few suggestions that may help. Your student ID stays private. Anything you write in the reflection box is not stored. This check-in isn't a diagnosis.</p></div>`;
+      <div class="ds-why"><strong>What happens next</strong><p>After you submit, we'll look at your answers and share a few suggestions that may help. Only SIT wellbeing staff can see your ID, and it's never sent to the AI. Anything you write in the reflection box is not stored. This check-in isn't a diagnosis.</p></div>`;
     }
     main.innerHTML=`<div class="ds-journey"><aside class="ds-rail"><div class="ds-kicker">Your little reset</div>
       ${chapters.map((title,i)=>`<div class="ds-stop ${i===step?'current':i<step?'done':''}"><b>${i<step?'✓':i+1}</b><span>${escape(title)}</span></div>`).join('')}
