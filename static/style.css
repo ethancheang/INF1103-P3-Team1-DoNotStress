@@ -158,7 +158,9 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 #dns-campus .ds-result-hero[data-risk=low]{background:light-dark(#e5f1e7,#294434)}
 #dns-campus .ds-result-hero[data-risk=moderate]{background:light-dark(#fff0ce,#493e28)}
 #dns-campus .ds-result-hero[data-risk=high]{background:light-dark(#fbe3de,#4e302e)}
+#dns-campus .ds-records-toolbar{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:.65rem 1.25rem;margin:1.5rem 0 .35rem}
 #dns-campus .ds-record-filters{display:grid;grid-template-columns:2fr 1fr 1fr auto;gap:14px;align-items:end;margin:24px 0 10px}
+#dns-campus .ds-records-toolbar .ds-record-filters{flex:1 1 32rem;margin:0;min-width:min(100%,16rem)}
 #dns-campus .ds-record-filters label{font-size:13px;min-width:0}
 #dns-campus .ds-record-filters .ds-input{display:block;margin-top:7px;min-height:46px}
 #dns-campus .ds-record-filters button{min-height:46px}
@@ -170,13 +172,22 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 #dns-campus tr:last-child td{border-bottom:0}
 #dns-campus td:first-child{font-variant-numeric:tabular-nums;font-weight:600}
 #dns-campus td.ds-num{font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
-#dns-campus .ds-answer-key{font-size:12px;color:var(--ds-sub);margin:12px 0 0}
+#dns-campus .ds-record-table table{table-layout:fixed;width:142.5rem}
+#dns-campus .ds-record-table col.ds-col-id{width:7.5rem}
+#dns-campus .ds-record-table col.ds-col-eq{width:8.75rem}
+#dns-campus .ds-record-table col.ds-col-tier{width:11rem}
+#dns-campus .ds-record-table col.ds-col-status{width:7rem}
+#dns-campus .ds-record-table col.ds-col-date{width:12rem}
+#dns-campus .ds-record-table th{white-space:nowrap;vertical-align:middle}
+#dns-campus .ds-record-table th.ds-eq,#dns-campus .ds-record-table td.ds-eq{text-align:center}
+#dns-campus .ds-record-table td.ds-date{white-space:nowrap}
+#dns-campus .ds-record-note{margin:.75rem 0 0;font-size:.75rem;line-height:1.5;color:var(--ds-sub)}
 @media (max-width:75rem){#dns-campus .ds-record-table table{min-width:62rem}}
 #dns-campus tr[data-risk=low] td:first-child{border-left:4px solid light-dark(#438052,#8cbb99)}
 #dns-campus tr[data-risk=moderate] td:first-child{border-left:4px solid light-dark(#a57519,#e5bb65)}
 #dns-campus tr[data-risk=high] td:first-child{border-left:4px solid light-dark(#bd5a49,#eaa293)}
 #dns-campus .ds-empty{text-align:center;padding:45px;color:var(--ds-sub)}
-#dns-campus #ds-record-status{font-size:13px;color:var(--ds-sub);margin-top:16px}
+#dns-campus #ds-record-status{margin:0 0 .7rem;font-size:.75rem;line-height:1.4;color:var(--ds-sub)}
 @media(max-width:800px){#dns-campus .ds-record-filters{grid-template-columns:1fr 1fr}}
 @media(max-width:450px){#dns-campus .ds-record-filters{grid-template-columns:1fr}}
 

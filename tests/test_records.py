@@ -119,12 +119,21 @@ class RecordsTests(unittest.TestCase):
         self.assertIn('"page": "records"',response.get_data(as_text=True))
         js=(Path(__file__).resolve().parents[1]/'static'/'campus.js').read_text(encoding='utf-8')
         css=(Path(__file__).resolve().parents[1]/'static'/'style.css').read_text(encoding='utf-8')
-        for header in ('Control (pss_1)','Coping (pss_2)','Going well (pss_3)','Piling up (pss_4)',
-                       'Sleep (hours)','Answers: 1 = lowest, 5 = highest · Sleep in hours'):
+        for header in ('Control','Coping','Going well','Piling up','Sleep (hours)','Catch-up','Date saved'):
             self.assertIn(header,js)
+        for gone in ('Control (pss_1)','Coping (pss_2)','Going well (pss_3)','Piling up (pss_4)',
+                     'Answers: 1 = lowest, 5 = highest · Sleep in hours',
+                     'Cohort year uses the first two ID digits'):
+            self.assertNotIn(gone,js)
+        self.assertIn("title=\"${escape(key+': '+questions[key].prompt)}\"",js)
+        self.assertIn('Showing ${data.matching} of ${data.total} check-ins',js)
+        self.assertIn('Answers are on a 1–5 scale, where 1 is the lowest. Sleep is shown in hours. All times are in Singapore time (SGT).',js)
+        self.assertIn('role="status"',js)
         self.assertIn('title="${escape(title)}"',js)
         self.assertIn('overflow-x:auto',css)
         self.assertIn('max-width:75rem',css)
+        self.assertIn('text-align:center',css)
+        self.assertIn('white-space:nowrap',css)
 
 
 if __name__=='__main__':

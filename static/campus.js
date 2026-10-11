@@ -146,18 +146,42 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
   }
   function records() {
     if(!boot.isAdmin){page='home';home();return;}
+    const columns=[
+      ['Student ID','id'],
+      ['Stress score (/5)','eq'],
+      ['Tier','tier'],
+      ['Control','eq','pss_1'],
+      ['Coping','eq','pss_2'],
+      ['Going well','eq','pss_3'],
+      ['Piling up','eq','pss_4'],
+      ['Sleep (hours)','eq'],
+      ['Sleep quality','eq'],
+      ['Workload','eq'],
+      ['Catch-up','eq'],
+      ['Finances','eq'],
+      ['Friends','eq'],
+      ['Family','eq'],
+      ['Status','status'],
+      ['Date saved','date'],
+    ];
+    const heads=columns.map(([label,kind,key])=>{
+      const title=key?` title="${escape(key+': '+questions[key].prompt)}"`:'';
+      return `<th scope="col"${kind==='eq'?' class="ds-eq"':''}${title}>${label}</th>`;
+    }).join('');
+    const colgroup=`<colgroup>${columns.map(([,kind])=>`<col class="ds-col-${kind}">`).join('')}</colgroup>`;
     main.innerHTML=`<section><span class="ds-pill">Check-in history</span><h2>Saved student check-ins.</h2><p>Explore saved records by student, tier, or cohort.</p>
+      <div class="ds-records-toolbar">
       <div class="ds-record-filters">
         <label>Student ID<input class="ds-input" id="ds-record-search" type="search" inputmode="numeric" placeholder="Search all or part of an ID" value="${escape(recordFilters.student_id)}"></label>
         <label>Tier<select class="ds-input" id="ds-record-tier"><option value="">All tiers</option>${tiers.map(name=>`<option value="${escape(name)}"${name===recordFilters.tier?' selected':''}>${escape(name)}</option>`).join('')}</select></label>
         <label>Cohort year<select class="ds-input" id="ds-record-cohort"><option value="">All cohorts</option>${recordFilters.cohort_year?`<option value="${escape(recordFilters.cohort_year)}" selected>20${escape(recordFilters.cohort_year)}</option>`:''}</select></label>
         <button class="ds-secondary" data-action="clear-filters">Clear Filters</button>
       </div>
-      <p class="ds-help">Cohort year uses the first two ID digits (26 → 2026). Dates use Singapore time.</p>
-      <div id="ds-record-status" role="status" aria-live="polite"></div>
-      <p class="ds-answer-key">Answers: 1 = lowest, 5 = highest · Sleep in hours</p>
+      <p id="ds-record-status" role="status" aria-live="polite"></p>
+      </div>
       <div class="ds-record-table" role="region" aria-label="Saved check-ins table" tabindex="0">
-      <table><caption>All saved student check-ins</caption><thead><tr>${['Student ID','Stress score (/5)','Tier','Control (pss_1)','Coping (pss_2)','Going well (pss_3)','Piling up (pss_4)','Sleep (hours)','Sleep quality','Workload','Catch-up','Finances','Friends','Family','Status','Date saved'].map(label=>`<th scope="col">${label}</th>`).join('')}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
+      <table><caption>All saved student check-ins</caption>${colgroup}<thead><tr>${heads}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
+      <p class="ds-record-note">Answers are on a 1–5 scale, where 1 is the lowest. Sleep is shown in hours. All times are in Singapore time (SGT).</p>
       <button class="ds-link" data-action="refresh-records">Refresh records</button></section>`;
     loadRecords();
   }
@@ -188,10 +212,10 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       const cohort=main.querySelector('#ds-record-cohort');
       cohort.innerHTML='<option value="">All cohorts</option>'+data.cohorts.map(year=>`<option value="${escape(year)}">20${escape(year)}</option>`).join('');
       cohort.value=recordFilters.cohort_year;
-      status.textContent=`${data.matching} of ${data.total} saved check-ins`;
+      status.textContent=`Showing ${data.matching} of ${data.total} check-ins`;
       const cell=value=>escape(value===null||value===undefined||value===''?'—':value);
       const answerCell=(key,value)=>{
-        if(value===null||value===undefined||value==='')return '<td class="ds-num">—</td>';
+        if(value===null||value===undefined||value==='')return '<td class="ds-num ds-eq">—</td>';
         const q=questions[key];
         const shown=typeof value==='number'?String(value):String(value);
         let title=shown;
@@ -199,11 +223,11 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
           const label=q.options[+value-q.min];
           if(label)title=`${shown} · ${label}`;
         }else if(q&&q.unit)title=`${shown} ${q.unit}`;
-        return `<td class="ds-num" title="${escape(title)}">${escape(shown)}</td>`;
+        return `<td class="ds-num ds-eq" title="${escape(title)}">${escape(shown)}</td>`;
       };
       const tierName=row=>row.soft_label||{Low:"You're doing ok",Moderate:'Worth a check-in',High:'Please reach out'}[row.risk_category]||'—';
       const answersFor=row=>['pss_1','pss_2','pss_3','pss_4','sleep_hours_avg','sleep_quality','pas_workload','pas_catchup','fin_stress','mspss_friends','mspss_family'].map(key=>answerCell(key,row[key])).join('');
-      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td class="ds-num">${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td>${answersFor(row)}<td>${cell(row.status)}</td><td>${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="16" class="ds-empty">No records found</td></tr>';
+      main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td class="ds-num ds-eq">${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td>${answersFor(row)}<td>${cell(row.status)}</td><td class="ds-date">${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="16" class="ds-empty">No records found</td></tr>';
 
     }catch(error){if(page==='records'&&requestId===recordsRequest){status.textContent='Could not load saved records. Use Refresh records to try again.';main.querySelector('#ds-record-rows').innerHTML='';}}
   }
