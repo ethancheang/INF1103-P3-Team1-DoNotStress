@@ -10,10 +10,12 @@ from main import create_app
 
 
 def fake_generate(prompt, api_key, model_name):
+    # stress_score 3.0 is Moderate (2.5–3.5): label and prominence must match.
+    # risk_score is derived in ai_manager, so the stub does not send one.
     return json.dumps({
-        'risk_score': 0.4, 'risk_category': 'Moderate',
+        'stress_score': 3.0, 'risk_category': 'Moderate',
         'primary_stressors': ['academic_overload'],
-        'recommended_support': 'Speak to campus support.', 'confidence': 0.8,
+        'confidence': 0.8,
         'reasoning': 'Test fixture, not a real assessment.',
         'soft_label': 'Worth a check-in', 'tips': ['workload_chunks', 'short_breaks'],
         'speak_prominence': 'medium',
