@@ -264,6 +264,7 @@ ERROR_CODE_MISSING_API_KEY = "missing_api_key"
 ERROR_CODE_TIMEOUT = "timeout"
 ERROR_CODE_INVALID_RESPONSE = "invalid_response"
 ERROR_CODE_RETRIES_EXHAUSTED = "retries_exhausted"
+ERROR_CODE_RATE_LIMITED = "rate_limited"
 ERROR_CODE_UNAVAILABLE = "unavailable"
 
 AI_ERROR_CODES = (
@@ -271,6 +272,7 @@ AI_ERROR_CODES = (
     ERROR_CODE_TIMEOUT,
     ERROR_CODE_INVALID_RESPONSE,
     ERROR_CODE_RETRIES_EXHAUSTED,
+    ERROR_CODE_RATE_LIMITED,
     ERROR_CODE_UNAVAILABLE,
 )
 
@@ -300,6 +302,16 @@ _MISSING_KEY_MARKERS = (
     "gemini_api_key is not set",
     "api key is not set",
     "api_key is not set",
+)
+_RATE_LIMIT_MARKERS = (
+    "429",
+    "resource exhausted",
+    "resourceexhausted",
+    "too many requests",
+    "toomanyrequests",
+    "rate limit",
+    "ratelimit",
+    "quota",
 )
 
 
@@ -336,6 +348,11 @@ def classify_ai_error(exc_or_message: Any) -> str:
     ):
         return ERROR_CODE_MISSING_API_KEY
 
+    if isinstance(exc_or_message, BaseException) and _is_rate_limited(exc_or_message):
+        return ERROR_CODE_RATE_LIMITED
+    if any(marker in combined for marker in _RATE_LIMIT_MARKERS):
+        return ERROR_CODE_RATE_LIMITED
+
     if any(marker in combined for marker in _TIMEOUT_MARKERS):
         return ERROR_CODE_TIMEOUT
 
@@ -366,15 +383,19 @@ def _final_ai_error(
     *,
     attempts: int,
     last_was_api_exception: bool,
+    failure_kinds: list[str] | None = None,
 ) -> dict[str, str]:
     """
-    Choose the structured code after the retry loop ends.
+    Choose the structured code after the model chain ends.
 
+    - every model rate-limited → rate_limited
     - timeout / DeadlineExceeded stay timeout (even after retries)
     - schema / malformed JSON stay invalid_response
     - other API exceptions after more than one attempt → retries_exhausted
     - other one-shot API / network failures → unavailable
     """
+    if failure_kinds and all(kind == ERROR_CODE_RATE_LIMITED for kind in failure_kinds):
+        return _structured_ai_error(ERROR_CODE_RATE_LIMITED, last_detail)
     if last_kind == ERROR_CODE_TIMEOUT:
         code = ERROR_CODE_TIMEOUT
     elif last_kind == ERROR_CODE_INVALID_RESPONSE:
@@ -410,19 +431,14 @@ def _exception_status_code(exc: BaseException) -> int | None:
 
 
 def _is_rate_limited(exc: BaseException) -> bool:
-    """True for HTTP 429 / resource-exhausted responses."""
+    """True for HTTP 429, quota, or resource-exhausted responses."""
     if _exception_status_code(exc) == 429:
         return True
     name = type(exc).__name__.lower()
     if "resourceexhausted" in name or "toomanyrequests" in name:
         return True
     text = str(exc).lower()
-    return (
-        "429" in text
-        or "resource exhausted" in text
-        or "too many requests" in text
-        or "rate limit" in text
-    )
+    return any(marker in text for marker in _RATE_LIMIT_MARKERS)
 
 
 def _models_for_call(model_name: str) -> tuple[str, ...]:
@@ -1021,6 +1037,7 @@ def call_gemini(
     models = _models_for_call(model_name)
     calls_made = 0
     finished_attempt = 1
+    failure_kinds: list[str] = []
 
     for model_index, active_model in enumerate(models):
         tries_here = 0
@@ -1034,6 +1051,7 @@ def call_gemini(
             except Exception as exc:  # noqa: BLE001 — must not crash pipeline
                 last_was_api_exception = True
                 last_kind = classify_ai_error(exc)
+                failure_kinds.append(last_kind)
                 safe_exc = _redact_secret(str(exc), key)
                 last_detail = (
                     f"Gemini API failure (attempt {tries_here}/{tries_allowed}) "
@@ -1064,6 +1082,7 @@ def call_gemini(
 
             last_was_api_exception = False
             last_kind = ERROR_CODE_INVALID_RESPONSE
+            failure_kinds.append(last_kind)
             last_detail = (
                 f"Schema validation failed (attempt {tries_here}/{tries_allowed}) "
                 f"model={active_model}: {result}"
@@ -1084,6 +1103,7 @@ def call_gemini(
         last_detail,
         attempts=finished_attempt,
         last_was_api_exception=last_was_api_exception,
+        failure_kinds=failure_kinds,
     )
 
 
