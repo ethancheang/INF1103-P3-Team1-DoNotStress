@@ -1,4 +1,4 @@
-"""Gemini estimates stress from raw answers. These tests never call the API."""
+"""Gemini calculates the stress average from raw answers. These tests never call the API."""
 import json
 import os
 import unittest
@@ -45,6 +45,7 @@ def _gemini(**overrides):
         "stress_score": 3.0,
         "risk_category": "Moderate",
         "primary_stressors": ["academic_overload"],
+        "scored_items": {key: 3 for key in ai_manager.RAW_ANSWER_KEYS},
         "confidence": 0.8,
         "reasoning": (
             "School looks a bit heavy right now. "
@@ -135,7 +136,12 @@ class PromptTests(unittest.TestCase):
         self.assertNotIn("advisor dashboard", prompt)
         self.assertNotIn("emotional_distress", prompt)
         self.assertNotIn("feelings_check_in", prompt)
-        self.assertNotIn("6 - answer", prompt)
+        self.assertIn("6 - answer", prompt)
+        self.assertIn("scored_items", prompt)
+        self.assertIn("rounded to 2 decimal places", prompt)
+        self.assertIn("8 or more hours -> 1", prompt)
+        self.assertIn("otherwise 5", prompt)
+        self.assertNotIn("estimate", prompt.lower())
 
     def test_default_wording_matches_the_questionnaire(self):
         self.assertFalse(hasattr(ai_manager, "survey"))
@@ -152,7 +158,10 @@ class PromptTests(unittest.TestCase):
 
         def generate_fn(prompt, api_key, model_name):
             seen["prompt"] = prompt
-            return json.dumps(_for_score(1.0, tips=["short_breaks"], primary_stressors=[]))
+            scored, stress = ai_manager.expected_stress_score(_checkin())
+            return json.dumps(_for_score(
+                stress, scored_items=scored, tips=["short_breaks"], primary_stressors=[],
+            ))
 
         ok, enriched, error = ai_manager.analyse_student(
             _checkin(),
@@ -170,9 +179,11 @@ class PromptTests(unittest.TestCase):
         self.assertIn("UNIQUE WORDING XYZ", seen["prompt"])
         self.assertIn("1 = No", seen["prompt"])
         self.assertNotIn("2605581", seen["prompt"])
+        scored, stress = ai_manager.expected_stress_score(_checkin())
         self.assertEqual(enriched["source"], "gemini")
-        self.assertEqual(enriched["stress_score"], 1.0)
-        self.assertEqual(enriched["risk_score"], 0.0)
+        self.assertEqual(enriched["stress_score"], stress)
+        self.assertEqual(enriched["scored_items"], scored)
+        self.assertAlmostEqual(enriched["risk_score"], (stress - 1) / 4)
 
 
 class ResponseValidationTests(unittest.TestCase):
@@ -349,6 +360,13 @@ class GeminiCallTests(unittest.TestCase):
         )
         self.assertNotIn("emotional_distress", properties["primary_stressors"]["items"]["enum"])
         self.assertNotIn("feelings_check_in", properties["tips"]["items"]["enum"])
+        scored_items = properties["scored_items"]
+        self.assertEqual(scored_items["type"], "OBJECT")
+        self.assertEqual(set(scored_items["required"]), set(ai_manager.RAW_ANSWER_KEYS))
+        self.assertEqual(set(scored_items["properties"]), set(ai_manager.RAW_ANSWER_KEYS))
+        for spec in scored_items["properties"].values():
+            self.assertEqual(spec, {"type": "INTEGER", "minimum": 1, "maximum": 5})
+        self.assertNotIn("estimate", json.dumps(ai_manager.RESPONSE_SCHEMA).lower())
 
         from google.genai import types
         types.GenerateContentConfig.model_validate({
@@ -357,6 +375,117 @@ class GeminiCallTests(unittest.TestCase):
             "response_schema": ai_manager.RESPONSE_SCHEMA,
             "automatic_function_calling": {"disable": True},
         })
+
+
+def _minimum_stress():
+    """Answers that convert to 1 on every item. stress_score is 1.00."""
+    return {
+        "pss_1": 1,
+        "pss_2": 5,
+        "pss_3": 5,
+        "pss_4": 1,
+        "sleep_hours_avg": 8,
+        "sleep_quality": 1,
+        "pas_workload": 1,
+        "pas_catchup": 1,
+        "fin_stress": 1,
+        "mspss_friends": 5,
+        "mspss_family": 5,
+        "survey_version": "evidence-v3",
+    }
+
+
+def _exact_reply(answers, **overrides):
+    scored, stress = ai_manager.expected_stress_score(answers)
+    payload = _for_score(stress, scored_items=scored)
+    payload.update(overrides)
+    return payload
+
+
+class FormulaTests(unittest.TestCase):
+    def test_exact_response_passes(self):
+        answers = _minimum_stress()
+        ok, result = ai_manager.validate_ai_response(_exact_reply(answers), answers)
+        self.assertTrue(ok, result)
+        self.assertEqual(result["scored_items"], {key: 1 for key in ai_manager.RAW_ANSWER_KEYS})
+        self.assertEqual(result["stress_score"], 1.0)
+        self.assertEqual(result["risk_category"], "Low")
+
+        def generate_fn(prompt, api_key, model_name):
+            return json.dumps(_exact_reply(answers))
+
+        ok, enriched, error = ai_manager.analyse_student(
+            answers, api_key="stub", max_attempts=1, retry_delay_sec=0, generate_fn=generate_fn,
+        )
+        self.assertTrue(ok, error)
+        self.assertEqual(enriched["stress_score"], 1.0)
+        self.assertEqual(enriched["scored_items"]["sleep_hours_avg"], 1)
+
+    def test_off_by_one_scored_item_fails(self):
+        answers = _minimum_stress()
+        reply = _exact_reply(answers)
+        reply["scored_items"] = dict(reply["scored_items"])
+        reply["scored_items"]["pss_1"] = 2
+        ok, message = ai_manager.validate_ai_response(reply, answers)
+        self.assertFalse(ok)
+        self.assertIn("scored_items", message)
+
+        def generate_fn(prompt, api_key, model_name):
+            return json.dumps(reply)
+
+        ok, result, error = ai_manager.call_gemini(
+            "check-in", api_key="stub", max_attempts=1, retry_delay_sec=0,
+            generate_fn=generate_fn, answers=answers,
+        )
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertEqual(error["error_code"], "invalid_response")
+
+        skipped, _ = ai_manager.validate_ai_response(reply)
+        self.assertTrue(skipped)
+
+    def test_stress_score_off_by_a_tenth_fails(self):
+        answers = _minimum_stress()
+        reply = _exact_reply(answers, stress_score=1.1)
+        ok, message = ai_manager.validate_ai_response(reply, answers)
+        self.assertFalse(ok)
+        self.assertIn("stress_score", message)
+
+        def generate_fn(prompt, api_key, model_name):
+            return json.dumps(reply)
+
+        ok, result, error = ai_manager.analyse_student(
+            answers, api_key="stub", max_attempts=1, retry_delay_sec=0, generate_fn=generate_fn,
+        )
+        self.assertFalse(ok)
+        self.assertEqual(error["error_code"], "invalid_response")
+
+    def test_reverse_items_and_sleep_conversion(self):
+        answers = _minimum_stress()
+        scored, stress = ai_manager.expected_stress_score(answers)
+        self.assertEqual(stress, 1.0)
+        for key in ("pss_2", "pss_3", "mspss_friends", "mspss_family"):
+            self.assertEqual(scored[key], 1)
+            flipped = dict(answers, **{key: 1})
+            converted, total = ai_manager.expected_stress_score(flipped)
+            self.assertEqual(converted[key], 5)
+            self.assertEqual(total, round(15 / 11, 2))
+
+        for hours, band in (
+            (14, 1), (8.5, 1), (8, 1), (7.5, 2), (7, 2), (6.5, 3), (6, 3),
+            (5.5, 4), (5, 4), (4.5, 5), (0, 5),
+        ):
+            converted, _ = ai_manager.expected_stress_score(
+                dict(answers, sleep_hours_avg=hours)
+            )
+            self.assertEqual(converted["sleep_hours_avg"], band, hours)
+
+        short_sleep = dict(answers, sleep_hours_avg=4.5)
+        reply = _exact_reply(short_sleep)
+        ok, result = ai_manager.validate_ai_response(reply, short_sleep)
+        self.assertTrue(ok, result)
+        self.assertEqual(result["scored_items"]["sleep_hours_avg"], 5)
+        self.assertEqual(result["stress_score"], round(15 / 11, 2))
 
 
 if __name__ == "__main__":
