@@ -488,5 +488,204 @@ class FormulaTests(unittest.TestCase):
         self.assertEqual(result["stress_score"], round(15 / 11, 2))
 
 
+class ApiFault(Exception):
+    def __init__(self, message, code=None):
+        super().__init__(message)
+        self.code = code
+
+
+def _ok_body():
+    return json.dumps(_for_score(3.0))
+
+
+class FallbackTests(unittest.TestCase):
+    def _call(self, generate, **overrides):
+        options = dict(
+            api_key="stub-key",
+            max_attempts=3,
+            retry_delay_sec=0,
+            generate_fn=generate,
+        )
+        options.update(overrides)
+        return ai_manager.call_gemini("check-in", **options)
+
+    def test_model_order_and_call_cap(self):
+        self.assertEqual(
+            ai_manager.MODEL_CHAIN,
+            ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite"),
+        )
+        self.assertNotIn("gemini-flash-latest", ai_manager.MODEL_CHAIN)
+        self.assertEqual(ai_manager.MAX_TOTAL_CALLS, 4)
+
+    def test_timeout_then_success_retries_the_same_model(self):
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            if len(calls) == 1:
+                raise ApiFault("timed out")
+            return _ok_body()
+
+        ok, result, error = self._call(generate)
+        self.assertTrue(ok, error)
+        self.assertIsNone(error)
+        self.assertEqual(result["source"], "gemini")
+        self.assertEqual(calls, ["gemini-3.6-flash", "gemini-3.6-flash"])
+
+    def test_503_on_first_model_falls_back(self):
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            if model_name == "gemini-3.6-flash":
+                raise ApiFault("503 unavailable high demand", 503)
+            return _ok_body()
+
+        ok, result, error = self._call(generate)
+        self.assertTrue(ok, error)
+        self.assertEqual(calls, ["gemini-3.6-flash", "gemini-3.5-flash"])
+
+    def test_404_falls_back_without_retrying_the_same_model(self):
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            if len(calls) == 1:
+                raise ApiFault("404 not found", 404)
+            return _ok_body()
+
+        ok, _, error = self._call(generate)
+        self.assertTrue(ok, error)
+        self.assertEqual(calls, ["gemini-3.6-flash", "gemini-3.5-flash"])
+
+    def test_429_moves_to_the_next_model_without_a_retry(self):
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            if len(calls) == 1:
+                raise ApiFault("429 too many requests", 429)
+            return _ok_body()
+
+        ok, _, error = self._call(generate)
+        self.assertTrue(ok, error)
+        self.assertEqual(calls, ["gemini-3.6-flash", "gemini-3.5-flash"])
+
+    def test_every_model_rate_limited(self):
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            raise ApiFault("resource exhausted quota", 429)
+
+        ok, result, error = self._call(generate)
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertEqual(error["error_code"], "rate_limited")
+        self.assertEqual(calls, list(ai_manager.MODEL_CHAIN))
+        copy = io_manager.format_ai_error("rate_limited")
+        self.assertEqual(copy["error_code"], "rate_limited")
+        self.assertEqual(
+            copy["body"],
+            "Our check-in assistant is busy right now. "
+            "Your answers have been saved and will be reviewed soon.",
+        )
+        self.assertIsNone(copy["error"])
+
+    def test_bad_json_is_invalid_after_the_call_cap(self):
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            return "not json"
+
+        ok, result, error = self._call(generate)
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertEqual(error["error_code"], "invalid_response")
+        self.assertEqual(len(calls), ai_manager.MAX_TOTAL_CALLS)
+
+    def test_missing_key_never_calls_the_generator(self):
+        def generate(prompt, api_key, model_name):
+            raise AssertionError("generator must not be called")
+
+        with patch.object(ai_manager, "_default_generate", generate):
+            ok, result, error = ai_manager.call_gemini("check-in", api_key="  ")
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertEqual(error["error_code"], "missing_api_key")
+
+    def test_total_calls_never_exceed_the_cap(self):
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            raise ApiFault("timed out")
+
+        ok, _, error = self._call(generate)
+        self.assertFalse(ok)
+        self.assertEqual(error["error_code"], "timeout")
+        self.assertLessEqual(len(calls), ai_manager.MAX_TOTAL_CALLS)
+        self.assertEqual(len(calls), ai_manager.MAX_TOTAL_CALLS)
+        self.assertLessEqual(max(calls.count(name) for name in calls), 2)
+
+    def test_api_key_is_absent_from_logs_and_error_detail(self):
+        secret = "sk-live-DO-NOT-PRINT-991122"
+        calls = []
+
+        def generate(prompt, api_key, model_name):
+            calls.append(model_name)
+            raise ApiFault(f"403 permission denied using {api_key}", 403)
+
+        with self.assertLogs("ai_manager", level="DEBUG") as captured:
+            ok, result, error = self._call(generate, api_key=secret)
+        self.assertFalse(ok)
+        self.assertIsNone(result)
+        self.assertNotEqual(error["error_code"], "missing_api_key")
+        blob = "\n".join(captured.output) + "\n" + error["detail"]
+        self.assertNotIn(secret, blob)
+        self.assertIn("[redacted]", error["detail"])
+        self.assertLessEqual(len(calls), ai_manager.MAX_TOTAL_CALLS)
+
+    def test_rate_limit_still_saves_a_pending_checkin(self):
+        import tempfile
+        from pathlib import Path
+
+        from main import create_app
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        path = Path(temp.name) / "records.json"
+
+        def generate(prompt, api_key, model_name):
+            raise ApiFault("429 quota", 429)
+
+        app = create_app({
+            "TESTING": True,
+            "SECRET_KEY": "test-only",
+            "AI_GENERATE_FN": generate,
+            "AI_MAX_ATTEMPTS": 3,
+            "AI_RETRY_DELAY_SEC": 0,
+            "DATA_PATH": str(path),
+        })
+        client = app.test_client()
+        client.get("/")
+        with client.session_transaction() as session:
+            token = session["csrf_token"]
+        values = dict(
+            student_id="2605581", pss_1=3, pss_2=3, pss_3=3, pss_4=3,
+            sleep_hours_avg=6.5, sleep_quality=3, pas_workload=3, pas_catchup=3,
+            fin_stress=3, mspss_friends=3, mspss_family=3,
+            feelings_text="PRIVATE NOTE that must not be stored",
+        )
+        response = client.post("/", json=values, headers={"X-CSRF-Token": token})
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json["error_code"], "rate_limited")
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        self.assertEqual(stored[0]["status"], "pending")
+        self.assertNotIn("feelings_text", stored[0])
+        self.assertNotIn("PRIVATE NOTE", path.read_text(encoding="utf-8"))
+
+
 if __name__ == "__main__":
     unittest.main()
