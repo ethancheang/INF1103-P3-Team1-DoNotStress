@@ -228,7 +228,7 @@ class ScoringTests(unittest.TestCase):
         self.assertIn('not clinical cut-offs',r['reasoning'])
 
     def test_nonfinite_ai_numbers_rejected(self):
-        for field in ('risk_score','confidence'):
+        for field in ('stress_score','confidence'):
             values=json.loads(fake_generate(None,None,None));values[field]=float('nan')
             self.assertFalse(ai_manager.validate_ai_response(values)[0])
 

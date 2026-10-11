@@ -4,10 +4,11 @@ DoNotStress — AI Processing Layer (ai_manager)
 Sole owner of Gemini prompt construction, structured JSON API calls,
 schema validation, and graceful retries.
 
-Audience: students (local Flask web UI), not advisors.
-Gemini is MANDATORY: every record must pass through analyse_student /
-call_gemini. This layer never invents soft_label / tips / speak_prominence
-as a substitute product, and never falls back to logic_manager.
+Audience: students (local Flask web UI). Gemini calculates the stress
+average from the 11 raw answers with a fixed formula. This layer checks
+that calculation. It does not send a student id, a reflection, or any
+precomputed score, flag, or tier. It never invents soft_label / tips /
+speak_prominence when Gemini fails, and it never falls back to logic_manager.
 
 Pure procedural Python: functions only.
 No terminal I/O (print / input), no Intervention Tier rules, no file persistence.
@@ -21,11 +22,10 @@ from __future__ import annotations
 
 import json
 import math
-import survey
 import logging
 import os
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Mapping, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -33,16 +33,120 @@ logger = logging.getLogger(__name__)
 # I/O fields this layer may send to Gemini (student check-in only)
 # ---------------------------------------------------------------------------
 
-# No student identifier or optional reflection is sent to the AI provider.
-STUDENT_PROMPT_FIELDS = tuple(survey.QUESTION_MAP) + (
-    'survey_version', 'stress_score', 'scored_item_count', 'support_mean', 'support_item_count',
-    'context_flags', 'risk_category', 'soft_label', 'speak_prominence',
+# Raw answers plus the questionnaire version. No student id, reflection,
+# score, flag, or tier. Gemini calculates stress_score from these answers.
+RAW_ANSWER_KEYS = (
+    "pss_1",
+    "pss_2",
+    "pss_3",
+    "pss_4",
+    "sleep_hours_avg",
+    "sleep_quality",
+    "pas_workload",
+    "pas_catchup",
+    "fin_stress",
+    "mspss_friends",
+    "mspss_family",
+)
+STUDENT_PROMPT_FIELDS = RAW_ANSWER_KEYS + ("survey_version",)
+
+# Positively worded items: a high answer means less stress, not more.
+POSITIVE_ITEM_KEYS = ("pss_2", "pss_3", "mspss_friends", "mspss_family")
+
+# Wording and answer labels only. Scoring stays outside this module.
+# Callers may pass survey.QUESTIONS (same key / prompt / options shape).
+DEFAULT_QUESTIONS: tuple[dict[str, Any], ...] = (
+    {
+        "key": "pss_1",
+        "prompt": (
+            "In the past month, how often have you felt you couldn't "
+            "control the important things in your life?"
+        ),
+        "options": ("Never", "Almost never", "Sometimes", "Fairly often", "Very often"),
+    },
+    {
+        "key": "pss_2",
+        "prompt": (
+            "In the past month, how often have you felt confident "
+            "handling your personal problems?"
+        ),
+        "options": ("Never", "Almost never", "Sometimes", "Fairly often", "Very often"),
+        "reverse": True,
+    },
+    {
+        "key": "pss_3",
+        "prompt": (
+            "In the past month, how often have you felt things were "
+            "going well for you?"
+        ),
+        "options": ("Never", "Almost never", "Sometimes", "Fairly often", "Very often"),
+        "reverse": True,
+    },
+    {
+        "key": "pss_4",
+        "prompt": (
+            "In the past month, how often have you felt problems were "
+            "piling up too much to handle?"
+        ),
+        "options": ("Never", "Almost never", "Sometimes", "Fairly often", "Very often"),
+    },
+    {
+        "key": "sleep_hours_avg",
+        "prompt": (
+            "On average, how many hours of sleep have you gotten "
+            "each night this week?"
+        ),
+        "min": 0,
+        "max": 14,
+        "step": 0.5,
+        "low": "0 hours",
+        "high": "14 hours",
+    },
+    {
+        "key": "sleep_quality",
+        "prompt": "During the past week, how would you rate your sleep quality overall?",
+        "options": ("Very good", "Fairly good", "Okay", "Fairly bad", "Very bad"),
+    },
+    {
+        "key": "pas_workload",
+        "prompt": "I feel my coursework is too much to handle.",
+        "options": ("Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"),
+    },
+    {
+        "key": "pas_catchup",
+        "prompt": "When I fall behind on my work, I find it hard to catch up.",
+        "options": ("Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"),
+    },
+    {
+        "key": "fin_stress",
+        "prompt": "How stressed do you feel about your personal finances in general?",
+        "options": (
+            "No stress at all",
+            "A little stress",
+            "Moderate stress",
+            "High stress",
+            "Overwhelming stress",
+        ),
+    },
+    {
+        "key": "mspss_friends",
+        "prompt": "I can count on my friends when things go wrong.",
+        "options": ("Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"),
+        "reverse": True,
+    },
+    {
+        "key": "mspss_family",
+        "prompt": "I get the emotional help and support I need from my family.",
+        "options": ("Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree"),
+        "reverse": True,
+    },
 )
 
 # ---------------------------------------------------------------------------
-# Shared allow-lists — MUST match io_manager (PR #6) exactly.
-# logic_manager fallback MUST use the same IDs / strings.
-# Tip *copy* lives in io_manager.format_tips — this layer returns IDs only.
+# Allow-lists. Tip copy lives in io_manager.format_tips — return IDs only.
+# Every tip ID here is also in io_manager.TIPS_ALLOWLIST.
+# emotional_distress and feelings_check_in are omitted: they need the
+# reflection, and that text is never sent to Gemini.
 # ---------------------------------------------------------------------------
 
 SOFT_LABEL_OK = "You're doing ok"
@@ -74,7 +178,6 @@ ALLOWED_PRIMARY_STRESSORS = frozenset(
         "academic_overload",
         "financial_pressure",
         "low_social_support",
-        "emotional_distress",
     }
 )
 
@@ -88,15 +191,39 @@ ALLOWED_TIP_IDS = frozenset(
         "money_worries",
         "talk_to_someone",
         "keep_social_contact",
-        "feelings_check_in",
     }
 )
 
+# Bands for the calculated stress_score. Same cut-offs as the check-in guide:
+# Low below 2.5, Moderate from 2.5 to 3.5 inclusive, High above 3.5.
+STRESS_SCORE_MIN = 1.0
+STRESS_SCORE_MAX = 5.0
+LOW_BELOW = 2.5
+HIGH_ABOVE = 3.5
+
+_LABEL_FOR_CATEGORY = {
+    "Low": SOFT_LABEL_OK,
+    "Moderate": SOFT_LABEL_CHECK_IN,
+    "High": SOFT_LABEL_REACH_OUT,
+}
+_PROMINENCE_FOR_CATEGORY = {
+    "Low": "low",
+    "Moderate": "medium",
+    "High": "high",
+}
+# Callers such as data_manager still store this string. Gemini is not asked for it.
+_RECOMMENDED_SUPPORT = {
+    "Low": "Internal: low stress. The UI shows tips, not this field.",
+    "Moderate": "Internal: moderate stress. The UI shows tips, not this field.",
+    "High": "Internal: high stress. The UI shows tips, not this field.",
+}
+
+# What Gemini must return. risk_score and recommended_support are added in code.
 _REQUIRED_FIELDS = (
-    "risk_score",
+    "scored_items",
+    "stress_score",
     "risk_category",
     "primary_stressors",
-    "recommended_support",
     "confidence",
     "reasoning",
     "soft_label",
@@ -104,18 +231,26 @@ _REQUIRED_FIELDS = (
     "speak_prominence",
 )
 
-_DEFAULT_MODEL = "gemini-3.6-flash"
-# Tried in order when the preferred model returns HTTP 503 (high demand).
-# These answered successfully with the same API key while 3.6-flash was busy.
-_FALLBACK_MODELS = (
-    "gemini-flash-latest",
+# stress_score must sit this close to the recomputed mean (2 decimal places).
+_STRESS_SCORE_TOLERANCE = 0.01
+
+# Named models only. gemini-3.6-flash first, then older fixed names.
+# No moving alias such as gemini-flash-latest.
+MODEL_CHAIN = (
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
 )
+_DEFAULT_MODEL = MODEL_CHAIN[0]
+_FALLBACK_MODELS = MODEL_CHAIN[1:]
 _DEFAULT_TEMPERATURE = 0.2
 _DEFAULT_MAX_ATTEMPTS = 3
 _DEFAULT_RETRY_DELAY_SEC = 0.5
 _DEFAULT_TIMEOUT_SEC = 30.0
+# One check-in must not spend more than this many Gemini calls (daily quota).
+MAX_TOTAL_CALLS = 4
+# Extra try on the same model, and only for a timeout or bad JSON.
+_SAME_MODEL_RETRIES = 1
 _TIPS_MIN = 1
 _TIPS_MAX = 3
 
@@ -129,6 +264,7 @@ ERROR_CODE_MISSING_API_KEY = "missing_api_key"
 ERROR_CODE_TIMEOUT = "timeout"
 ERROR_CODE_INVALID_RESPONSE = "invalid_response"
 ERROR_CODE_RETRIES_EXHAUSTED = "retries_exhausted"
+ERROR_CODE_RATE_LIMITED = "rate_limited"
 ERROR_CODE_UNAVAILABLE = "unavailable"
 
 AI_ERROR_CODES = (
@@ -136,6 +272,7 @@ AI_ERROR_CODES = (
     ERROR_CODE_TIMEOUT,
     ERROR_CODE_INVALID_RESPONSE,
     ERROR_CODE_RETRIES_EXHAUSTED,
+    ERROR_CODE_RATE_LIMITED,
     ERROR_CODE_UNAVAILABLE,
 )
 
@@ -165,6 +302,16 @@ _MISSING_KEY_MARKERS = (
     "gemini_api_key is not set",
     "api key is not set",
     "api_key is not set",
+)
+_RATE_LIMIT_MARKERS = (
+    "429",
+    "resource exhausted",
+    "resourceexhausted",
+    "too many requests",
+    "toomanyrequests",
+    "rate limit",
+    "ratelimit",
+    "quota",
 )
 
 
@@ -201,6 +348,11 @@ def classify_ai_error(exc_or_message: Any) -> str:
     ):
         return ERROR_CODE_MISSING_API_KEY
 
+    if isinstance(exc_or_message, BaseException) and _is_rate_limited(exc_or_message):
+        return ERROR_CODE_RATE_LIMITED
+    if any(marker in combined for marker in _RATE_LIMIT_MARKERS):
+        return ERROR_CODE_RATE_LIMITED
+
     if any(marker in combined for marker in _TIMEOUT_MARKERS):
         return ERROR_CODE_TIMEOUT
 
@@ -231,15 +383,19 @@ def _final_ai_error(
     *,
     attempts: int,
     last_was_api_exception: bool,
+    failure_kinds: list[str] | None = None,
 ) -> dict[str, str]:
     """
-    Choose the structured code after the retry loop ends.
+    Choose the structured code after the model chain ends.
 
+    - every model rate-limited → rate_limited
     - timeout / DeadlineExceeded stay timeout (even after retries)
     - schema / malformed JSON stay invalid_response
     - other API exceptions after more than one attempt → retries_exhausted
     - other one-shot API / network failures → unavailable
     """
+    if failure_kinds and all(kind == ERROR_CODE_RATE_LIMITED for kind in failure_kinds):
+        return _structured_ai_error(ERROR_CODE_RATE_LIMITED, last_detail)
     if last_kind == ERROR_CODE_TIMEOUT:
         code = ERROR_CODE_TIMEOUT
     elif last_kind == ERROR_CODE_INVALID_RESPONSE:
@@ -275,38 +431,18 @@ def _exception_status_code(exc: BaseException) -> int | None:
 
 
 def _is_rate_limited(exc: BaseException) -> bool:
-    """True for HTTP 429 / resource-exhausted responses."""
+    """True for HTTP 429, quota, or resource-exhausted responses."""
     if _exception_status_code(exc) == 429:
         return True
     name = type(exc).__name__.lower()
     if "resourceexhausted" in name or "toomanyrequests" in name:
         return True
     text = str(exc).lower()
-    return (
-        "429" in text
-        or "resource exhausted" in text
-        or "too many requests" in text
-        or "rate limit" in text
-    )
-
-
-def _is_retryable_api_error(exc: BaseException) -> bool:
-    """Retry timeouts and 429s only. Other API errors fail on the first try."""
-    if classify_ai_error(exc) == ERROR_CODE_TIMEOUT:
-        return True
-    return _is_rate_limited(exc)
-
-
-def _is_model_overloaded(exc: BaseException) -> bool:
-    """True when Gemini accepted the key but the model returned HTTP 503."""
-    if _exception_status_code(exc) == 503:
-        return True
-    text = str(exc).lower()
-    return "503" in text and ("unavailable" in text or "high demand" in text)
+    return any(marker in text for marker in _RATE_LIMIT_MARKERS)
 
 
 def _models_for_call(model_name: str) -> tuple[str, ...]:
-    """Preferred model first, then overload fallbacks, with duplicates removed."""
+    """Preferred model first, then the fixed older models, with duplicates removed."""
     primary = (model_name or _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
     ordered = [primary]
     for name in _FALLBACK_MODELS:
@@ -315,19 +451,20 @@ def _models_for_call(model_name: str) -> tuple[str, ...]:
     return tuple(ordered)
 
 
-def require_gemini_api_key() -> str:
-    """
-    Stop startup when GEMINI_API_KEY is missing or blank.
+def _tries_on_one_model(max_attempts: int) -> int:
+    """First call, plus at most one repeat. Never more than max_attempts."""
+    requested = max(1, int(max_attempts))
+    return min(requested, 1 + _SAME_MODEL_RETRIES)
 
-    The key is read from the environment only. SystemExit carries a clear
-    message and never includes the key.
-    """
-    key = os.environ.get("GEMINI_API_KEY", "").strip()
-    if not key:
-        raise SystemExit(
-            "GEMINI_API_KEY is not set. Set it in the environment and start the app again."
-        )
-    return key
+
+def _log_model_fallback(failed_model: str, next_model: str, reason: str) -> None:
+    """Record a model switch. The reason is an error code, never an API key."""
+    logger.warning(
+        "Gemini model %s failed (%s); trying %s",
+        failed_model,
+        reason,
+        next_model,
+    )
 
 
 def _mark_gemini_success(ai_fields: dict[str, Any]) -> dict[str, Any]:
@@ -337,67 +474,102 @@ def _mark_gemini_success(ai_fields: dict[str, Any]) -> dict[str, Any]:
     return marked
 
 
-def build_prompt(student_dict: dict[str, Any]) -> str:
-    """
-    Build a structured prompt from a validated student check-in (from io_manager).
+def _format_question(question: Mapping[str, Any]) -> str:
+    """One question line: key, wording, and answer labels. No scores."""
+    key = str(question.get("key", "")).strip()
+    wording = str(question.get("prompt", "")).strip()
+    options = question.get("options")
+    positive = bool(question.get("reverse")) or key in POSITIVE_ITEM_KEYS
+    tone = " Positively worded: a high answer means less stress." if positive else ""
+    if options:
+        labels = ", ".join(
+            f"{number} = {label}" for number, label in enumerate(options, start=1)
+        )
+        return f"- {key}: {wording}{tone} Answer labels: {labels}."
+    minimum = question.get("min", 0)
+    maximum = question.get("max", 14)
+    step = question.get("step", 0.5)
+    low = question.get("low", "0 hours")
+    high = question.get("high", "14 hours")
+    return (
+        f"- {key}: {wording}{tone} "
+        f"Answer: {minimum} to {maximum} hours in steps of {step} "
+        f"({low} to {high}), not a 1 to 5 rating."
+    )
 
-    Uses only the student-facing fields. Instructs Gemini to act as a
-    supportive student-wellbeing assistant and return ONLY the required JSON.
+
+def build_prompt(
+    student_dict: dict[str, Any],
+    questions: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
     """
-    payload = {key:student_dict.get(key) for key in STUDENT_PROMPT_FIELDS}
+    Ask Gemini to calculate stress_score from the raw check-in.
+
+    The JSON body is only the 11 answers and survey_version. Question wording
+    and answer-option labels are instructions, not scored fields. The prompt
+    gives the conversion formula; this module checks the result afterwards.
+
+    `questions` defaults to DEFAULT_QUESTIONS so this module does not import
+    survey. Each item needs `key` and `prompt`. Likert items include `options`
+    (the label for 1, then 2, and so on). Sleep hours omit `options` and use
+    min, max, step, low, and high. `reverse=True` marks a positively worded
+    item. Pass survey.QUESTIONS from the caller to take wording from there.
+    """
+    catalog = DEFAULT_QUESTIONS if questions is None else questions
+    payload = {key: student_dict.get(key) for key in STUDENT_PROMPT_FIELDS}
     record_json = json.dumps(payload, ensure_ascii=False, indent=2)
-    wording = "\n".join(f"- {q['key']}: {q['prompt']}" for q in survey.QUESTIONS)
+    wording = "\n".join(_format_question(item) for item in catalog)
     stressor_list = ", ".join(sorted(ALLOWED_PRIMARY_STRESSORS))
     tip_id_list = ", ".join(sorted(ALLOWED_TIP_IDS))
     soft_label_list = ", ".join(f'"{label}"' for label in SOFT_LABELS)
+    positive = ", ".join(POSITIVE_ITEM_KEYS)
 
     return (
         "You are a supportive student-wellbeing assistant for DoNotStress, "
-        "a local check-in tool used by students (not an advisor dashboard).\n"
-        "The questionnaire is evidence-v3. Explain associations, not causation or diagnosis. "
-        "Use the supplied computed risk_category, soft_label and speak_prominence exactly. "
-        "They are project heuristics, not clinical cut-offs. "
-        "Every question uses a 1–5 scale except sleep_hours_avg, which is entered as hours and "
-        "converted to 1–5 only when scoring. All 11 questions are required and carry equal weight. "
-        "pss_2, pss_3, mspss_friends and mspss_family are positively worded and are scored as 6 - answer; "
-        "after that, higher always means more stress. "
-        "stress_score is the average of all 11 answers (1.0–5.0): below 2.5 Low, 2.5–3.5 Moderate, above 3.5 High. "
-        "risk_score must equal (stress_score - 1) / 4 and is a normalised score, not a probability. "
-        "PSS items share the stem \"In the past month, how often have you felt\" and use 1 never to 5 very often "
-        "(adapted; not a PSS-4 total). "
-        "Sleep (past week): sleep_hours_avg is hours from 0 to 14 in half-hour steps; scoring maps "
-        "8+ hours to 1, 7 to under 8 to 2, 6 to under 7 to 3, 5 to under 6 to 4, and under 5 hours to 5. "
-        "sleep_quality is 1 very good to 5 very bad. "
-        "PAS: 1 strongly disagree to 5 strongly agree, selected items only, not a full validated subscale. "
-        "Finance: a 1–5 slider, 1 no stress to 5 overwhelming stress (higher is worse). "
-        "MSPSS: friends and family only, 1 strongly disagree to 5 strongly agree; support_mean is the raw agreement average. "
-        f"Question wording:\n{wording}\n"
-        "Use context_flags to choose tips. Do not infer a diagnosis, safety, or a student's state of mind. "
-        "Reflection text is excluded and must not be inferred.\n"
-        "Speak to the student with warmth and care. Analyse the check-in "
-        "holistically and return ONLY a single JSON object (no markdown "
-        "fences, no commentary) with exactly these keys:\n"
-        '- "risk_score": float between 0.0 and 1.0 ((stress_score - 1) / 4, not a probability)\n'
-        '- "risk_category": one of "Low", "Moderate", "High"\n'
-        '- "primary_stressors": list of short snake_case strings chosen ONLY '
-        f"from this allow-list: {stressor_list}\n"
-        '- "recommended_support": short internal string (the UI shows tips, '
-        "not this field)\n"
-        '- "confidence": float between 0.0 and 1.0 (your confidence)\n'
-        '- "reasoning": short plain-English explanation that is safe to show '
-        "a student; do not invent contacts\n"
-        f'- "soft_label": EXACTLY one of: {soft_label_list} '
-        "(ASCII apostrophe in You're doing ok)\n"
-        '- "tips": list of 1 to 3 tip IDs only (not sentences). Each ID MUST '
-        f"be one of: {tip_id_list}. Do not invent tip text or extra IDs. "
-        "The UI maps these IDs to student-facing copy.\n"
-        '- "speak_prominence": one of "low", "medium", "high" — how strongly '
-        "the UI should highlight Speak to advisor (always visible; more "
-        "prominent when risk is higher)\n"
-        "\n"
-        "Never invent phone numbers, emails, or offices. Do not include "
-        "contact details in JSON. Speak-to-advisor contacts are shown by "
-        "the UI separately.\n"
+        "a local check-in used by students.\n"
+        "Calculate stress_score from the 11 answers with the formula below. "
+        "You are not given a score, a tier, or a written reflection. "
+        "Do not diagnose, and do not invent contacts.\n"
+        "Convert each answer onto the 1 to 5 stress scale:\n"
+        f"- {positive} are positively worded. Convert each as 6 - answer.\n"
+        "- sleep_hours_avg is hours from 0 to 14 in half-hour steps. "
+        "Convert it as: 8 or more hours -> 1, 7 or more -> 2, 6 or more -> 3, "
+        "5 or more -> 4, otherwise 5.\n"
+        "- Every other answer is already on the 1 to 5 scale. Use the number as answered.\n"
+        "stress_score is the mean of those 11 converted values, rounded to 2 decimal places. "
+        "Higher stress is worse.\n"
+        "Then set the tier from that stress_score:\n"
+        f"- below {LOW_BELOW:g}: risk_category Low, soft_label \"{SOFT_LABEL_OK}\", "
+        "speak_prominence low\n"
+        f"- {LOW_BELOW:g} to {HIGH_ABOVE:g} inclusive: risk_category Moderate, "
+        f"soft_label \"{SOFT_LABEL_CHECK_IN}\", speak_prominence medium\n"
+        f"- above {HIGH_ABOVE:g}: risk_category High, "
+        f"soft_label \"{SOFT_LABEL_REACH_OUT}\", speak_prominence high\n"
+        "These bands are a simple guide for this check-in, not clinical cut-offs.\n"
+        f"Question wording and answer labels:\n{wording}\n"
+        "Speak to the student with warmth. Return ONLY a single JSON object "
+        "(no markdown fences, no commentary) with exactly these keys:\n"
+        '- "scored_items": object of the 11 converted values. Keys are '
+        "pss_1, pss_2, pss_3, pss_4, sleep_hours_avg, sleep_quality, "
+        "pas_workload, pas_catchup, fin_stress, mspss_friends, mspss_family. "
+        "Each value is an integer from 1 to 5.\n"
+        f'- "stress_score": the mean above, from {STRESS_SCORE_MIN:g} to '
+        f"{STRESS_SCORE_MAX:g}, rounded to 2 decimal places\n"
+        '- "risk_category": "Low", "Moderate", or "High", matching stress_score\n'
+        '- "primary_stressors": list of snake_case strings chosen ONLY from: '
+        f"{stressor_list}\n"
+        '- "confidence": number from 0.0 to 1.0\n'
+        '- "reasoning": 2 or 3 warm, plain sentences written to the student. '
+        "No numbers, no jargon, no diagnosis, and no contacts\n"
+        f'- "soft_label": exactly one of {soft_label_list}, matching risk_category. '
+        "Use a straight apostrophe in You're doing ok\n"
+        '- "tips": list of 1 to 3 tip IDs only, each one of: '
+        f"{tip_id_list}. Do not invent tip text\n"
+        '- "speak_prominence": "low", "medium", or "high", matching risk_category. '
+        "This is how strongly the UI highlights Talk to someone. "
+        "SIT Counselling stays available and is shown more prominently when stress is higher\n"
+        "Do not add other keys. Never invent phone numbers, emails, or offices. "
+        "SIT Counselling contacts are shown by the UI, not by you.\n"
         "\n"
         "Student check-in:\n"
         f"{record_json}\n"
@@ -412,6 +584,81 @@ def _as_unit_interval(value: Any, field_name: str) -> tuple[bool, Any]:
     if isinstance(value, bool) or not math.isfinite(number) or number < 0.0 or number > 1.0:
         return False, f"{field_name} must be between 0.0 and 1.0."
     return True, number
+
+
+def _as_stress_score(value: Any) -> tuple[bool, Any]:
+    """Finite float on the 1.0–5.0 stress scale. Booleans are rejected."""
+    if isinstance(value, bool):
+        return False, "stress_score must be a float between 1.0 and 5.0."
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return False, "stress_score must be a float between 1.0 and 5.0."
+    if (
+        not math.isfinite(number)
+        or number < STRESS_SCORE_MIN
+        or number > STRESS_SCORE_MAX
+    ):
+        return False, "stress_score must be a float between 1.0 and 5.0."
+    return True, number
+
+
+def _category_for_stress_score(stress_score: float) -> str:
+    """Low below 2.5, Moderate from 2.5 to 3.5 inclusive, High above 3.5."""
+    if stress_score < LOW_BELOW:
+        return "Low"
+    if stress_score <= HIGH_ABOVE:
+        return "Moderate"
+    return "High"
+
+
+def _risk_score_from_stress(stress_score: float) -> float:
+    """Map 1–5 stress onto 0–1. Not a probability, and not asked of Gemini."""
+    return (stress_score - STRESS_SCORE_MIN) / (STRESS_SCORE_MAX - STRESS_SCORE_MIN)
+
+
+def _convert_answer(key: str, raw: Any) -> int | None:
+    """Map one raw answer onto the 1–5 stress scale, or None when it cannot."""
+    if isinstance(raw, bool) or raw is None:
+        return None
+    try:
+        number = float(raw)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(number):
+        return None
+    if key == "sleep_hours_avg":
+        if number >= 8:
+            return 1
+        if number >= 7:
+            return 2
+        if number >= 6:
+            return 3
+        if number >= 5:
+            return 4
+        return 5
+    if key in POSITIVE_ITEM_KEYS:
+        number = 6 - number
+    if number != int(number):
+        return None
+    converted = int(number)
+    if converted < 1 or converted > 5:
+        return None
+    return converted
+
+
+def expected_stress_score(answers: Mapping[str, Any]) -> tuple[dict[str, int], float]:
+    """Convert the 11 answers and return (scored_items, mean rounded to 2 decimals)."""
+    if not isinstance(answers, Mapping):
+        raise ValueError("answers must include the 11 raw check-in values.")
+    scored: dict[str, int] = {}
+    for key in RAW_ANSWER_KEYS:
+        converted = _convert_answer(key, answers.get(key))
+        if converted is None:
+            raise ValueError(f"Cannot convert {key} onto the 1-5 stress scale.")
+        scored[key] = converted
+    average = round(sum(scored.values()) / len(RAW_ANSWER_KEYS), 2)
+    return scored, average
 
 
 def _normalise_soft_label(value: Any) -> tuple[bool, Any]:
@@ -466,9 +713,76 @@ def _normalise_tips(value: Any) -> tuple[bool, Any]:
     return True, cleaned
 
 
-def validate_ai_response(payload: Any) -> tuple[bool, Any]:
+def _tier_consistency_error(
+    stress_score: float,
+    risk_category: str,
+    soft_label: str,
+    speak_prominence: str,
+) -> str | None:
+    """Reject a tier that does not match stress_score. None means consistent."""
+    expected_category = _category_for_stress_score(stress_score)
+    if risk_category != expected_category:
+        return (
+            f"risk_category must be {expected_category} for "
+            f"stress_score {stress_score}."
+        )
+    if soft_label != _LABEL_FOR_CATEGORY[risk_category]:
+        return "soft_label must match risk_category."
+    if speak_prominence != _PROMINENCE_FOR_CATEGORY[risk_category]:
+        return "speak_prominence must match risk_category."
+    return None
+
+
+def _normalise_scored_items(value: Any) -> tuple[bool, Any]:
+    """Require an object of the 11 converted integers, each from 1 to 5."""
+    if not isinstance(value, dict):
+        return False, "scored_items must be an object of the 11 converted answers."
+    if set(value) != set(RAW_ANSWER_KEYS):
+        return False, "scored_items must contain exactly the 11 answer keys."
+    cleaned: dict[str, int] = {}
+    for key in RAW_ANSWER_KEYS:
+        item = value[key]
+        if isinstance(item, bool) or not isinstance(item, int) or item < 1 or item > 5:
+            return False, f"scored_items.{key} must be an integer from 1 to 5."
+        cleaned[key] = item
+    return True, cleaned
+
+
+def _formula_mismatch(
+    stress_score: float,
+    scored_items: dict[str, int],
+    answers: Mapping[str, Any],
+) -> str | None:
+    """None when Gemini's items and average match the raw answers."""
+    try:
+        expected_items, expected_score = expected_stress_score(answers)
+    except ValueError as exc:
+        return str(exc)
+    if scored_items != expected_items:
+        return "scored_items does not match the converted answers."
+    if abs(stress_score - expected_score) > _STRESS_SCORE_TOLERANCE:
+        return (
+            "stress_score must match the mean of the 11 converted answers "
+            f"(expected {expected_score})."
+        )
+    return None
+
+
+def validate_ai_response(
+    payload: Any,
+    answers: Mapping[str, Any] | None = None,
+) -> tuple[bool, Any]:
     """
     Validate Gemini JSON against the student schema and allow-lists.
+
+    stress_score is the mean Gemini calculated. risk_score is
+    (stress_score - 1) / 4, computed here. recommended_support is a short
+    internal string, also computed here. A tier that disagrees with
+    stress_score is invalid.
+
+    When `answers` is given, scored_items must match the formula exactly and
+    stress_score must be within 0.01 of that mean. Omit `answers` to skip
+    that check. analyse_student always passes the raw answers.
 
     Returns (True, normalised_dict) or (False, error_message).
     Never raises for malformed payloads.
@@ -489,24 +803,24 @@ def validate_ai_response(payload: Any) -> tuple[bool, Any]:
     if missing:
         return False, f"AI response missing required fields: {', '.join(missing)}."
 
-    score_ok, risk_score = _as_unit_interval(payload["risk_score"], "risk_score")
+    score_ok, stress_score = _as_stress_score(payload["stress_score"])
     if not score_ok:
-        return False, risk_score
+        return False, stress_score
+
+    items_ok, scored_items = _normalise_scored_items(payload["scored_items"])
+    if not items_ok:
+        return False, scored_items
 
     risk_category = payload["risk_category"]
-    if (
-        not isinstance(risk_category, str)
-        or risk_category not in ALLOWED_RISK_CATEGORIES
-    ):
+    if not isinstance(risk_category, str):
+        return False, 'risk_category must be "Low", "Moderate", or "High".'
+    risk_category = risk_category.strip()
+    if risk_category not in ALLOWED_RISK_CATEGORIES:
         return False, 'risk_category must be "Low", "Moderate", or "High".'
 
     stressors_ok, stressors = _normalise_stressors(payload["primary_stressors"])
     if not stressors_ok:
         return False, stressors
-
-    recommended = payload["recommended_support"]
-    if not isinstance(recommended, str) or not recommended.strip():
-        return False, "recommended_support must be a non-empty string."
 
     conf_ok, confidence = _as_unit_interval(payload["confidence"], "confidence")
     if not conf_ok:
@@ -530,19 +844,117 @@ def validate_ai_response(payload: Any) -> tuple[bool, Any]:
         or speak_prominence.strip() not in ALLOWED_SPEAK_PROMINENCE
     ):
         return False, 'speak_prominence must be "low", "medium", or "high".'
+    speak_prominence = speak_prominence.strip()
+
+    mismatch = _tier_consistency_error(
+        stress_score, risk_category, soft_label, speak_prominence
+    )
+    if mismatch:
+        return False, mismatch
+
+    if answers is not None:
+        formula_error = _formula_mismatch(stress_score, scored_items, answers)
+        if formula_error:
+            return False, formula_error
 
     normalised = {
-        "risk_score": risk_score,
+        "scored_items": scored_items,
+        "stress_score": stress_score,
+        "risk_score": _risk_score_from_stress(stress_score),
         "risk_category": risk_category,
         "primary_stressors": stressors,
-        "recommended_support": recommended.strip(),
+        "recommended_support": _RECOMMENDED_SUPPORT[risk_category],
         "confidence": confidence,
         "reasoning": reasoning.strip(),
         "soft_label": soft_label,
         "tips": tips,
-        "speak_prominence": speak_prominence.strip(),
+        "speak_prominence": speak_prominence,
     }
     return True, normalised
+
+
+_RESPONSE_FIELDS = (
+    "scored_items",
+    "stress_score",
+    "risk_category",
+    "soft_label",
+    "speak_prominence",
+    "primary_stressors",
+    "tips",
+    "reasoning",
+    "confidence",
+)
+
+# Gemini structured-output schema (SDK Schema dict: uppercase types, enums).
+# risk_score is not included; this module computes it after validation.
+RESPONSE_SCHEMA: dict[str, Any] = {
+    "type": "OBJECT",
+    "propertyOrdering": list(_RESPONSE_FIELDS),
+    "required": list(_RESPONSE_FIELDS),
+        "properties": {
+        "scored_items": {
+            "type": "OBJECT",
+            "description": "The 11 answers converted onto the 1-5 stress scale.",
+            "propertyOrdering": list(RAW_ANSWER_KEYS),
+            "required": list(RAW_ANSWER_KEYS),
+            "properties": {
+                key: {"type": "INTEGER", "minimum": 1, "maximum": 5}
+                for key in RAW_ANSWER_KEYS
+            },
+        },
+        "stress_score": {
+            "type": "NUMBER",
+            "minimum": STRESS_SCORE_MIN,
+            "maximum": STRESS_SCORE_MAX,
+            "description": (
+                "Mean of the 11 converted values, rounded to 2 decimal places."
+            ),
+        },
+        "risk_category": {
+            "type": "STRING",
+            "enum": ["Low", "Moderate", "High"],
+            "description": "Low below 2.5, Moderate from 2.5 to 3.5 inclusive, High above 3.5.",
+        },
+        "soft_label": {
+            "type": "STRING",
+            "enum": list(SOFT_LABELS),
+            "description": "Must match risk_category.",
+        },
+        "speak_prominence": {
+            "type": "STRING",
+            "enum": list(SPEAK_PROMINENCE),
+            "description": "Must match risk_category: low, medium, or high.",
+        },
+        "primary_stressors": {
+            "type": "ARRAY",
+            "items": {
+                "type": "STRING",
+                "enum": sorted(ALLOWED_PRIMARY_STRESSORS),
+            },
+        },
+        "tips": {
+            "type": "ARRAY",
+            "minItems": _TIPS_MIN,
+            "maxItems": _TIPS_MAX,
+            "items": {
+                "type": "STRING",
+                "enum": sorted(ALLOWED_TIP_IDS),
+            },
+        },
+        "reasoning": {
+            "type": "STRING",
+            "description": (
+                "Two or three warm, plain sentences to the student. "
+                "No numbers, jargon, diagnosis, or contacts."
+            ),
+        },
+        "confidence": {
+            "type": "NUMBER",
+            "minimum": 0.0,
+            "maximum": 1.0,
+        },
+    },
+}
 
 
 def _default_generate(prompt: str, api_key: str, model_name: str) -> str:
@@ -569,6 +981,7 @@ def _default_generate(prompt: str, api_key: str, model_name: str) -> str:
         config={
             "temperature": _DEFAULT_TEMPERATURE,
             "response_mime_type": "application/json",
+            "response_schema": RESPONSE_SCHEMA,
             "automatic_function_calling": {"disable": True},
         },
     )
@@ -589,15 +1002,17 @@ def call_gemini(
     max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     retry_delay_sec: float = _DEFAULT_RETRY_DELAY_SEC,
     generate_fn: Callable[[str, str, str], str] | None = None,
+    answers: Mapping[str, Any] | None = None,
 ) -> tuple[bool, dict[str, Any] | None, dict[str, str] | None]:
     """
-    Call Gemini with structured JSON output, validate schema, retry on failure.
+    Call Gemini with structured JSON output, validate schema, then fall back.
 
-    Timeouts and HTTP 429 are retried up to max_attempts with exponential
-    backoff (base retry_delay_sec, then double). HTTP 503 (model overloaded)
-    switches to the next fallback model instead of retrying the same one.
-    Other API errors are not retried. A schema miss is retried so one bad
-    JSON payload can recover.
+    The call order is gemini-3.6-flash, then gemini-3.5-flash, then
+    gemini-3.5-flash-lite. Any API failure moves to the next model.
+    A missing API key stops immediately. HTTP 429 does not retry the same
+    model. A timeout or bad JSON may be tried once more on that same model.
+    The generator is called at most MAX_TOTAL_CALLS times. When `answers`
+    is given, a scored_items or stress_score mismatch is bad JSON.
 
     Returns (ok, validated_ai_dict_or_None, error_or_None).
     On failure, error is {"error_code", "detail", "source": "gemini"}.
@@ -618,63 +1033,77 @@ def call_gemini(
     last_detail = "Unknown AI failure."
     last_kind = ERROR_CODE_UNAVAILABLE
     last_was_api_exception = False
-    attempts = max(1, int(max_attempts))
+    tries_allowed = _tries_on_one_model(max_attempts)
     models = _models_for_call(model_name)
+    calls_made = 0
     finished_attempt = 1
+    failure_kinds: list[str] = []
 
     for model_index, active_model in enumerate(models):
-        switch_model = False
-        for attempt in range(1, attempts + 1):
-            finished_attempt = attempt
+        tries_here = 0
+        move_on = False
+        while tries_here < tries_allowed and calls_made < MAX_TOTAL_CALLS:
+            calls_made += 1
+            tries_here += 1
+            finished_attempt = tries_here
             try:
                 raw_text = generator(prompt, key, active_model)
             except Exception as exc:  # noqa: BLE001 — must not crash pipeline
                 last_was_api_exception = True
                 last_kind = classify_ai_error(exc)
+                failure_kinds.append(last_kind)
                 safe_exc = _redact_secret(str(exc), key)
                 last_detail = (
-                    f"Gemini API failure (attempt {attempt}/{attempts}) "
+                    f"Gemini API failure (attempt {tries_here}/{tries_allowed}) "
                     f"model={active_model}: {safe_exc}"
                 )
                 logger.warning(last_detail)
-                if _is_model_overloaded(exc) and model_index < len(models) - 1:
-                    logger.warning(
-                        "Model %s is overloaded; trying %s",
-                        active_model,
-                        models[model_index + 1],
+                if last_kind == ERROR_CODE_MISSING_API_KEY:
+                    return False, None, _structured_ai_error(
+                        ERROR_CODE_MISSING_API_KEY, last_detail
                     )
-                    switch_model = True
-                    break
-                if attempt < attempts and _is_retryable_api_error(exc):
-                    time.sleep(_backoff_seconds(attempt, retry_delay_sec))
+                # 429 and every other API error leave this model. A timeout
+                # may use the one same-model retry.
+                repeat = (
+                    last_kind == ERROR_CODE_TIMEOUT
+                    and not _is_rate_limited(exc)
+                    and tries_here < tries_allowed
+                    and calls_made < MAX_TOTAL_CALLS
+                )
+                if repeat:
+                    time.sleep(_backoff_seconds(tries_here, retry_delay_sec))
                     continue
+                move_on = True
                 break
 
-            ok, result = validate_ai_response(raw_text)
+            ok, result = validate_ai_response(raw_text, answers)
             if ok:
                 return True, _mark_gemini_success(result), None
 
             last_was_api_exception = False
             last_kind = ERROR_CODE_INVALID_RESPONSE
+            failure_kinds.append(last_kind)
             last_detail = (
-                f"Schema validation failed (attempt {attempt}/{attempts}) "
+                f"Schema validation failed (attempt {tries_here}/{tries_allowed}) "
                 f"model={active_model}: {result}"
             )
             logger.warning(last_detail)
-            if attempt < attempts:
-                time.sleep(_backoff_seconds(attempt, retry_delay_sec))
+            if tries_here < tries_allowed and calls_made < MAX_TOTAL_CALLS:
+                time.sleep(_backoff_seconds(tries_here, retry_delay_sec))
                 continue
+            move_on = True
             break
 
-        if switch_model:
-            continue
-        break
+        if not move_on or calls_made >= MAX_TOTAL_CALLS or model_index >= len(models) - 1:
+            break
+        _log_model_fallback(active_model, models[model_index + 1], last_kind)
 
     return False, None, _final_ai_error(
         last_kind,
         last_detail,
         attempts=finished_attempt,
         last_was_api_exception=last_was_api_exception,
+        failure_kinds=failure_kinds,
     )
 
 
@@ -686,6 +1115,7 @@ def analyse_student(
     max_attempts: int = _DEFAULT_MAX_ATTEMPTS,
     retry_delay_sec: float = _DEFAULT_RETRY_DELAY_SEC,
     generate_fn: Callable[[str, str, str], str] | None = None,
+    questions: Sequence[Mapping[str, Any]] | None = None,
 ) -> tuple[bool, dict[str, Any] | None, dict[str, str] | None]:
     """
     Entry point for the AI Processing Layer.
@@ -693,6 +1123,10 @@ def analyse_student(
     Builds prompt → calls Gemini → validates schema → merges AI fields into
     a shallow copy of the student record. Every successful record is marked
     source="gemini" so Data/Flask can trust Gemini processing.
+
+    `questions` is forwarded to build_prompt. Leave it unset to use the
+    built-in wording catalog. The raw answers are always passed into
+    validation so scored_items and stress_score are checked against the formula.
 
     Returns (ok, enriched_record_or_None, error_or_None). Never raises for
     API / schema failures. On failure the record is None (no invented
@@ -704,7 +1138,7 @@ def analyse_student(
             "student_dict must be a dict from io_manager.",
         )
 
-    prompt = build_prompt(student_dict)
+    prompt = build_prompt(student_dict, questions)
     ok, ai_fields, err = call_gemini(
         prompt,
         api_key=api_key,
@@ -712,6 +1146,7 @@ def analyse_student(
         max_attempts=max_attempts,
         retry_delay_sec=retry_delay_sec,
         generate_fn=generate_fn,
+        answers=student_dict,
     )
     if not ok or ai_fields is None:
         return False, None, err

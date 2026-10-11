@@ -143,11 +143,17 @@ AI_REQUIRED_HINT = (
     "GEMINI_API_KEY is set in the environment. Do not share or display the key."
 )
 
+AI_RATE_LIMITED_BODY = (
+    "Our check-in assistant is busy right now. "
+    "Your answers have been saved and will be reviewed soon."
+)
+
 AI_ERROR_CODES = (
     "missing_api_key",
     "timeout",
     "invalid_response",
     "retries_exhausted",
+    "rate_limited",
     "unavailable",
 )
 
@@ -170,6 +176,10 @@ AI_ERROR_HINTS = {
     "retries_exhausted": (
         "Operators/dev: Gemini failed after retries. Confirm GEMINI_API_KEY "
         "is set and the service is reachable. Do not expose the key."
+    ),
+    "rate_limited": (
+        "Operators/dev: every Gemini model was rate-limited. "
+        "The check-in is saved as pending. Do not share the API key."
     ),
     "unavailable": AI_REQUIRED_HINT,
 }
@@ -434,7 +444,7 @@ def _ai_failure_copy(error_code, detail=None) -> dict:
     if not code:
         code = "unavailable"
 
-    body = AI_UNAVAILABLE_BODY
+    body = AI_RATE_LIMITED_BODY if code == "rate_limited" else AI_UNAVAILABLE_BODY
     hint = AI_ERROR_HINTS[code]
     reason = _sanitize_operator_detail(detail)
     if reason:
@@ -484,8 +494,9 @@ def format_ai_error(error_code, detail=None) -> dict:
     """Map an AI failure code to the same student-facing error dict.
 
     Known codes: missing_api_key, timeout, invalid_response,
-    retries_exhausted, unavailable. Unknown codes still return a valid
-    error page (unavailable copy + contacts) and set `error`.
+    retries_exhausted, rate_limited, unavailable. rate_limited uses calm
+    student copy. Unknown codes still return a valid error page
+    (unavailable copy + contacts) and set `error`.
     """
     return _ai_failure_copy(error_code, detail=detail)
 
