@@ -234,18 +234,23 @@ _REQUIRED_FIELDS = (
 # stress_score must sit this close to the recomputed mean (2 decimal places).
 _STRESS_SCORE_TOLERANCE = 0.01
 
-_DEFAULT_MODEL = "gemini-3.6-flash"
-# Tried in order when the preferred model returns HTTP 503 (high demand).
-# These answered successfully with the same API key while 3.6-flash was busy.
-_FALLBACK_MODELS = (
-    "gemini-flash-latest",
+# Named models only. gemini-3.6-flash first, then older fixed names.
+# No moving alias such as gemini-flash-latest.
+MODEL_CHAIN = (
+    "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
 )
+_DEFAULT_MODEL = MODEL_CHAIN[0]
+_FALLBACK_MODELS = MODEL_CHAIN[1:]
 _DEFAULT_TEMPERATURE = 0.2
 _DEFAULT_MAX_ATTEMPTS = 3
 _DEFAULT_RETRY_DELAY_SEC = 0.5
 _DEFAULT_TIMEOUT_SEC = 30.0
+# One check-in must not spend more than this many Gemini calls (daily quota).
+MAX_TOTAL_CALLS = 4
+# Extra try on the same model, and only for a timeout or bad JSON.
+_SAME_MODEL_RETRIES = 1
 _TIPS_MIN = 1
 _TIPS_MAX = 3
 
@@ -420,29 +425,30 @@ def _is_rate_limited(exc: BaseException) -> bool:
     )
 
 
-def _is_retryable_api_error(exc: BaseException) -> bool:
-    """Retry timeouts and 429s only. Other API errors fail on the first try."""
-    if classify_ai_error(exc) == ERROR_CODE_TIMEOUT:
-        return True
-    return _is_rate_limited(exc)
-
-
-def _is_model_overloaded(exc: BaseException) -> bool:
-    """True when Gemini accepted the key but the model returned HTTP 503."""
-    if _exception_status_code(exc) == 503:
-        return True
-    text = str(exc).lower()
-    return "503" in text and ("unavailable" in text or "high demand" in text)
-
-
 def _models_for_call(model_name: str) -> tuple[str, ...]:
-    """Preferred model first, then overload fallbacks, with duplicates removed."""
+    """Preferred model first, then the fixed older models, with duplicates removed."""
     primary = (model_name or _DEFAULT_MODEL).strip() or _DEFAULT_MODEL
     ordered = [primary]
     for name in _FALLBACK_MODELS:
         if name not in ordered:
             ordered.append(name)
     return tuple(ordered)
+
+
+def _tries_on_one_model(max_attempts: int) -> int:
+    """First call, plus at most one repeat. Never more than max_attempts."""
+    requested = max(1, int(max_attempts))
+    return min(requested, 1 + _SAME_MODEL_RETRIES)
+
+
+def _log_model_fallback(failed_model: str, next_model: str, reason: str) -> None:
+    """Record a model switch. The reason is an error code, never an API key."""
+    logger.warning(
+        "Gemini model %s failed (%s); trying %s",
+        failed_model,
+        reason,
+        next_model,
+    )
 
 
 def _mark_gemini_success(ai_fields: dict[str, Any]) -> dict[str, Any]:
@@ -983,14 +989,14 @@ def call_gemini(
     answers: Mapping[str, Any] | None = None,
 ) -> tuple[bool, dict[str, Any] | None, dict[str, str] | None]:
     """
-    Call Gemini with structured JSON output, validate schema, retry on failure.
+    Call Gemini with structured JSON output, validate schema, then fall back.
 
-    Timeouts and HTTP 429 are retried up to max_attempts with exponential
-    backoff (base retry_delay_sec, then double). HTTP 503 (model overloaded)
-    switches to the next fallback model instead of retrying the same one.
-    Other API errors are not retried. A schema miss is retried so one bad
-    JSON payload can recover. When `answers` is given, a scored_items or
-    stress_score mismatch is the same kind of schema miss.
+    The call order is gemini-3.6-flash, then gemini-3.5-flash, then
+    gemini-3.5-flash-lite. Any API failure moves to the next model.
+    A missing API key stops immediately. HTTP 429 does not retry the same
+    model. A timeout or bad JSON may be tried once more on that same model.
+    The generator is called at most MAX_TOTAL_CALLS times. When `answers`
+    is given, a scored_items or stress_score mismatch is bad JSON.
 
     Returns (ok, validated_ai_dict_or_None, error_or_None).
     On failure, error is {"error_code", "detail", "source": "gemini"}.
@@ -1011,14 +1017,18 @@ def call_gemini(
     last_detail = "Unknown AI failure."
     last_kind = ERROR_CODE_UNAVAILABLE
     last_was_api_exception = False
-    attempts = max(1, int(max_attempts))
+    tries_allowed = _tries_on_one_model(max_attempts)
     models = _models_for_call(model_name)
+    calls_made = 0
     finished_attempt = 1
 
     for model_index, active_model in enumerate(models):
-        switch_model = False
-        for attempt in range(1, attempts + 1):
-            finished_attempt = attempt
+        tries_here = 0
+        move_on = False
+        while tries_here < tries_allowed and calls_made < MAX_TOTAL_CALLS:
+            calls_made += 1
+            tries_here += 1
+            finished_attempt = tries_here
             try:
                 raw_text = generator(prompt, key, active_model)
             except Exception as exc:  # noqa: BLE001 — must not crash pipeline
@@ -1026,21 +1036,26 @@ def call_gemini(
                 last_kind = classify_ai_error(exc)
                 safe_exc = _redact_secret(str(exc), key)
                 last_detail = (
-                    f"Gemini API failure (attempt {attempt}/{attempts}) "
+                    f"Gemini API failure (attempt {tries_here}/{tries_allowed}) "
                     f"model={active_model}: {safe_exc}"
                 )
                 logger.warning(last_detail)
-                if _is_model_overloaded(exc) and model_index < len(models) - 1:
-                    logger.warning(
-                        "Model %s is overloaded; trying %s",
-                        active_model,
-                        models[model_index + 1],
+                if last_kind == ERROR_CODE_MISSING_API_KEY:
+                    return False, None, _structured_ai_error(
+                        ERROR_CODE_MISSING_API_KEY, last_detail
                     )
-                    switch_model = True
-                    break
-                if attempt < attempts and _is_retryable_api_error(exc):
-                    time.sleep(_backoff_seconds(attempt, retry_delay_sec))
+                # 429 and every other API error leave this model. A timeout
+                # may use the one same-model retry.
+                repeat = (
+                    last_kind == ERROR_CODE_TIMEOUT
+                    and not _is_rate_limited(exc)
+                    and tries_here < tries_allowed
+                    and calls_made < MAX_TOTAL_CALLS
+                )
+                if repeat:
+                    time.sleep(_backoff_seconds(tries_here, retry_delay_sec))
                     continue
+                move_on = True
                 break
 
             ok, result = validate_ai_response(raw_text, answers)
@@ -1050,18 +1065,19 @@ def call_gemini(
             last_was_api_exception = False
             last_kind = ERROR_CODE_INVALID_RESPONSE
             last_detail = (
-                f"Schema validation failed (attempt {attempt}/{attempts}) "
+                f"Schema validation failed (attempt {tries_here}/{tries_allowed}) "
                 f"model={active_model}: {result}"
             )
             logger.warning(last_detail)
-            if attempt < attempts:
-                time.sleep(_backoff_seconds(attempt, retry_delay_sec))
+            if tries_here < tries_allowed and calls_made < MAX_TOTAL_CALLS:
+                time.sleep(_backoff_seconds(tries_here, retry_delay_sec))
                 continue
+            move_on = True
             break
 
-        if switch_model:
-            continue
-        break
+        if not move_on or calls_made >= MAX_TOTAL_CALLS or model_index >= len(models) - 1:
+            break
+        _log_model_fallback(active_model, models[model_index + 1], last_kind)
 
     return False, None, _final_ai_error(
         last_kind,
