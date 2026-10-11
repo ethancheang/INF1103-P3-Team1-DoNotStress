@@ -12,17 +12,17 @@
             <button data-nav="checkin">Check-in</button>
           </nav>
         </details>
-        <a class="ds-talk" href="mailto:SITCounselling@SingaporeTech.edu.sg">Talk to someone</a>
+        <a class="ds-talk" href="mailto:SITCounselling@SingaporeTech.edu.sg"><svg class="ds-talk-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2a1 1 0 0 1 1-.25 11.4 11.4 0 0 0 3.6.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .57 3.6 1 1 0 0 1-.25 1L6.6 10.8z"/></svg>Talk to someone</a>
         <div class="ds-account">
           {% if boot.isAdmin %}
-          <button type="button" data-nav="records">Admin view</button>
+          <button class="ds-mode" type="button" data-nav="records"{% if boot.page == 'records' %} aria-current="page"{% endif %}>Admin view</button>
           <form action="{{ url_for('admin_logout') }}" method="post">
             <input type="hidden" name="csrf_token" value="{{ boot.csrfToken }}">
-            <button class="ds-link" type="submit">Log out</button>
+            <button class="ds-mode" type="submit">Sign out</button>
           </form>
           {% else %}
-          <span class="ds-pill">Student view</span>
-          <a class="ds-link" href="{{ url_for('admin_login') }}">Admin sign in</a>
+          <span class="ds-mode" aria-current="page">Student view</span>
+          <a class="ds-mode" href="{{ url_for('admin_login') }}">Admin sign in</a>
           {% endif %}
         </div>
       </div>

@@ -143,14 +143,12 @@ body{margin:0;padding:24px;background:light-dark(#edf0e8,#131b17)}
 
 /* Saved history and risk presentation: labels always accompany colour. */
 #dns-campus .ds-nav{flex-wrap:wrap}
-#dns-campus .ds-account{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-#dns-campus .ds-account button[data-nav=records]{border:0;background:var(--ds-soft);border-radius:1.25rem;padding:.55rem .85rem;font-size:.85rem;font-weight:650}
-#dns-campus .ds-account form{margin:0}
-#dns-campus .ds-account .ds-link{font-size:12px;white-space:nowrap}
+#dns-campus .ds-account{display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
+#dns-campus .ds-account form{margin:0;display:flex;align-items:center}
 #dns-campus .ds-admin-login{max-width:480px;margin:35px auto 70px;padding:26px;background:var(--ds-panel);border:1px solid var(--ds-line);border-radius:22px}
 #dns-campus .ds-admin-login h1{font-size:36px;letter-spacing:-1.4px}
 #dns-campus .ds-admin-login .ds-help{margin-top:24px}
-@media(max-width:550px){#dns-campus .ds-admin-login{padding:20px;margin:10px auto 30px}#dns-campus .ds-account{width:100%;justify-content:space-between}}
+@media(max-width:550px){#dns-campus .ds-admin-login{padding:20px;margin:10px auto 30px}}
 #dns-campus .ds-top{flex-wrap:wrap}
 #dns-campus .ds-risk{display:inline-block;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:650;white-space:nowrap}
 #dns-campus .ds-risk-low{background:light-dark(#dff0e3,#284b37);color:light-dark(#225335,#caefd5)}
@@ -223,14 +221,17 @@ html{background:light-dark(#f7f8f2,#19221e)}
 body{margin:0;padding:0;min-height:100vh;background:light-dark(#f7f8f2,#19221e);overflow-x:clip}
 #dns-campus{width:100%;max-width:none;margin:0;border-radius:0;min-height:100vh;display:flex;flex-direction:column;overflow-x:clip}
 #dns-campus .ds-top{display:block;width:100%;padding:0;flex:0 0 auto}
-#dns-campus .ds-bar{width:min(100% - 2rem,80rem);margin-inline:auto;display:flex;align-items:center;gap:clamp(.5rem,2vw,1.25rem);padding-block:clamp(.75rem,2vw,1.15rem);flex-wrap:wrap}
-#dns-campus .ds-bar-end{margin-left:auto;display:flex;align-items:center;gap:clamp(.5rem,2vw,1rem);flex-wrap:wrap}
+#dns-campus .ds-bar{width:min(100% - 2rem,80rem);margin-inline:auto;display:flex;align-items:center;gap:.75rem;padding-block:clamp(.75rem,2vw,1.15rem);flex-wrap:wrap}
+#dns-campus .ds-bar-end{margin-left:auto;display:flex;align-items:center;gap:.75rem;flex-wrap:wrap}
 #dns-campus .ds-nav-wrap{margin:0}
-#dns-campus .ds-nav{margin:0;align-items:center}
+#dns-campus .ds-nav{margin:0;align-items:center;gap:.75rem}
 #dns-campus .ds-nav a{border:0;background:transparent;padding:.55rem .8rem;border-radius:1.25rem;font-size:.85rem;color:inherit;text-decoration:none}
 #dns-campus button.ds-brand,#dns-campus a.ds-brand{border:0;background:transparent;padding:0;color:inherit;text-decoration:none}
-#dns-campus .ds-talk{font-size:clamp(.8rem,2vw,.9rem);font-weight:650;white-space:nowrap;text-underline-offset:.2em}
-#dns-campus .ds-demo{width:100%;box-sizing:border-box;padding-block:.55rem;padding-inline:max(1rem,calc((100% - 80rem) / 2))}
+#dns-campus .ds-talk{display:inline-flex;align-items:center;gap:.4rem;font-size:clamp(.75rem,2vw,.9rem);font-weight:650;line-height:1;white-space:nowrap;color:var(--ds-accent);text-decoration:none}
+#dns-campus .ds-talk-icon{width:1em;height:1em;flex:0 0 auto;display:block}
+#dns-campus .ds-mode{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;height:2.25rem;margin:0;padding:0 .9rem;border:1px solid var(--ds-line);border-radius:999px;background:transparent;color:inherit;font-size:.85rem;font-weight:600;line-height:1;text-decoration:none;white-space:nowrap;flex:0 1 auto}
+#dns-campus .ds-mode[aria-current=page]{background:var(--ds-soft);border-color:transparent;font-weight:650}
+#dns-campus .ds-demo{display:block;width:100%;box-sizing:border-box;text-align:center;padding-block:.55rem;padding-inline:max(1rem,calc((100% - 80rem) / 2))}
 #dns-campus main{flex:1 0 auto;width:min(100% - 2rem,80rem);max-width:80rem;min-width:0;margin-inline:auto;padding:clamp(1.25rem,3vw,2.25rem) 0 clamp(1.5rem,4vw,2.5rem);box-sizing:border-box}
 #dns-campus .ds-footer{display:block;width:100%;margin-top:0;flex:0 0 auto;box-sizing:border-box;padding-block:clamp(.85rem,2vw,1.15rem);padding-inline:max(1rem,calc((100% - 80rem) / 2));background:var(--ds-panel)}
 #dns-campus .ds-foot-line{margin:0;max-width:80rem;font-size:clamp(.75rem,2vw,.85rem);line-height:1.6;color:var(--ds-sub)}
@@ -252,14 +253,17 @@ body{margin:0;padding:0;min-height:100vh;background:light-dark(#f7f8f2,#19221e);
 }
 
 @media(max-width:40rem){
-#dns-campus .ds-bar-end{margin-left:0;width:100%;flex-direction:column;align-items:stretch}
+#dns-campus .ds-bar{gap:.5rem}
+#dns-campus .ds-bar-end{margin-left:0;width:100%;flex-direction:row;flex-wrap:wrap;align-items:center;align-content:center;justify-content:flex-start;gap:.5rem}
 #dns-campus .ds-menu{display:flex;align-items:center;justify-content:space-between;list-style:none;cursor:pointer;border:1px solid var(--ds-line);border-radius:.75rem;padding:.6rem .9rem;background:var(--ds-bg);font-size:.9rem}
 #dns-campus .ds-menu::-webkit-details-marker{display:none}
+#dns-campus .ds-nav-wrap{flex:1 0 100%}
 #dns-campus .ds-nav-wrap:not([open])>.ds-nav{display:none}
-#dns-campus .ds-nav{flex-direction:column;align-items:stretch;width:100%;margin-top:.5rem}
+#dns-campus .ds-nav{flex-direction:column;align-items:stretch;width:100%;margin-top:.5rem;gap:.35rem}
 #dns-campus .ds-nav button,#dns-campus .ds-nav a{text-align:left;padding:.7rem .85rem}
-#dns-campus .ds-talk{padding:.35rem 0}
-#dns-campus .ds-account{width:100%;justify-content:space-between}
+#dns-campus .ds-talk{padding:.2rem 0}
+#dns-campus .ds-account{width:auto;max-width:100%;justify-content:flex-start;gap:.5rem}
+#dns-campus .ds-mode{height:2rem;padding-inline:.6rem;font-size:.75rem}
 #dns-campus h1{font-size:clamp(2rem,8vw,2.6rem);letter-spacing:-.04em}
 #dns-campus h2{font-size:clamp(1.35rem,5vw,1.7rem)}
 #dns-campus .ds-question{padding:clamp(.85rem,3vw,1.15rem)}
