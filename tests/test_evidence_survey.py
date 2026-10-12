@@ -31,35 +31,48 @@ def record(**changes):
     return result
 
 
+def with_score(**changes):
+    """io record plus logic_manager's deterministic score of its answers."""
+    r=record(**changes)
+    return {**r, **logic_manager.score_answers(r)}
+
+
+def finalised(**changes):
+    """io record run through a matching fake Gemini reply, then Logic."""
+    r=record(**changes)
+    fields=ai_manager.validate_ai_response(fake_generate(json.dumps(r),None,None))[1]
+    return logic_manager.apply_logic({**r,**fields})
+
+
 class ScoringTests(unittest.TestCase):
     def test_reverse_coding_extremes(self):
-        self.assertEqual(record()['stress_score'],1.0)
-        self.assertEqual(record(**MAX_STRESS)['stress_score'],5.0)
-        self.assertEqual(record(pss_2=1)['stress_score'],round(15/11,2))  # reversed: 6-1 = 5
-        self.assertEqual(record(pss_1=5)['stress_score'],round(15/11,2))  # not reversed
+        self.assertEqual(with_score()['stress_score'],1.0)
+        self.assertEqual(with_score(**MAX_STRESS)['stress_score'],5.0)
+        self.assertEqual(with_score(pss_2=1)['stress_score'],round(15/11,2))  # reversed: 6-1 = 5
+        self.assertEqual(with_score(pss_1=5)['stress_score'],round(15/11,2))  # not reversed
         self.assertEqual(survey.REVERSED_KEYS,('pss_2','pss_3','mspss_friends','mspss_family'))
 
     def test_average_and_band_boundaries(self):
         # 11 integer scores cannot land on 2.5 or 3.5 exactly. 27/11 is just below 2.5; 28/11 just above.
         low=dict(pss_1=5,pss_4=5,sleep_hours_avg=4.5,sleep_quality=5)  # sum 27
         moderate=dict(low,pas_workload=2)  # sum 28
-        self.assertEqual((record(**low)['stress_score'],record(**low)['risk_category']),(round(27/11,2),'Low'))
-        crossed=record(**moderate)
+        self.assertEqual((with_score(**low)['stress_score'],with_score(**low)['risk_category']),(round(27/11,2),'Low'))
+        crossed=with_score(**moderate)
         self.assertEqual((crossed['stress_score'],crossed['risk_category']),(round(28/11,2),'Moderate'))
         self.assertEqual(crossed['soft_label'],'Worth a check-in')
         high=dict(pss_1=5,pss_4=5,sleep_hours_avg=4.5,sleep_quality=5,pas_workload=5,pas_catchup=5)
         for fin, total, band in [(4,38,'Moderate'),(5,39,'High')]:
-            r=record(**high,fin_stress=fin)
+            r=with_score(**high,fin_stress=fin)
             self.assertEqual((r['stress_score'],r['risk_category']),(round(total/11,2),band))
             self.assertEqual(r['soft_label'],{'Moderate':'Worth a check-in','High':'Please reach out'}[band])
-        self.assertEqual(record()['soft_label'],"You're doing ok")
+        self.assertEqual(with_score()['soft_label'],"You're doing ok")
 
     def test_every_single_answer_on_every_question(self):
         for q in survey.QUESTIONS:
             if q['key']=='sleep_hours_avg':
                 continue
             for value in range(1,6):
-                r=record(**{q['key']:value})
+                r=with_score(**{q['key']:value})
                 scored=6-value if q.get('reverse') else value
                 self.assertEqual(r['stress_score'],round((10+scored)/11,2),q['key'])
                 self.assertEqual(r['scored_item_count'],11)
@@ -67,7 +80,7 @@ class ScoringTests(unittest.TestCase):
     def test_sleep_hours_stay_hours_and_score_as_stress(self):
         bands=[(14,1),(8.5,1),(8,1),(7.5,2),(7,2),(6.5,3),(6,3),(5.5,4),(5,4),(4.5,5),(0,5)]
         for hours, scored in bands:
-            r=record(sleep_hours_avg=hours)
+            r=with_score(sleep_hours_avg=hours)
             self.assertEqual(r['sleep_hours_avg'],hours)
             self.assertEqual(r['stress_score'],round((10+scored)/11,2),hours)
         self.assertFalse(io_manager.validate_student_form({**raw(),'sleep_hours_avg':6.75})[0])
@@ -138,8 +151,8 @@ class ScoringTests(unittest.TestCase):
                 self.assertTrue(item['prompt'].endswith('.'),item['key'])
 
     def test_one_based_labels(self):
-        r=record(sleep_hours_avg=7.5,sleep_quality=5,fin_stress=1)
-        shown_factors=survey.factor_insights(r,r)
+        r=with_score(sleep_hours_avg=7.5,sleep_quality=5,fin_stress=1)
+        shown_factors=logic_manager.factor_insights(r,r)
         factors={item['title']:item['value'] for item in shown_factors}
         self.assertEqual(factors['Rest & recovery'],'7.5 hours · Very bad quality')
         self.assertEqual(factors['Money pressures'],'1/5 · No stress at all')
@@ -158,25 +171,25 @@ class ScoringTests(unittest.TestCase):
         self.assertEqual(shown['pss_1'],'1 · Never')
 
     def test_sleep_boundary_and_quality(self):
-        self.assertFalse(record(sleep_hours_avg=6,sleep_quality=3)['context_flags']['sleep'])
-        self.assertTrue(record(sleep_hours_avg=5.5)['context_flags']['sleep'])
-        self.assertTrue(record(sleep_quality=4)['context_flags']['sleep'])
+        self.assertFalse(with_score(sleep_hours_avg=6,sleep_quality=3)['context_flags']['sleep'])
+        self.assertTrue(with_score(sleep_hours_avg=5.5)['context_flags']['sleep'])
+        self.assertTrue(with_score(sleep_quality=4)['context_flags']['sleep'])
 
     def test_finance_direction_and_flags_only_steer_tips(self):
-        self.assertFalse(record(fin_stress=3)['context_flags']['finances'])
-        self.assertTrue(record(fin_stress=4)['context_flags']['finances'])
-        r=record(fin_stress=5,pas_workload=5)  # 19/11: flags no longer lift the band
+        self.assertFalse(with_score(fin_stress=3)['context_flags']['finances'])
+        self.assertTrue(with_score(fin_stress=4)['context_flags']['finances'])
+        r=with_score(fin_stress=5,pas_workload=5)  # 19/11: flags no longer lift the band
         self.assertEqual(r['risk_category'],'Low')
         self.assertTrue(r['context_flags']['finances'] and r['context_flags']['workload'])
 
     def test_support_mean_and_required_fields(self):
-        r=record(mspss_friends=1,mspss_family=3)
+        r=with_score(mspss_friends=1,mspss_family=3)
         self.assertEqual(r['support_mean'],2)
         self.assertEqual(r['support_item_count'],2)
         self.assertEqual(r['scored_item_count'],11)
         self.assertTrue(r['context_flags']['support'])
-        self.assertFalse(record(mspss_friends=3,mspss_family=2)['context_flags']['support'])
-        self.assertFalse(record(pas_catchup=5)['context_flags']['workload'])
+        self.assertFalse(with_score(mspss_friends=3,mspss_family=2)['context_flags']['support'])
+        self.assertFalse(with_score(pas_catchup=5)['context_flags']['workload'])
         self.assertNotIn('mspss_so',survey.QUESTION_MAP)
         self.assertEqual(len(survey.QUESTIONS),11)
         self.assertTrue(all(not q.get('optional') for q in survey.QUESTIONS))
@@ -194,7 +207,7 @@ class ScoringTests(unittest.TestCase):
 
     def test_reflection_not_scored_or_sent(self):
         r=record(feelings_text='PRIVATE REFLECTION: I feel sad and depressed')
-        self.assertEqual(r['risk_category'],'Low')
+        self.assertEqual(finalised(feelings_text='PRIVATE REFLECTION: I feel sad and depressed')['risk_category'],'Low')
         self.assertNotIn('feelings_text',r)
         prompt=ai_manager.build_prompt(r)
         self.assertNotIn('PRIVATE REFLECTION',prompt)
@@ -207,25 +220,32 @@ class ScoringTests(unittest.TestCase):
 
     def test_safety_override_keeps_pss_unchanged(self):
         for text in ('I want to kill myself','I feel suicidal','I want to die','I might self-harm','I can’t keep myself safe'):
-            r=record(feelings_text=text)
+            r=finalised(feelings_text=text)
             self.assertTrue(r['safety_flag'],text)
             self.assertEqual(r['risk_category'],'High')
             self.assertEqual(r['stress_score'],1.0)
 
     def test_no_client_score_or_flag_trusted(self):
         r=record(stress_score=5,survey_version='fake',safety_flag=True,risk_category='High')
-        self.assertEqual(r['stress_score'],1.0)
+        self.assertNotIn('stress_score',r)
+        self.assertNotIn('risk_category',r)
         self.assertFalse(r['safety_flag'])
         self.assertEqual(r['survey_version'],survey.VERSION)
 
-    def test_ai_cannot_override_documented_band(self):
+    def test_ai_score_far_from_answers_is_rejected(self):
         fields=json.loads(fake_generate(None,None,None))
-        fields.update(risk_score=1,risk_category='High',soft_label='Please reach out')
+        fields.update(stress_score=4.5,risk_score=0.875,risk_category='High',
+                      soft_label='Please reach out',speak_prominence='high')
         r=logic_manager.apply_logic({**record(),**fields})
-        self.assertEqual(r['risk_category'],'Low')
-        self.assertEqual(r['risk_score'],0)
+        self.assertFalse(r['ok'])
+        self.assertEqual(r['error'],'score_mismatch')
+        self.assertEqual(r['logic_stress_score'],1.0)
+
+    def test_ai_score_matching_answers_is_kept(self):
+        r=finalised()
+        self.assertTrue(r['ok'])
+        self.assertEqual((r['stress_score'],r['risk_category']),(1.0,'Low'))
         self.assertEqual(len(r['factor_insights']),4)
-        self.assertIn('not clinical cut-offs',r['reasoning'])
 
     def test_nonfinite_ai_numbers_rejected(self):
         for field in ('stress_score','confidence'):

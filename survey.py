@@ -1,12 +1,13 @@
-"""Evidence questionnaire v3. Project heuristics, not diagnostic cut-offs.
+"""Evidence questionnaire v3: question config and the reflection safety check.
 
 Source: donotstress_question_evidence.docx, 9 October 2026, section 2.
 Every question uses one 1-5 scale except typical sleep, which stays a
 0-14 hour slider (half-hour steps) and is converted to 1-5 only when
-scoring. Items are adapted from their source instruments, so results are
-NOT PSS-4, PSQI, IFDFW or MSPSS scores. Positively worded items
-(reverse=True) are scored as 6 - answer, so a higher scored value always
-means more stress. Never convert legacy /10 or evidence-v2 records onto
+scoring. logic_manager owns scoring, context flags and factor cards.
+Items are adapted from their source instruments, so results are NOT
+PSS-4, PSQI, IFDFW or MSPSS scores. Positively worded items (reverse=True)
+are scored as 6 - answer, so a higher scored value always means more
+stress. Never convert legacy /10 or evidence-v2 records onto
 this scale.
 """
 import math
@@ -20,9 +21,6 @@ AGREE_OPTIONS = ["Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly 
 PAS_OPTIONS = AGREE_OPTIONS
 SUPPORT_OPTIONS = AGREE_OPTIONS
 FIN_OPTIONS = ["No stress at all", "A little stress", "Moderate stress", "High stress", "Overwhelming stress"]
-CHECK_IN_FROM = 2.5    # average 2.5 to 3.5 (inclusive) -> 'Worth a check-in'
-REACH_OUT_ABOVE = 3.5  # average above 3.5 -> 'Please reach out'
-SUPPORT_KEYS = ('mspss_friends', 'mspss_family')
 
 def question(key, label, prompt, minimum, maximum, options=None, **extra):
     return dict(key=key, label=label, prompt=prompt, min=minimum, max=maximum,
@@ -94,99 +92,6 @@ def validate_question(raw, q):
     if not math.isfinite(value) or not q['min'] <= value <= q['max'] or not (value / q['step']).is_integer():
         return False, f"Choose {q['min']} to {q['max']} in steps of {q['step']}."
     return True, value if q['step'] == 0.5 else int(value)
-
-def sleep_hours_stress(hours):
-    """Map typical nightly hours onto the 1-5 stress scale. Scoring only."""
-    if hours >= 8:
-        return 1
-    if hours >= 7:
-        return 2
-    if hours >= 6:
-        return 3
-    if hours >= 5:
-        return 4
-    return 5
-
-def scored_value(key, answer):
-    """Stress-direction value. Sleep hours are converted here; positive items are 6 - answer."""
-    if key == 'sleep_hours_avg':
-        return sleep_hours_stress(answer)
-    return (SCALE_MIN + SCALE_MAX) - answer if key in REVERSED_KEYS else answer
-
-def score(record):
-    """Score validated v3 inputs only; no AI or free-text sentiment scoring.
-
-    stress_score = mean of all 11 required answers on a 1-5 stress scale (1.0-5.0).
-    Sleep hours are converted in scored_value; the stored answer stays hours.
-    Every question has equal weight.
-    """
-    items = [scored_value(q['key'], record[q['key']]) for q in QUESTIONS if record.get(q['key']) is not None]
-    average = sum(items) / len(items)
-    support = [record[k] for k in SUPPORT_KEYS if record.get(k) is not None]
-    mean = sum(support) / len(support)
-    flags = {
-        'sleep': record['sleep_hours_avg'] < 6 or record['sleep_quality'] >= 4,  # under 6 h, or fairly/very bad
-        'workload': record['pas_workload'] >= 4,
-        'finances': record['fin_stress'] >= 4,  # high or overwhelming money stress
-        'support': mean < 2.5,                  # raw agreement, mostly disagreeing
-    }
-    band = 2 if average > REACH_OUT_ABOVE else 1 if average >= CHECK_IN_FROM else 0
-    if record.get('safety_flag') is True:
-        band = 2
-    return dict(stress_score=round(average, 2), scored_item_count=len(items),
-                support_mean=round(mean, 2), support_item_count=len(support),
-                context_flags=flags, risk_category=['Low','Moderate','High'][band],
-                soft_label=["You're doing ok", 'Worth a check-in', 'Please reach out'][band],
-                speak_prominence=['low','medium','high'][band])
-
-def explanation(record, scores):
-    stress = scores['stress_score']
-    text = (f"Your {scores['scored_item_count']} answers give an average stress score of {stress:g} out of 5 "
-            '(1 = least stress, 5 = most). Positively worded questions were reversed, so a higher score always means more stress.')
-    if record.get('safety_flag'):
-        text += ' Your reflection prompted us to highlight support. This does not change your stress score and is not a diagnosis.'
-    elif scores['risk_category'] == 'High':
-        text += ' An average above 3.5 is a sign to reach out to someone for support.'
-    elif scores['risk_category'] == 'Moderate':
-        text += ' An average from 2.5 to 3.5 suggests a check-in with someone you trust.'
-    else:
-        text += ' Your answers sit below 2.5. You can still ask for support whenever you need it.'
-    return text + ' These bands are a simple guide, not clinical cut-offs.'
-
-def factor_insights(record, scores):
-    flags = scores['context_flags']
-    return [
-        dict(title='Rest & recovery', flagged=flags['sleep'], value=f"{record['sleep_hours_avg']:g} hours · {SLEEP_OPTIONS[record['sleep_quality']-1]} quality",
-             text='Sleep and stress affect each other. When sleep is short or restless, everyday tasks can feel harder, and stress can make it harder to sleep well.'),
-        dict(title='Study demands', flagged=flags['workload'], value=f"{record['pas_workload']}/5 · {PAS_OPTIONS[record['pas_workload']-1]}",
-             text='A heavy workload can leave less time to rest and recharge. Feeling behind or overloaded is one of the most common sources of student stress.'),
-        dict(title='Money pressures', flagged=flags['finances'], value=f"{record['fin_stress']}/5 · {FIN_OPTIONS[record['fin_stress']-1]}",
-             text='Financial worries can add to the pressure of studying. Concerns about money often weigh on focus and sleep.'),
-        dict(title='Support & connection', flagged=flags['support'], value=f"{scores['support_mean']:g}/5 agreement across {scores['support_item_count']} answers",
-             text='Having people to turn to can make stressful times easier to handle. Strong support from friends or family helps protect against stress.'),
-    ]
-
-def finalise(record):
-    scores = score(record)
-    flags = scores['context_flags']
-    tips, stressors = [], []
-    for flag, tip, stressor in [('sleep','sleep_routine','sleep_deprivation'), ('workload','workload_chunks','academic_overload'),
-                              ('finances','money_worries','financial_pressure'), ('support','talk_to_someone','low_social_support')]:
-        if flags[flag]:
-            tips.append(tip)
-            stressors.append(stressor)
-    if scores['stress_score'] >= CHECK_IN_FROM:
-        stressors.append('high_stress')
-    if scores['speak_prominence'] == 'high':
-        tips.insert(0, 'talk_to_someone')
-    tips = list(dict.fromkeys(tips + record.get('tips', []) or ['short_breaks','keep_social_contact']))[:4]
-    result = {**record, **scores, 'tips':tips, 'primary_stressors':stressors,
-              'risk_score':round((scores['stress_score'] - SCALE_MIN) / (SCALE_MAX - SCALE_MIN), 4), # (avg-1)/4, NOT a probability
-              'reasoning':explanation(record, scores), 'factor_insights':factor_insights(record, scores),
-              'ok':True, 'ai_ok':True, 'source':'ai_logic', 'logic_rule':VERSION,
-              'logic_rules':[VERSION], 'logic_clamp_notes':[]}
-    result.pop('feelings_text', None)
-    return result
 
 def public_config():
     return dict(version=VERSION, questions=QUESTIONS, sections=SECTIONS, safetyPatterns=SAFETY_PATTERNS)
