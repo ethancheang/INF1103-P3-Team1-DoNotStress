@@ -3,7 +3,7 @@
   const main = root.querySelector('#ds-main');
   const boot = JSON.parse(document.getElementById('campus-config').textContent);
   let page = boot.page || 'home', step = 0;
-  let assessment = boot.result || null, busy = false;
+  let assessment = boot.result || null, busy = false, submitting = false;
   const recordFilters = {student_id:'', tier:'', cohort_year:''};
   const tiers = ["You're doing ok", 'Worth a check-in', 'Please reach out'];
   let recordsRequest = 0, searchTimer;
@@ -253,21 +253,32 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
     const data=await response.json();return {response,data};
   }
   async function submit() {
+    // Set before any await so a second click cannot start another request.
+    if(submitting)return;
+    submitting=true;
+    const submitButton=main.querySelector('button[data-action="next"]');
+    if(submitButton)submitButton.disabled=true;
     setBusy(true);
-    main.querySelector('#ds-error').textContent='Taking a moment to understand your check-in…';
-    main.querySelector('#ds-failure-support').innerHTML='';
-    assessment=null;
+    const showError=text=>{const box=main.querySelector('#ds-error');if(box)box.textContent=text;};
     try {
+      showError('Taking a moment to understand your check-in…');
+      const support=main.querySelector('#ds-failure-support');
+      if(support)support.innerHTML='';
+      assessment=null;
       const {response,data}=await post(boot.submitUrl,{...answers,student_id:answers.student_id.trim(),feelings_text:answers.feelings_text.trim()});
       if(!response.ok) {
         if(data.errors){const key=Object.keys(data.errors)[0];step=key==='student_id'?0:key==='feelings_text'?5:Math.max(0,survey.sections.findIndex(section=>section.keys.includes(key)));render();}
-        main.querySelector('#ds-error').textContent=data.errors?Object.values(data.errors).join(' '):data.message;
-        if(data.advisor)main.querySelector('#ds-failure-support').innerHTML=(data.safety_flag?safetyPrompt():'')+supportPanel(data.advisor);
+        const calm=data.message||'We could not complete your check-in right now. Your answers are still here; please try again.';
+        showError(data.errors?Object.values(data.errors).join(' '):calm);
+        if(data.advisor){
+          const panel=main.querySelector('#ds-failure-support');
+          if(panel)panel.innerHTML=(data.safety_flag?safetyPrompt():'')+supportPanel(data.advisor);
+        }
         return;
       }
       assessment=data.result;page='result';remember('result');render();
-    } catch(error) {main.querySelector('#ds-error').textContent='Could not connect. Your answers are still here; please try again.';}
-    finally {setBusy(false);}
+    } catch(error) {showError('Could not connect. Your answers are still here; please try again.');}
+    finally {setBusy(false);submitting=false;}
   }
   root.addEventListener('input',event=>{
     const {id,value}=event.target;
@@ -288,7 +299,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
     if(event.target.id==='ds-record-cohort'){recordFilters.cohort_year=event.target.value;loadRecords();}
   });
   root.addEventListener('click',async event=>{
-    const button=event.target.closest('button');if(!button||busy)return;
+    const button=event.target.closest('button');if(!button||busy||submitting)return;
     if(button.dataset.editStep!==undefined){step=+button.dataset.editStep;checkin();main.querySelector('#ds-step-heading').focus();return;}
     if(button.dataset.nav){
       const next=button.dataset.nav;
@@ -300,7 +311,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       case 'refresh-records':loadRecords();return;
       case 'start':page='checkin';break;
       case 'back':if(step===0)page='home';else step--;break;
-      case 'next':if(!valid())return;if(step<reviewStep)step++;else{await submit();return;}break;
+      case 'next':if(!valid())return;if(step<reviewStep)step++;else{button.disabled=true;await submit();return;}break;
       case 'new':location.assign(boot.homeUrl);return;
       default:return;
     }

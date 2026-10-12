@@ -18,11 +18,19 @@ save_record stores a successful AI-processed result when the caller
 asks it to (opt_in=True). save_pending_record stores the same check-in
 when AI could not finish, with status "pending". Reflection text is
 removed before either write.
+
+Every stored row has a record_id (uuid4 hex). replace_pending_record
+upgrades that pending row in place when a later attempt succeeds.
+Writes go to a temp file, then os.replace, so a crash cannot leave
+a half-written JSON file.
 """
 
 from __future__ import annotations
 
 import json
+import os
+import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -206,6 +214,19 @@ def _ensure_parent_dir(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _ensure_record_id(stored: dict[str, Any]) -> str:
+    """Return the row's record_id, assigning a uuid4 hex when it has none."""
+    record_id = stored.get("record_id")
+    if isinstance(record_id, str):
+        record_id = record_id.strip()
+        if record_id:
+            stored["record_id"] = record_id
+            return record_id
+    record_id = uuid.uuid4().hex
+    stored["record_id"] = record_id
+    return record_id
+
+
 def _read_records_file(
     path: Path,
 ) -> tuple[bool, list[dict[str, Any]], str | None]:
@@ -265,7 +286,9 @@ def _write_records_file(
     path: Path,
     records: list[dict[str, Any]],
 ) -> tuple[bool, str | None]:
-    """Write all records to the JSON file."""
+    """Write all records atomically: temp file in the same directory, then os.replace."""
+
+    temporary: Path | None = None
 
     try:
         _ensure_parent_dir(path)
@@ -279,11 +302,36 @@ def _write_records_file(
             + "\n"
         )
 
-        path.write_text(text, encoding="utf-8")
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        )
+        temporary = Path(handle.name)
+
+        try:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        finally:
+            handle.close()
+
+        os.replace(temporary, path)
+        temporary = None
         return True, None
 
     except OSError as exc:
         return False, f"Could not write data file: {exc}"
+
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink()
+            except OSError:
+                pass
 
 
 def load_all_records(
@@ -378,6 +426,7 @@ def save_record(
     if not stored.get("saved_at"):
         stored["saved_at"] = datetime.now(timezone.utc).isoformat()
 
+    _ensure_record_id(stored)
     records.append(stored)
 
     write_ok, write_error = _write_records_file(path, records)
@@ -454,7 +503,114 @@ def save_pending_record(
     if not stored.get("saved_at"):
         stored["saved_at"] = datetime.now(timezone.utc).isoformat()
 
+    _ensure_record_id(stored)
     records.append(stored)
+
+    write_ok, write_error = _write_records_file(path, records)
+
+    if not write_ok:
+        return {
+            "ok": False,
+            "error": write_error,
+            "path": str(path),
+            "record": None,
+        }
+
+    return {
+        "ok": True,
+        "error": None,
+        "path": str(path),
+        "record": stored,
+    }
+
+
+def replace_pending_record(
+    record_id: str,
+    new_record: dict[str, Any],
+    data_path: str | None = None,
+    *,
+    opt_in: Any = False,
+) -> dict[str, Any]:
+    """Upgrade one pending check-in to its evaluated result.
+
+    The row keeps ``record_id``. When that id is not in the file yet,
+    the evaluated record is appended once. Reflection text is never
+    stored. The write is atomic (temp file, then os.replace).
+    """
+
+    path = _resolve_path(data_path)
+    clean_id = record_id.strip() if isinstance(record_id, str) else ""
+
+    if not clean_id:
+        return {
+            "ok": False,
+            "error": "record_id is required",
+            "path": str(path),
+            "record": None,
+        }
+
+    if not _is_opted_in(opt_in):
+        return {
+            "ok": False,
+            "error": (
+                "Save refused: student opt-in required "
+                "(pass opt_in=True)."
+            ),
+            "path": str(path),
+            "record": None,
+        }
+
+    if not isinstance(new_record, dict):
+        return {
+            "ok": False,
+            "error": "record must be a dict",
+            "path": str(path),
+            "record": None,
+        }
+
+    ai_error = _ai_success_error(new_record)
+
+    if ai_error is not None:
+        return {
+            "ok": False,
+            "error": ai_error,
+            "path": str(path),
+            "record": None,
+        }
+
+    ok, records, load_error = _read_records_file(path)
+
+    if not ok:
+        return {
+            "ok": False,
+            "error": load_error,
+            "path": str(path),
+            "record": None,
+        }
+
+    if load_error and "Corrupted" in load_error:
+        records = []
+
+    stored = dict(new_record)
+    stored.pop("feelings_text", None)
+    stored.pop("reflection", None)
+    stored.pop("status", None)
+    stored["record_id"] = clean_id
+    stored["save_opt_in"] = True
+
+    if not stored.get("saved_at"):
+        stored["saved_at"] = datetime.now(timezone.utc).isoformat()
+
+    replaced = False
+
+    for index, existing in enumerate(records):
+        if str(existing.get("record_id", "")).strip() == clean_id:
+            records[index] = stored
+            replaced = True
+            break
+
+    if not replaced:
+        records.append(stored)
 
     write_ok, write_error = _write_records_file(path, records)
 
