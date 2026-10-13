@@ -1,6 +1,7 @@
 """Saved history and student-ID contract tests using synthetic records only."""
 import json
 import tempfile
+import data_manager
 import unittest
 from pathlib import Path
 
@@ -87,6 +88,23 @@ class RecordsTests(unittest.TestCase):
         self.write()
         self.assertEqual(self.client.get('/api/records?tier=Critical').status_code,400)
         self.assertEqual(self.client.get('/api/records?cohort_year=abc').status_code,400)
+
+    def test_corrupted_json_is_not_overwritten(self):
+        original = '{"student_id": "2603503", invalid json'
+        self.path.write_text(original, encoding='utf-8')
+
+        result = data_manager.save_pending_record(
+            {'student_id': '2603504'},
+            data_path=str(self.path),
+            opt_in=True,
+        )
+
+        self.assertFalse(result['ok'], 'Saving must fail if the existing JSON is corrupted')
+        self.assertEqual(
+            self.path.read_text(encoding='utf-8'),
+            original,
+            'The corrupted JSON file must not be overwritten',
+        )
 
     def test_legacy_records_are_ignored(self):
         self.write([
