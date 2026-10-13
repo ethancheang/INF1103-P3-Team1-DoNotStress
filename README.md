@@ -31,7 +31,7 @@ The interface opens without a key, but assessment requires Gemini. Missing crede
 ## Evidence questionnaire v3 (single 1–5 scale)
 
 The questionnaire follows section 2 of `donotstress_question_evidence.docx` (9 October 2026).
-`survey.py` owns question wording, options, chapter explanations and deterministic scoring.
+`survey.py` owns question wording, options, chapter explanations and the reflection safety check. `logic_manager.py` owns deterministic scoring, context flags and factor cards, and rejects a Gemini score that is more than 0.01 from that score.
 The browser receives the same definitions from Flask. Required answers start unselected, except the sleep slider, which starts at 7 hours and uses that position as the answer.
 
 1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items as full sentences, each beginning "In the past month, how often have you felt…". The chapter title is "Start with the bigger picture." Each item is 1 (never) to 5 (very often). Items 2 and 3 are reverse-scored.

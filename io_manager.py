@@ -321,7 +321,6 @@ def validate_student_form(form_dict):
     # to Gemini or retained in pending/saved records.
     record['safety_flag'] = survey.safety_check(text)
     record['survey_version'] = survey.VERSION
-    record.update(survey.score(record))
     return True, record
 
 
