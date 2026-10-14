@@ -35,8 +35,9 @@ def _answers() -> dict:
 def _fake_generate(prompt: str, api_key: str, model_name: str) -> str:
     """Fake Gemini: replays the formula on the prompt's answers."""
     answers = json.loads(prompt[prompt.rfind("{"):])
-    scored, stress = ai_manager.expected_stress_score(answers)
-    category = ai_manager._category_for_stress_score(stress)
+    scored = logic_manager.scored_items(answers)
+    stress = logic_manager.score_answers(answers)["stress_score"]
+    category = logic_manager.category_for_score(stress)
     return json.dumps({
         "scored_items": scored,
         "stress_score": stress,

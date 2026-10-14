@@ -1,4 +1,8 @@
-"""Gemini calculates the stress average from raw answers. These tests never call the API."""
+"""Gemini calculates the stress average from raw answers. These tests never call the API.
+
+ai_manager holds no scoring rules. Where a test needs them it takes them from
+logic_manager, exactly as main.process_checkin does.
+"""
 import json
 import os
 import unittest
@@ -7,6 +11,7 @@ from unittest.mock import patch
 
 import ai_manager
 import io_manager
+import logic_manager
 import survey
 from plain_tests import capture_logs, function_suite
 
@@ -79,6 +84,18 @@ def _for_score(score, **overrides):
     return payload
 
 
+def _expected(answers):
+    """What Gemini should return for these answers, from logic_manager (the formula's only owner)."""
+    return logic_manager.scored_items(answers), logic_manager.score_answers(answers)["stress_score"]
+
+
+def _all_threes():
+    """Answers that score 3 on every item: stress_score 3.0 (Moderate)."""
+    answers = {key: 3 for key in ai_manager.RAW_ANSWER_KEYS}
+    answers["sleep_hours_avg"] = 6.5
+    return answers
+
+
 def _input_payload(prompt):
     """The JSON object at the end of the prompt is the only student data."""
     start = prompt.rfind("{")
@@ -88,7 +105,7 @@ def _input_payload(prompt):
 # --- Prompt ----------------------------------------------------------------
 
 def test_prompt_has_raw_answers_and_wording_only():
-    prompt = ai_manager.build_prompt(_checkin())
+    prompt = ai_manager.build_prompt(_checkin(), instructions=logic_manager.scoring_instructions())
     payload = _input_payload(prompt)
 
     assert set(payload) == set(ai_manager.STUDENT_PROMPT_FIELDS)
@@ -147,6 +164,29 @@ def test_prompt_has_raw_answers_and_wording_only():
     assert "estimate" not in prompt.lower()
 
 
+def test_ai_manager_holds_no_scoring_rules():
+    """The formula and tier cut-offs live only in logic_manager (brief: no domain logic here)."""
+    for name in ("expected_stress_score", "LOW_BELOW", "HIGH_ABOVE", "POSITIVE_ITEM_KEYS",
+                 "_category_for_stress_score", "_tier_consistency_error", "_formula_mismatch",
+                 "_risk_score_from_stress", "_RECOMMENDED_SUPPORT"):
+        assert not hasattr(ai_manager, name), name
+    assert not hasattr(ai_manager, "logic_manager")
+
+    bare = ai_manager.build_prompt(_checkin())
+    assert "6 - answer" not in bare
+    assert "below 2.5" not in bare
+    with_rules = ai_manager.build_prompt(_checkin(), instructions=logic_manager.scoring_instructions())
+    assert logic_manager.scoring_instructions() in with_rules
+
+    # Schema only: a well-formed reply with the wrong tier still passes here.
+    wrong_tier = _for_score(2.0, risk_category="High", soft_label="Please reach out",
+                            speak_prominence="high")
+    ok, result = ai_manager.validate_ai_response(wrong_tier)
+    assert ok, result
+    assert "risk_score" not in result
+    assert "recommended_support" not in result
+
+
 def test_default_wording_matches_the_questionnaire():
     assert not hasattr(ai_manager, "survey")
     assert [item["key"] for item in ai_manager.DEFAULT_QUESTIONS] == [item["key"] for item in survey.QUESTIONS]
@@ -160,7 +200,7 @@ def test_caller_can_pass_question_wording():
 
     def generate_fn(prompt, api_key, model_name):
         seen["prompt"] = prompt
-        scored, stress = ai_manager.expected_stress_score(_checkin())
+        scored, stress = _expected(_checkin())
         return json.dumps(_for_score(
             stress, scored_items=scored, tips=["short_breaks"], primary_stressors=[],
         ))
@@ -181,40 +221,39 @@ def test_caller_can_pass_question_wording():
     assert "UNIQUE WORDING XYZ" in seen["prompt"]
     assert "1 = No" in seen["prompt"]
     assert "2605581" not in seen["prompt"]
-    scored, stress = ai_manager.expected_stress_score(_checkin())
+    scored, stress = _expected(_checkin())
     assert enriched["source"] == "gemini"
     assert enriched["stress_score"] == stress
     assert enriched["scored_items"] == scored
-    assert round(enriched["risk_score"] - (stress - 1) / 4, 7) == 0
 
 
 # --- Response Validation ---------------------------------------------------
 
-def test_valid_response_computes_risk_score():
+def test_valid_response_is_normalised():
     supplied = _for_score(2.5)
     supplied["risk_score"] = 0.99
     supplied["recommended_support"] = "Speak to advisor"
     ok, result = ai_manager.validate_ai_response(json.dumps(supplied))
     assert ok, result
     assert result["stress_score"] == 2.5
-    assert result["risk_score"] == (2.5 - 1) / 4
     assert result["risk_category"] == "Moderate"
     assert result["soft_label"] == "Worth a check-in"
     assert result["speak_prominence"] == "medium"
-    assert "advisor" not in result["recommended_support"].lower()
-    assert result["recommended_support"].strip()
+    # Extra keys from Gemini are dropped. Logic works these two out.
+    assert "risk_score" not in result
+    assert "recommended_support" not in result
 
     for score in (1.0, 3.0, 5.0):
         ok, result = ai_manager.validate_ai_response(_for_score(score))
         assert ok, result
-        assert result["risk_score"] == (score - 1) / 4
+        assert result["stress_score"] == score
 
 
 def test_band_edges_and_stripped_category():
     for score in (1, 2.49, 2.5, 3.5, 3.51, 5):
         ok, result = ai_manager.validate_ai_response(_for_score(score))
         assert ok, (score, result)
-        assert round(result["risk_score"] - (float(score) - 1) / 4, 7) == 0
+        assert result["stress_score"] == float(score)
 
     padded = _for_score(3.0, risk_category="  Moderate  ")
     ok, result = ai_manager.validate_ai_response(padded)
@@ -230,30 +269,43 @@ def test_out_of_range_stress_score_fails():
         assert "stress_score" in message
 
 
-def test_tier_mismatch_fails():
+def test_tier_mismatch_fails_the_logic_check():
+    """A reply whose tier disagrees with its score is retried, then rejected.
+
+    The tier rule is logic_manager's; ai_manager runs it through verify_fn.
+    """
     low_score_high_tier = _for_score(
         2.0,
         risk_category="High",
         soft_label="Please reach out",
         speak_prominence="high",
     )
-    assert not ai_manager.validate_ai_response(low_score_high_tier)[0]
-
     label_mismatch = _for_score(
         4.0,
         risk_category="High",
         soft_label="You're doing ok",
         speak_prominence="high",
     )
-    assert not ai_manager.validate_ai_response(label_mismatch)[0]
-
     prominence_mismatch = _for_score(
         4.0,
         risk_category="High",
         soft_label="Please reach out",
         speak_prominence="low",
     )
-    assert not ai_manager.validate_ai_response(prominence_mismatch)[0]
+    for reply in (low_score_high_tier, label_mismatch, prominence_mismatch):
+        assert ai_manager.validate_ai_response(reply)[0]
+
+        def generate_fn(prompt, api_key, model_name, reply=reply):
+            return json.dumps(reply)
+
+        ok, result, error = ai_manager.call_gemini(
+            "check-in", api_key="stub", max_attempts=1, retry_delay_sec=0,
+            generate_fn=generate_fn, answers=_all_threes(),
+            verify_fn=logic_manager.verify_ai_scores,
+        )
+        assert not ok
+        assert result is None
+        assert error["error_code"] == "invalid_response"
 
 
 def test_removed_ids_are_rejected():
@@ -298,6 +350,8 @@ def test_mismatch_is_an_invalid_response():
         max_attempts=1,
         retry_delay_sec=0,
         generate_fn=generate_fn,
+        answers=_all_threes(),
+        verify_fn=logic_manager.verify_ai_scores,
     )
     assert not ok
     assert result is None
@@ -345,7 +399,7 @@ def test_structured_schema_is_sent_with_the_mime_type():
     config = captured["config"]
     assert config["response_mime_type"] == "application/json"
     assert config["response_schema"] is ai_manager.RESPONSE_SCHEMA
-    assert config["temperature"] == 0.2
+    assert config["temperature"] == 0.0
     assert "risk_score" not in config["response_schema"]["properties"]
 
     properties = ai_manager.RESPONSE_SCHEMA["properties"]
@@ -366,7 +420,7 @@ def test_structured_schema_is_sent_with_the_mime_type():
 
     from google.genai import types
     types.GenerateContentConfig.model_validate({
-        "temperature": 0.2,
+        "temperature": 0.0,
         "response_mime_type": "application/json",
         "response_schema": ai_manager.RESPONSE_SCHEMA,
         "automatic_function_calling": {"disable": True},
@@ -392,18 +446,21 @@ def _minimum_stress():
 
 
 def _exact_reply(answers, **overrides):
-    scored, stress = ai_manager.expected_stress_score(answers)
+    scored, stress = _expected(answers)
     payload = _for_score(stress, scored_items=scored)
     payload.update(overrides)
     return payload
 
 
-# --- Formula ---------------------------------------------------------------
+# --- Formula check ---------------------------------------------------------
+# The formula itself is tested in test_logic_manager. These tests check that
+# ai_manager runs logic_manager's verify_ai_scores on every reply it is given.
 
 def test_exact_response_passes():
     answers = _minimum_stress()
-    ok, result = ai_manager.validate_ai_response(_exact_reply(answers), answers)
+    ok, result = ai_manager.validate_ai_response(_exact_reply(answers))
     assert ok, result
+    assert logic_manager.verify_ai_scores(result, answers) is None
     assert result["scored_items"] == {key: 1 for key in ai_manager.RAW_ANSWER_KEYS}
     assert result["stress_score"] == 1.0
     assert result["risk_category"] == "Low"
@@ -413,6 +470,8 @@ def test_exact_response_passes():
 
     ok, enriched, error = ai_manager.analyse_student(
         answers, api_key="stub", max_attempts=1, retry_delay_sec=0, generate_fn=generate_fn,
+        instructions=logic_manager.scoring_instructions(),
+        verify_fn=logic_manager.verify_ai_scores,
     )
     assert ok, error
     assert enriched["stress_score"] == 1.0
@@ -424,8 +483,7 @@ def test_off_by_one_scored_item_fails():
     reply = _exact_reply(answers)
     reply["scored_items"] = dict(reply["scored_items"])
     reply["scored_items"]["pss_1"] = 2
-    ok, message = ai_manager.validate_ai_response(reply, answers)
-    assert not ok
+    message = logic_manager.verify_ai_scores(reply, answers)
     assert "scored_items" in message
 
     def generate_fn(prompt, api_key, model_name):
@@ -433,21 +491,26 @@ def test_off_by_one_scored_item_fails():
 
     ok, result, error = ai_manager.call_gemini(
         "check-in", api_key="stub", max_attempts=1, retry_delay_sec=0,
-        generate_fn=generate_fn, answers=answers,
+        generate_fn=generate_fn, answers=answers, verify_fn=logic_manager.verify_ai_scores,
     )
     assert not ok
     assert result is None
     assert error["error_code"] == "invalid_response"
 
+    # Without the check, ai_manager only validates the schema.
     skipped, _ = ai_manager.validate_ai_response(reply)
     assert skipped
+    ok, _, error = ai_manager.call_gemini(
+        "check-in", api_key="stub", max_attempts=1, retry_delay_sec=0,
+        generate_fn=generate_fn, answers=answers,
+    )
+    assert ok, error
 
 
 def test_stress_score_off_by_a_tenth_fails():
     answers = _minimum_stress()
     reply = _exact_reply(answers, stress_score=1.1)
-    ok, message = ai_manager.validate_ai_response(reply, answers)
-    assert not ok
+    message = logic_manager.verify_ai_scores(reply, answers)
     assert "stress_score" in message
 
     def generate_fn(prompt, api_key, model_name):
@@ -455,37 +518,27 @@ def test_stress_score_off_by_a_tenth_fails():
 
     ok, result, error = ai_manager.analyse_student(
         answers, api_key="stub", max_attempts=1, retry_delay_sec=0, generate_fn=generate_fn,
+        instructions=logic_manager.scoring_instructions(),
+        verify_fn=logic_manager.verify_ai_scores,
     )
     assert not ok
     assert error["error_code"] == "invalid_response"
 
 
-def test_reverse_items_and_sleep_conversion():
-    answers = _minimum_stress()
-    scored, stress = ai_manager.expected_stress_score(answers)
-    assert stress == 1.0
-    for key in ("pss_2", "pss_3", "mspss_friends", "mspss_family"):
-        assert scored[key] == 1
-        flipped = dict(answers, **{key: 1})
-        converted, total = ai_manager.expected_stress_score(flipped)
-        assert converted[key] == 5
-        assert total == round(15 / 11, 2)
+def test_a_broken_check_is_an_invalid_response_not_a_crash():
+    def broken_check(ai_fields, answers):
+        raise ValueError("bug in the check")
 
-    for hours, band in (
-        (14, 1), (8.5, 1), (8, 1), (7.5, 2), (7, 2), (6.5, 3), (6, 3),
-        (5.5, 4), (5, 4), (4.5, 5), (0, 5),
-    ):
-        converted, _ = ai_manager.expected_stress_score(
-            dict(answers, sleep_hours_avg=hours)
-        )
-        assert converted["sleep_hours_avg"] == band, hours
+    def generate_fn(prompt, api_key, model_name):
+        return json.dumps(_for_score(3.0))
 
-    short_sleep = dict(answers, sleep_hours_avg=4.5)
-    reply = _exact_reply(short_sleep)
-    ok, result = ai_manager.validate_ai_response(reply, short_sleep)
-    assert ok, result
-    assert result["scored_items"]["sleep_hours_avg"] == 5
-    assert result["stress_score"] == round(15 / 11, 2)
+    ok, result, error = ai_manager.call_gemini(
+        "check-in", api_key="stub", max_attempts=1, retry_delay_sec=0,
+        generate_fn=generate_fn, answers=_all_threes(), verify_fn=broken_check,
+    )
+    assert not ok
+    assert result is None
+    assert error["error_code"] == "invalid_response"
 
 
 def api_fault(message, code=None):

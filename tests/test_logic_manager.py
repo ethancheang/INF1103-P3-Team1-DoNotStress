@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -17,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import ai_manager
+import data_manager
 import logic_manager as lm
 from plain_tests import case, function_suite
 
@@ -33,8 +35,9 @@ def _fake_generate_fn(**overrides):
     """A fake Gemini that replays the formula on the prompt's answers."""
     def generate(prompt, api_key, model_name):
         answers = json.loads(prompt[prompt.rfind("{"):])
-        scored, stress = ai_manager.expected_stress_score(answers)
-        category = ai_manager._category_for_stress_score(stress)
+        scored = lm.scored_items(answers)
+        stress = lm.score_answers(answers)["stress_score"]
+        category = lm.category_for_score(stress)
         reply = {
             "scored_items": scored,
             "stress_score": stress,
@@ -80,9 +83,10 @@ def test_gemini_match_is_kept_untouched():
     enriched = _enriched()
     result = lm.apply_logic(enriched)
     assert result["ok"]
-    for key in ("stress_score", "risk_score", "risk_category", "soft_label",
+    for key in ("stress_score", "risk_category", "soft_label",
                 "speak_prominence", "tips", "primary_stressors", "reasoning"):
         assert result[key] == enriched[key], key
+    assert result["risk_score"] == (result["stress_score"] - 1) / 4
     assert result["logic_stress_score"] == 3.0
     assert result["logic_clamp_notes"] == []
 
@@ -325,6 +329,158 @@ def test_survey_only_holds_config_and_safety():
                  "scored_value", "sleep_hours_stress"):
         assert not hasattr(survey, gone), gone
     assert callable(survey.safety_check)
+
+
+# --- Scoring rules handed to ai_manager ---------------------------------------
+# main.py passes scoring_instructions() and verify_ai_scores() to ai_manager,
+# so these rules exist only here.
+
+def _exact_ai_fields(answers):
+    """The reply Gemini should give for these answers."""
+    stress = lm.score_answers(answers)["stress_score"]
+    category = lm.category_for_score(stress)
+    return {
+        "scored_items": lm.scored_items(answers),
+        "stress_score": stress,
+        "risk_category": category,
+        "soft_label": lm._CATEGORY_TO_LABEL[category],
+        "speak_prominence": lm._CATEGORY_TO_PROMINENCE[category],
+    }
+
+
+def test_scored_items_are_what_gemini_must_return():
+    lowest = _answers(pss_1=1, pss_2=5, pss_3=5, pss_4=1, sleep_hours_avg=8, sleep_quality=1,
+                      pas_workload=1, pas_catchup=1, fin_stress=1, mspss_friends=5, mspss_family=5)
+    assert lm.scored_items(lowest) == {key: 1 for key in lm.ANSWER_KEYS}
+    assert all(isinstance(value, int) for value in lm.scored_items(lowest).values())
+    assert lm.score_answers(lowest)["stress_score"] == 1.0
+    for key in ("pss_2", "pss_3", "mspss_friends", "mspss_family"):
+        with case(key=key):
+            flipped = dict(lowest, **{key: 1})
+            assert lm.scored_items(flipped)[key] == 5
+            assert lm.score_answers(flipped)["stress_score"] == round(15 / 11, 2)
+    for hours, band in ((14, 1), (8.5, 1), (8, 1), (7.5, 2), (7, 2), (6.5, 3), (6, 3),
+                        (5.5, 4), (5, 4), (4.5, 5), (0, 5)):
+        with case(hours=hours):
+            assert lm.scored_items(dict(lowest, sleep_hours_avg=hours))["sleep_hours_avg"] == band
+
+
+def test_verify_accepts_an_exact_reply():
+    for answers in (_answers(), _answers(pss_1=5, fin_stress=5, sleep_hours_avg=4.5),
+                    _answers(pss_2=5, pss_3=5, mspss_friends=5, mspss_family=5)):
+        with case(answers=answers):
+            assert lm.verify_ai_scores(_exact_ai_fields(answers), answers) is None
+    within = dict(_exact_ai_fields(_answers()), stress_score=3.01)
+    assert lm.verify_ai_scores(within, _answers()) is None
+
+
+def test_exactly_0_01_off_is_accepted_and_more_is_rejected():
+    """Brief: reject a score MORE than 0.01 off. Float error must not reject exactly 0.01."""
+    accepted = rejected = 0
+    for total in range(11, 56):                       # every possible sum of 11 items
+        mean = round(total / 11, 2)
+        for delta, should_pass in ((0.01, True), (-0.01, True), (0.02, False), (-0.02, False)):
+            gemini = round(mean + delta, 2)
+            if not 1 <= gemini <= 5 or lm.category_for_score(gemini) != lm.category_for_score(mean):
+                continue
+            with case(mean=mean, gemini=gemini):
+                assert lm._within_tolerance(gemini, mean) is should_pass
+                accepted += should_pass
+                rejected += not should_pass
+    assert accepted > 50 and rejected > 50
+
+
+def test_verify_rejects_wrong_tiers_items_and_scores():
+    answers = _answers()
+    exact = _exact_ai_fields(answers)
+    cases = (
+        (dict(exact, stress_score=2.0, risk_category="High", soft_label="Please reach out",
+              speak_prominence="high"), "risk_category must be Low"),
+        (dict(exact, soft_label="You're doing ok"), "soft_label must match"),
+        (dict(exact, speak_prominence="high"), "speak_prominence must match"),
+        (dict(exact, scored_items=dict(exact["scored_items"], pss_1=4)), "scored_items"),
+        (dict(exact, stress_score=3.02), "stress_score must match"),
+        (dict(exact, stress_score=3.4), "stress_score must match"),
+    )
+    for fields, expected in cases:
+        with case(expected=expected):
+            message = lm.verify_ai_scores(fields, answers)
+            assert message is not None
+            assert expected in message
+
+
+def test_verify_never_raises_on_bad_input():
+    exact = _exact_ai_fields(_answers())
+    assert lm.verify_ai_scores(None, _answers())
+    assert lm.verify_ai_scores(exact, None)
+    assert "pss_1" in lm.verify_ai_scores(exact, {k: v for k, v in _answers().items() if k != "pss_1"})
+    assert "pss_1" in lm.verify_ai_scores(exact, _answers(pss_1=2.5))
+    assert "pss_1" in lm.verify_ai_scores(exact, _answers(pss_1="three"))
+    assert "stress_score" in lm.verify_ai_scores(dict(exact, stress_score="high"), _answers())
+
+
+def test_scoring_instructions_state_the_rules():
+    text = lm.scoring_instructions()
+    for expected in ("pss_2, pss_3, mspss_friends, mspss_family are positively worded",
+                     "6 - answer", "8 or more hours -> 1", "5 or more -> 4", "otherwise 5",
+                     "mean of those 11 converted values", "rounded to 2 decimal places",
+                     'below 2.5: risk_category Low, soft_label "You\'re doing ok"',
+                     "2.5 to 3.5 inclusive: risk_category Moderate",
+                     'above 3.5: risk_category High, soft_label "Please reach out"'):
+        with case(expected=expected):
+            assert expected in text
+
+
+def test_pipeline_retries_and_rejects_wrong_arithmetic():
+    """main.process_checkin wires verify_ai_scores into ai_manager.
+
+    A reply with one wrong scored item is never accepted: every model in the
+    chain is tried, up to the call cap, then the check-in fails.
+    """
+    import main
+    calls = []
+    good = json.loads(_fake_generate_fn()("x " + json.dumps(_answers()), "", ""))
+
+    def generate(prompt, api_key, model_name):
+        calls.append(model_name)
+        return json.dumps(dict(good, scored_items=dict(good["scored_items"], pss_1=4)))
+
+    record = {"student_id": "2605581", "survey_version": "evidence-v3",
+              "safety_flag": False, **_answers()}
+    ok, outcome = main.process_checkin(record, generate_fn=generate, max_attempts=3,
+                                       retry_delay_sec=0)
+    assert not ok
+    assert outcome == "invalid_response"
+    assert len(calls) == ai_manager.MAX_TOTAL_CALLS
+
+    sent = {}
+
+    def capture(prompt, api_key, model_name):
+        sent["prompt"] = prompt
+        return json.dumps(good)
+
+    ok, _ = main.process_checkin(dict(record), generate_fn=capture, max_attempts=1,
+                                 retry_delay_sec=0)
+    assert ok
+    assert lm.scoring_instructions() in sent["prompt"]
+
+
+def test_risk_score_and_recommended_support_come_from_logic():
+    result = lm.apply_logic(_enriched())
+    assert result["ok"]
+    assert result["risk_score"] == 0.5
+    assert result["recommended_support"] == lm.RECOMMENDED_SUPPORT["Moderate"]
+
+    record = _enriched()
+    record["safety_flag"] = True
+    forced = lm.apply_logic(record)
+    assert forced["risk_category"] == "High"
+    assert forced["recommended_support"] == lm.RECOMMENDED_SUPPORT["High"]
+
+    # The data layer still accepts the finished record.
+    with tempfile.TemporaryDirectory() as temp_dir:
+        saved = data_manager.save_record(result, str(Path(temp_dir) / "records.json"), opt_in=True)
+        assert saved["ok"], saved["error"]
 
 
 def load_tests(loader, tests, pattern):
