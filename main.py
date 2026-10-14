@@ -311,7 +311,8 @@ def create_app(test_config=None):
                     stored_id = (saved.get('record') or {}).get('record_id')
                     if stored_id:
                         remember_submission(fingerprint, stored_id, pending_save=False)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Saving the check-in failed: %s", type(exc).__name__)
             saved = {'ok': False}
         if not saved.get('ok'):
             return jsonify(message='We could not save your check-in just now. Your answers are still here; please try again.'), 500
@@ -335,7 +336,8 @@ def create_app(test_config=None):
         try:
             with lock:
                 loaded = data_manager.load_all_records(app.config['DATA_PATH'])
-        except Exception:
+        except Exception as exc:
+            logger.warning("Loading saved records failed: %s", type(exc).__name__)
             loaded = {'ok': False}
         if not loaded.get('ok') or loaded.get('error'):
             return jsonify(message='Saved records could not be loaded. Please try again.'), 500
@@ -393,7 +395,8 @@ def create_app(test_config=None):
                 return jsonify(ok=True, saved=True)
             try:
                 saved = data_manager.save_record(entry['record'], data_path=app.config['DATA_PATH'], opt_in=True)
-            except Exception:
+            except Exception as exc:
+                logger.warning("Retrying the pending save failed: %s", type(exc).__name__)
                 saved = {'ok': False}
             if not saved.get('ok'):
                 return jsonify(message='Your check-in could not be saved. Please try again.'), 500
