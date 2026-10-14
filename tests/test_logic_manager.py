@@ -320,7 +320,9 @@ def test_no_legacy_names_in_logic_or_survey():
         text = (ROOT / name).read_text(encoding="utf-8")
         for legacy in LEGACY:
             with case(file=name, legacy=legacy):
-                assert re.search(re.escape(legacy), text) is None
+                # Start of a name only, so the real stressor ID
+                # "low_social_support" is not mistaken for "social_support".
+                assert re.search(r"(?<![A-Za-z0-9_])" + re.escape(legacy), text) is None
 
 
 def test_survey_only_holds_config_and_safety():
@@ -481,6 +483,60 @@ def test_risk_score_and_recommended_support_come_from_logic():
     with tempfile.TemporaryDirectory() as temp_dir:
         saved = data_manager.save_record(result, str(Path(temp_dir) / "records.json"), opt_in=True)
         assert saved["ok"], saved["error"]
+
+
+# --- Support priority (multi-condition rule on two AI fields) -------------
+
+_HIGH_STRESS = dict(pss_1=5, pss_2=1, pss_3=1, pss_4=5, sleep_hours_avg=4.5, sleep_quality=5,
+                    pas_workload=5, pas_catchup=5, fin_stress=5, mspss_friends=1, mspss_family=1)
+
+
+def test_support_priority_rule_needs_both_ai_fields():
+    high = {"risk_category": "High", "primary_stressors": ["low_social_support"]}
+    assert lm.needs_support_priority(high)
+    assert not lm.needs_support_priority(dict(high, risk_category="Moderate"))
+    assert not lm.needs_support_priority(dict(high, primary_stressors=["academic_overload"]))
+    assert not lm.needs_support_priority(dict(high, primary_stressors=[]))
+    assert not lm.needs_support_priority(dict(high, primary_stressors="low_social_support"))
+    assert not lm.needs_support_priority({})
+
+
+def test_high_tier_with_low_support_puts_talking_first():
+    record = _enriched(_answers(**_HIGH_STRESS),
+                       primary_stressors=["low_social_support", "academic_overload"])
+    result = lm.apply_logic(record)
+    assert result["ok"]
+    assert result["risk_category"] == "High"
+    assert result["support_priority"] is True
+    assert result["tips"][0] == "talk_to_someone"
+    assert "keep_social_contact" in result["tips"]
+    for tip in record["tips"]:                      # Gemini's own tips are kept
+        assert tip in result["tips"]
+    assert len(result["tips"]) <= lm.MAX_TIPS
+    assert "support_priority: High tier with low social support" in result["logic_clamp_notes"]
+
+
+def test_support_priority_does_not_fire_on_one_field_alone():
+    high_no_support = lm.apply_logic(
+        _enriched(_answers(**_HIGH_STRESS), primary_stressors=["academic_overload"]))
+    assert high_no_support["risk_category"] == "High"
+    assert high_no_support["support_priority"] is False
+    assert high_no_support["tips"][0] != "talk_to_someone"
+
+    moderate_low_support = lm.apply_logic(
+        _enriched(_answers(), primary_stressors=["low_social_support"]))
+    assert moderate_low_support["risk_category"] == "Moderate"
+    assert moderate_low_support["support_priority"] is False
+    assert moderate_low_support["logic_clamp_notes"] == []
+
+
+def test_support_priority_and_safety_together_do_not_repeat_tips():
+    record = _enriched(_answers(**_HIGH_STRESS), primary_stressors=["low_social_support"])
+    record["safety_flag"] = True
+    result = lm.apply_logic(record)
+    assert result["tips"][0] == "talk_to_someone"
+    assert len(result["tips"]) == len(set(result["tips"]))
+    assert result["support_priority"] is True
 
 
 def load_tests(loader, tests, pattern):

@@ -29,7 +29,11 @@ Rules (logic_rule "v3")
 3. Context flags — sleep, workload, finances, support. Each flag makes sure
    its matching tip is included if there is room (max 4 tips). Flags never
    replace Gemini's tips and never change the tier.
-4. Safety — if the reflection safety check fired (safety_flag True), the
+4. Support priority — a multi-condition rule on two AI fields: when Gemini
+   rates the check-in High AND lists low_social_support in
+   primary_stressors, talk_to_someone is shown first and
+   keep_social_contact is added if there is room (support_priority True).
+5. Safety — if the reflection safety check fired (safety_flag True), the
    tier is forced to High / "Please reach out" / prominence high and
    talk_to_someone is shown first. The stress score is not changed.
 
@@ -137,7 +141,12 @@ _FLAG_TIPS = (
 )
 
 _TIP_TALK = "talk_to_someone"
+_TIP_KEEP_CONTACT = "keep_social_contact"
 MAX_TIPS = 4
+
+# Multi-condition rule on Gemini's fields (see needs_support_priority).
+SUPPORT_PRIORITY_CATEGORY = "High"
+SUPPORT_PRIORITY_STRESSOR = "low_social_support"
 
 # Short internal note stored with each record (data_manager requires it).
 # The student never sees this text; the UI shows tips instead.
@@ -237,8 +246,16 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
         lead_tips = [_TIP_TALK]
         notes.append("safety_override: reflection safety check fired")
 
+    # Business rule on two AI fields: a High tier AND low social support.
+    support_priority = needs_support_priority(record)
+    if support_priority:
+        lead_tips = [_TIP_TALK]
+        notes.append("support_priority: High tier with low social support")
+
     flags = scores["context_flags"]
     flag_tips = [tip for flag, tip in _FLAG_TIPS if flags[flag]]
+    if support_priority:
+        flag_tips.insert(0, _TIP_KEEP_CONTACT)
     tips = _merge_tips(lead_tips, list(record["tips"]), flag_tips)
 
     enriched = dict(record)
@@ -260,6 +277,7 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
         "primary_stressors": list(record["primary_stressors"]),
         "reasoning": record["reasoning"],
         "logic_clamp_notes": notes,
+        "support_priority": support_priority,
         "context_flags": flags,
         "support_mean": scores["support_mean"],
         "factor_insights": factor_insights(record, scores),
@@ -349,6 +367,21 @@ def category_for_score(stress_score: float) -> str:
     if stress_score >= CHECK_IN_FROM:
         return "Moderate"
     return "Low"
+
+
+def needs_support_priority(record: dict[str, Any]) -> bool:
+    """Multi-condition business rule on two fields from Gemini's reply.
+
+    True when Gemini rated the check-in High (risk_category) AND named
+    low social support as a stressor (primary_stressors). apply_logic then
+    puts "talk to someone" first and adds "keep in touch" while there is room.
+    """
+    stressors = record.get("primary_stressors")
+    return (
+        record.get("risk_category") == SUPPORT_PRIORITY_CATEGORY
+        and isinstance(stressors, list)
+        and SUPPORT_PRIORITY_STRESSOR in stressors
+    )
 
 
 def risk_score_for(stress_score: float) -> float:
