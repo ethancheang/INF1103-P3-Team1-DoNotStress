@@ -3,6 +3,8 @@
 Question wording, scales and scoring definitions live in survey.py.
 Student ID: seven ASCII digits beginning with 2. Reflection is ephemeral.
 """
+from typing import Any
+
 import survey
 
 FORM_FIELDS = {key:key for key in ['student_id', *survey.QUESTION_MAP, 'feelings_text']}
@@ -499,7 +501,7 @@ def print_error(message: str) -> None:
     print(f"Error: {message}")
 
 
-def display_record(record: dict) -> None:
+def display_record(record: dict[str, Any]) -> None:
     """Print one check-in record using format_student_record."""
     view = format_student_record(record)
     print(view["heading"])
@@ -507,7 +509,7 @@ def display_record(record: dict) -> None:
         print(f"  {field['label']}: {field['value']}")
 
 
-def display_list(records: list) -> None:
+def display_list(records: list[dict[str, Any]]) -> None:
     """Print a short one-line summary for each saved record."""
     if not records:
         print("No records.")
@@ -517,7 +519,7 @@ def display_list(records: list) -> None:
               f"{record.get('risk_category', '?')} | {record.get('stress_score', '?')}")
 
 
-def display_result(result: dict) -> None:
+def display_result(result: dict[str, Any]) -> None:
     """Print the outcome of a check-in using the existing formatters."""
     if not result or not result.get("ok"):
         code = (result or {}).get("error_code") or (result or {}).get("error")
