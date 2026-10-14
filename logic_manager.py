@@ -273,6 +273,39 @@ def score_answers(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def evaluate(record: dict[str, Any]) -> dict[str, Any]:
+    """Run every business rule on the AI-enriched record. Wraps apply_logic.
+
+    Returns the decision dict (ok=True with final fields, or an error dict).
+    """
+    return apply_logic(record)
+
+
+def score(record: dict[str, Any]) -> float | None:
+    """Return the verified AI stress_score, or None if Logic rejects it.
+
+    Logic never substitutes its own number: logic_stress_score in the
+    evaluate() result is an audit value only.
+    """
+    result = apply_logic(record)
+    if not result.get("ok"):
+        return None
+    return float(result["stress_score"])
+
+
+def route(record: dict[str, Any]) -> str:
+    """Return the outcome path: "Low", "Moderate", "High", or "unavailable".
+
+    Routes on the final risk_category only when the soft_label agrees with it,
+    otherwise "unavailable". Pass the dict evaluate() returned.
+    """
+    if not isinstance(record, dict) or not record.get("ok"):
+        return "unavailable"
+    category = record.get("risk_category")
+    if category in _CATEGORY_TO_LABEL and record.get("soft_label") == _CATEGORY_TO_LABEL[category]:
+        return category
+    return "unavailable"
+
 def scored_value(key: str, answer: float) -> float:
     """Stress-direction value: sleep hours converted, positive items 6 - answer."""
     if key == "sleep_hours_avg":
