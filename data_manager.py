@@ -686,44 +686,9 @@ def filter_records(
 
     return out
 
-
-def get_record_by_student_id(
-    student_id: str,
-    data_path: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return all historical records for one student ID."""
-
     loaded = load_all_records(data_path)
 
     return filter_records(
         loaded["records"],
         student_id=student_id,
-    )
-
-
-def get_records_by_risk_category(
-    category: str,
-    data_path: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return all records matching a risk category."""
-
-    loaded = load_all_records(data_path)
-
-    return filter_records(
-        loaded["records"],
-        risk_category=category,
-    )
-
-
-def get_records_by_cohort_year(
-    year_prefix: str,
-    data_path: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return records based on the first two digits of student ID."""
-
-    loaded = load_all_records(data_path)
-
-    return filter_records(
-        loaded["records"],
-        cohort_year=year_prefix,
     )

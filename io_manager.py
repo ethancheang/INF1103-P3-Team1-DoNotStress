@@ -204,32 +204,6 @@ def _looks_like_int(text: str) -> bool:
         return len(text) > 1 and text[1:].isdigit()
     return text.isdigit()
 
-
-def _parse_int(raw) -> tuple[bool, int | str]:
-    text = _as_text(raw)
-    if not _looks_like_int(text):
-        return False, "must be a whole number (integer)"
-    return True, int(text)
-
-
-def _parse_float(raw) -> tuple[bool, float | str]:
-    text = _as_text(raw)
-    if text == "":
-        return False, "must be a number"
-    lowered = text.lower()
-    if lowered in {"nan", "inf", "+inf", "-inf", "infinity", "+infinity", "-infinity"}:
-        return False, "must be a finite number"
-    try:
-        value = float(text)
-    except ValueError:
-        return False, "must be a number"
-    if value != value:  # NaN
-        return False, "must be a finite number"
-    if value == float("inf") or value == float("-inf"):
-        return False, "must be a finite number"
-    return True, value
-
-
 def _form_get(form_dict, key: str):
     """Read one key from a Flask request.form-like mapping."""
     if form_dict is None:
@@ -280,11 +254,6 @@ def normalize_form_value(raw) -> str:
     return _as_text(raw)
 
 
-def extract_form_fields(form_dict) -> dict:
-    """Return only the canonical FORM_FIELDS keys from a form mapping."""
-    return {key: normalize_form_value(_form_get(form_dict, key)) for key in FORM_FIELDS}
-
-
 # ---------------------------------------------------------------------------
 # Validators — validate_X(raw) -> (ok, value_or_error)
 # ---------------------------------------------------------------------------
@@ -322,12 +291,6 @@ def validate_student_form(form_dict):
     record['safety_flag'] = survey.safety_check(text)
     record['survey_version'] = survey.VERSION
     return True, record
-
-
-def collect_student_record_from_form(form_dict) -> tuple[bool, dict]:
-    """Alias of validate_student_form for Flask call sites."""
-    return validate_student_form(form_dict)
-
 
 # ---------------------------------------------------------------------------
 # Formatters for web templates — strings / plain dicts of copy; no print
@@ -476,18 +439,6 @@ def _ai_failure_copy(error_code, detail=None) -> dict:
         },
         "error": error,
     }
-
-
-def format_ai_unavailable_error(reason=None) -> dict:
-    """Return template copy when Gemini is required but unavailable.
-
-    Plain dict for Flask error pages. Students are told AI is required and
-    to try again later. Operators get a GEMINI_API_KEY hint (no secrets).
-    Official SIT Counselling contacts stay visible via speak_to_advisor
-    (high prominence) — this is not a logic-only / tips happy path.
-    """
-    return _ai_failure_copy("unavailable", detail=reason)
-
 
 def format_ai_error(error_code, detail=None) -> dict:
     """Map an AI failure code to the same student-facing error dict.
