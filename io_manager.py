@@ -499,6 +499,38 @@ def print_error(message: str) -> None:
     print(f"Error: {message}")
 
 
+def display_record(record: dict) -> None:
+    """Print one check-in record using format_student_record."""
+    view = format_student_record(record)
+    print(view["heading"])
+    for field in view["fields"]:
+        print(f"  {field['label']}: {field['value']}")
+
+
+def display_list(records: list) -> None:
+    """Print a short one-line summary for each saved record."""
+    if not records:
+        print("No records.")
+        return
+    for number, record in enumerate(records, 1):
+        print(f"{number}. {record.get('student_id', '?')} | "
+              f"{record.get('risk_category', '?')} | {record.get('stress_score', '?')}")
+
+
+def display_result(result: dict) -> None:
+    """Print the outcome of a check-in using the existing formatters."""
+    if not result or not result.get("ok"):
+        code = (result or {}).get("error_code") or (result or {}).get("error")
+        copy = format_ai_error(code)
+        print(copy.get("heading", "We couldn't complete your check-in"))
+        print(copy.get("body", ""))
+        return
+    print(format_soft_label(result.get("soft_label"))["heading"] or result.get("soft_label"))
+    print(f"Stress score: {result.get('stress_score')}")
+    for text in format_tips(result.get("tips"))["texts"]:
+        print(f"  - {text}")
+
+
 def _prompt_until_valid(prompt: str, validator):
     """Read a line, validate, and re-prompt with the error until valid."""
     while True:

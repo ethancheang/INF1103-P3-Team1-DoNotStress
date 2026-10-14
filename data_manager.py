@@ -35,7 +35,7 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 _PACKAGE_ROOT = Path(__file__).resolve().parent
@@ -456,6 +456,28 @@ def save_record(
         "record": stored,
     }
 
+
+def save(
+    record: dict[str, Any],
+    data_path: str | None = None,
+    *,
+    opt_in: Any = False,
+) -> dict[str, Any]:
+    """Append one record. Thin wrapper around save_record (same consent rules)."""
+    return save_record(record, data_path, opt_in=opt_in)
+
+
+def load(data_path: str | None = None) -> list[dict[str, Any]]:
+    """Return all saved records; an empty list if the file is missing or corrupt."""
+    return load_all_records(data_path)["records"]
+
+
+def query(
+    filter_fn: Callable[[dict[str, Any]], Any],
+    data_path: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return the saved records where filter_fn(record) is truthy."""
+    return [record for record in load(data_path) if filter_fn(record)]
 
 def save_pending_record(
     record: dict[str, Any],
