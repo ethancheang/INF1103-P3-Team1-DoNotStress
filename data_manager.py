@@ -340,8 +340,10 @@ def _write_records_file(
         if temporary is not None:
             try:
                 temporary.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                # Safe to ignore: the temp file may already be gone, and any
+                # real write error has already been returned above.
+                logger.debug("Temp file cleanup failed: %s", type(exc).__name__)
 
 
 def load_all_records(
