@@ -28,14 +28,16 @@ a half-written JSON file.
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-
+logger = logging.getLogger(__name__)
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _DEFAULT_DATA_PATH = _PACKAGE_ROOT / "data" / "student_records.json"
 
@@ -250,6 +252,14 @@ def _read_records_file(
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = path.with_name(f"{path.stem}.corrupt-{stamp}.json")
+        try:
+            shutil.copy2(path, backup)
+        except OSError as copy_exc:
+            logger.warning("Corrupt data file %s could not be backed up: %s", path, copy_exc)
+            return False, [], f"Corrupted JSON in data file and backup failed: {exc}"
+        logger.warning("Corrupt data file %s backed up to %s", path, backup)
         return True, [], f"Corrupted JSON in data file: {exc}"
 
     if payload is None:
