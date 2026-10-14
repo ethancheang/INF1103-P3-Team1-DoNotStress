@@ -137,6 +137,4 @@ def load_tests(loader, standard_tests, pattern):
 
 
 if __name__ == "__main__":
-    for fn in _TESTS:
-        fn()
-        print(f"ok  {fn.__name__}")
+    unittest.main()
