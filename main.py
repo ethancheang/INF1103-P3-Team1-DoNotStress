@@ -46,6 +46,8 @@ def process_checkin(record, *, generate_fn=None, max_attempts=3, retry_delay_sec
     ok, enriched, error = ai_manager.analyse_student(
         record, generate_fn=generate_fn, max_attempts=max_attempts,
         retry_delay_sec=retry_delay_sec,
+        instructions=logic_manager.scoring_instructions(),
+        verify_fn=logic_manager.verify_ai_scores,
     )
     if not ok or not isinstance(enriched, dict):
         code = error.get('error_code', 'unavailable') if isinstance(error, dict) else 'unavailable'
