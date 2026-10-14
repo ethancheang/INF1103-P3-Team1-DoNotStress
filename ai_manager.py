@@ -873,6 +873,36 @@ def validate_ai_response(
     return True, normalised
 
 
+def parse_response(raw: Any) -> dict[str, Any] | None:
+    """Extract and parse the JSON object in a raw AI reply.
+
+    Tolerates code fences or text around the object. Returns the dict, or
+    None for empty, non-string or malformed input. Never raises.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        return None
+    start, end = raw.find("{"), raw.rfind("}")
+    if start == -1 or end <= start:
+        return None
+    try:
+        data = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def validate_response(
+    data: Any,
+    answers: Mapping[str, Any] | None = None,
+) -> tuple[bool, Any]:
+    """Check required keys, types and ranges. Thin wrapper around validate_ai_response.
+
+    Returns (True, normalised_dict) or (False, error_message). Never raises.
+    """
+    return validate_ai_response(data, answers)
+
 _RESPONSE_FIELDS = (
     "scored_items",
     "stress_score",
@@ -1106,6 +1136,19 @@ def call_gemini(
         failure_kinds=failure_kinds,
     )
 
+
+def call_api(
+    prompt: str,
+    *,
+    generate_fn: Callable[[str, str, str], str] | None = None,
+    answers: Mapping[str, Any] | None = None,
+) -> tuple[bool, dict[str, Any] | None, dict[str, str] | None]:
+    """Send a prompt to the AI. Thin wrapper around call_gemini.
+
+    Connection errors and timeouts are caught and logged inside call_gemini;
+    this never raises. Returns (ok, validated_fields_or_None, error_or_None).
+    """
+    return call_gemini(prompt, generate_fn=generate_fn, answers=answers)
 
 def analyse_student(
     student_dict: dict[str, Any],
