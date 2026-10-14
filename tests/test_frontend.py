@@ -15,19 +15,17 @@ from plain_tests import case, function_suite
 def fake_generate(prompt, api_key, model_name):
     # Replay the formula on the answers in the prompt so the stub matches
     # whatever the form submitted. No network call.
-    import ai_manager
+    import logic_manager
     if isinstance(prompt, str) and '{' in prompt:
         answers = json.loads(prompt[prompt.rfind('{'):])
     else:
-        answers = {key: 3 for key in ai_manager.RAW_ANSWER_KEYS}
+        answers = {key: 3 for key in logic_manager.ANSWER_KEYS}
         answers['sleep_hours_avg'] = 6.5
-    scored, stress = ai_manager.expected_stress_score(answers)
-    if stress < ai_manager.LOW_BELOW:
-        category, label, prominence = 'Low', "You're doing ok", 'low'
-    elif stress <= ai_manager.HIGH_ABOVE:
-        category, label, prominence = 'Moderate', 'Worth a check-in', 'medium'
-    else:
-        category, label, prominence = 'High', 'Please reach out', 'high'
+    scored = logic_manager.scored_items(answers)
+    stress = logic_manager.score_answers(answers)['stress_score']
+    category = logic_manager.category_for_score(stress)
+    label = logic_manager._CATEGORY_TO_LABEL[category]
+    prominence = logic_manager._CATEGORY_TO_PROMINENCE[category]
     return json.dumps({
         'scored_items': scored, 'stress_score': stress, 'risk_category': category,
         'primary_stressors': ['academic_overload'],
