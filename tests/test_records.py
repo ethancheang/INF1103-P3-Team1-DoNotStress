@@ -39,6 +39,16 @@ class RecordsTests(unittest.TestCase):
             self.assertTrue(io_manager.validate_student_id(sid)[0],sid)
         for sid in ('1200000','3000000','260350','26035030','2abc503','2１２３４５６',''):
             self.assertFalse(io_manager.validate_student_id(sid)[0],sid)
+    
+    def test_corrupt_file_is_backed_up_before_save(self):
+            import data_manager
+            self.path.write_text('[{"student_id": "2603503"', encoding='utf-8')
+            with self.assertLogs('data_manager', level='WARNING'):
+                result = data_manager.save_pending_record({'student_id': '2000123'}, str(self.path), opt_in=True)
+            self.assertTrue(result['ok'])
+            backups = list(Path(self.temp.name).glob('records.corrupt-*.json'))
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_text(encoding='utf-8'), '[{"student_id": "2603503"')
 
     def test_missing_file_is_empty(self):
         response=self.client.get('/api/records')
