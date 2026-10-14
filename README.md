@@ -1,4 +1,19 @@
 # INF1103-P3-Team1-DoNotStress
+## Problem
+University students often don't notice their stress building until it affects their studies, sleep or wellbeing, and many don't reach out for support early. Existing counselling services rely on students coming forward themselves.
+
+## Objectives
+- Give SIT students a quick, private stress check-in based on validated research questions (PSS-4, MSPSS and others) on a 1–5 scale.
+- Use Gemini AI to analyse each check-in and return a structured stress score, tier and personalised tips.
+- Point students to SIT Counselling and helplines, especially when stress is high or a safety concern is detected.
+- Let SIT wellbeing staff view records through an admin-only page to spot students who may need support.
+
+## Target users
+SIT students (check-ins) and SIT wellbeing staff (admin records view).
+
+## Industry relevance
+Student mental health is a growing priority for universities. DoNotStress shows how AI can support early-warning wellbeing screening, while staying non-diagnostic and protecting student privacy (Student IDs are never sent to the AI).
+
 
 Student wellbeing app with a campus check-in UI and the team's AI/backend pipeline.
 
