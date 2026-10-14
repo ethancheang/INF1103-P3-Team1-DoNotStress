@@ -5,13 +5,19 @@ Sole owner of Gemini prompt construction, structured JSON API calls,
 schema validation, and graceful retries.
 
 Audience: students (local Flask web UI). Gemini calculates the stress
-average from the 11 raw answers with a fixed formula. This layer checks
-that calculation. It does not send a student id, a reflection, or any
-precomputed score, flag, or tier. It never invents soft_label / tips /
-speak_prominence when Gemini fails, and it never falls back to logic_manager.
+average from the 11 raw answers. This layer holds no domain logic: the
+caller (main.py) passes in the scoring instructions for the prompt and a
+check function, both from logic_manager, so the rules live in one place.
+A reply that fails that check is treated like any other invalid response
+and retried. This layer itself only builds the prompt, calls the API and
+validates the reply's schema: required keys, types, ranges and allow-lists.
+
+It does not send a student id, a reflection, or any precomputed score,
+flag, or tier. It never invents soft_label / tips / speak_prominence when
+Gemini fails, and it never falls back to logic_manager.
 
 Pure procedural Python: functions only.
-No terminal I/O (print / input), no Intervention Tier rules, no file persistence.
+No terminal I/O (print / input), no business rules, no file persistence.
 
 Pipeline position:
   User → io_manager → ai_manager (required) → data_manager
@@ -49,9 +55,6 @@ RAW_ANSWER_KEYS = (
     "mspss_family",
 )
 STUDENT_PROMPT_FIELDS = RAW_ANSWER_KEYS + ("survey_version",)
-
-# Positively worded items: a high answer means less stress, not more.
-POSITIVE_ITEM_KEYS = ("pss_2", "pss_3", "mspss_friends", "mspss_family")
 
 # Wording and answer labels only. Scoring stays outside this module.
 # Callers may pass survey.QUESTIONS (same key / prompt / options shape).
@@ -194,31 +197,12 @@ ALLOWED_TIP_IDS = frozenset(
     }
 )
 
-# Bands for the calculated stress_score. Same cut-offs as the check-in guide:
-# Low below 2.5, Moderate from 2.5 to 3.5 inclusive, High above 3.5.
+# Allowed range for stress_score in Gemini's reply (a schema range check).
+# The tier cut-offs are logic_manager's, not this module's.
 STRESS_SCORE_MIN = 1.0
 STRESS_SCORE_MAX = 5.0
-LOW_BELOW = 2.5
-HIGH_ABOVE = 3.5
 
-_LABEL_FOR_CATEGORY = {
-    "Low": SOFT_LABEL_OK,
-    "Moderate": SOFT_LABEL_CHECK_IN,
-    "High": SOFT_LABEL_REACH_OUT,
-}
-_PROMINENCE_FOR_CATEGORY = {
-    "Low": "low",
-    "Moderate": "medium",
-    "High": "high",
-}
-# Callers such as data_manager still store this string. Gemini is not asked for it.
-_RECOMMENDED_SUPPORT = {
-    "Low": "Internal: low stress. The UI shows tips, not this field.",
-    "Moderate": "Internal: moderate stress. The UI shows tips, not this field.",
-    "High": "Internal: high stress. The UI shows tips, not this field.",
-}
-
-# What Gemini must return. risk_score and recommended_support are added in code.
+# What Gemini must return. risk_score and recommended_support are added by logic_manager.
 _REQUIRED_FIELDS = (
     "scored_items",
     "stress_score",
@@ -231,9 +215,6 @@ _REQUIRED_FIELDS = (
     "speak_prominence",
 )
 
-# stress_score must sit this close to the recomputed mean (2 decimal places).
-_STRESS_SCORE_TOLERANCE = 0.01
-
 # Named models only. gemini-3.6-flash first, then older fixed names.
 # No moving alias such as gemini-flash-latest.
 MODEL_CHAIN = (
@@ -243,7 +224,8 @@ MODEL_CHAIN = (
 )
 _DEFAULT_MODEL = MODEL_CHAIN[0]
 _FALLBACK_MODELS = MODEL_CHAIN[1:]
-_DEFAULT_TEMPERATURE = 0.2
+# 0 = most repeatable replies for the same answers (brief C4).
+_DEFAULT_TEMPERATURE = 0.0
 _DEFAULT_MAX_ATTEMPTS = 3
 _DEFAULT_RETRY_DELAY_SEC = 0.5
 _DEFAULT_TIMEOUT_SEC = 30.0
@@ -479,7 +461,7 @@ def _format_question(question: Mapping[str, Any]) -> str:
     key = str(question.get("key", "")).strip()
     wording = str(question.get("prompt", "")).strip()
     options = question.get("options")
-    positive = bool(question.get("reverse")) or key in POSITIVE_ITEM_KEYS
+    positive = bool(question.get("reverse"))
     tone = " Positively worded: a high answer means less stress." if positive else ""
     if options:
         labels = ", ".join(
@@ -501,13 +483,17 @@ def _format_question(question: Mapping[str, Any]) -> str:
 def build_prompt(
     student_dict: dict[str, Any],
     questions: Sequence[Mapping[str, Any]] | None = None,
+    instructions: str | None = None,
 ) -> str:
     """
     Ask Gemini to calculate stress_score from the raw check-in.
 
     The JSON body is only the 11 answers and survey_version. Question wording
-    and answer-option labels are instructions, not scored fields. The prompt
-    gives the conversion formula; this module checks the result afterwards.
+    and answer-option labels are instructions, not scored fields.
+
+    `instructions` is the scoring formula and tier rules, written by
+    logic_manager.scoring_instructions() and passed in by main.py. This module
+    does not know those rules itself.
 
     `questions` defaults to DEFAULT_QUESTIONS so this module does not import
     survey. Each item needs `key` and `prompt`. Likert items include `options`
@@ -522,7 +508,7 @@ def build_prompt(
     stressor_list = ", ".join(sorted(ALLOWED_PRIMARY_STRESSORS))
     tip_id_list = ", ".join(sorted(ALLOWED_TIP_IDS))
     soft_label_list = ", ".join(f'"{label}"' for label in SOFT_LABELS)
-    positive = ", ".join(POSITIVE_ITEM_KEYS)
+    scoring_rules = instructions or ""
 
     return (
         "You are a supportive student-wellbeing assistant for DoNotStress, "
@@ -530,22 +516,7 @@ def build_prompt(
         "Calculate stress_score from the 11 answers with the formula below. "
         "You are not given a score, a tier, or a written reflection. "
         "Do not diagnose, and do not invent contacts.\n"
-        "Convert each answer onto the 1 to 5 stress scale:\n"
-        f"- {positive} are positively worded. Convert each as 6 - answer.\n"
-        "- sleep_hours_avg is hours from 0 to 14 in half-hour steps. "
-        "Convert it as: 8 or more hours -> 1, 7 or more -> 2, 6 or more -> 3, "
-        "5 or more -> 4, otherwise 5.\n"
-        "- Every other answer is already on the 1 to 5 scale. Use the number as answered.\n"
-        "stress_score is the mean of those 11 converted values, rounded to 2 decimal places. "
-        "Higher stress is worse.\n"
-        "Then set the tier from that stress_score:\n"
-        f"- below {LOW_BELOW:g}: risk_category Low, soft_label \"{SOFT_LABEL_OK}\", "
-        "speak_prominence low\n"
-        f"- {LOW_BELOW:g} to {HIGH_ABOVE:g} inclusive: risk_category Moderate, "
-        f"soft_label \"{SOFT_LABEL_CHECK_IN}\", speak_prominence medium\n"
-        f"- above {HIGH_ABOVE:g}: risk_category High, "
-        f"soft_label \"{SOFT_LABEL_REACH_OUT}\", speak_prominence high\n"
-        "These bands are a simple guide for this check-in, not clinical cut-offs.\n"
+        f"{scoring_rules}"
         f"Question wording and answer labels:\n{wording}\n"
         "Speak to the student with warmth. Return ONLY a single JSON object "
         "(no markdown fences, no commentary) with exactly these keys:\n"
@@ -603,64 +574,6 @@ def _as_stress_score(value: Any) -> tuple[bool, Any]:
     return True, number
 
 
-def _category_for_stress_score(stress_score: float) -> str:
-    """Low below 2.5, Moderate from 2.5 to 3.5 inclusive, High above 3.5."""
-    if stress_score < LOW_BELOW:
-        return "Low"
-    if stress_score <= HIGH_ABOVE:
-        return "Moderate"
-    return "High"
-
-
-def _risk_score_from_stress(stress_score: float) -> float:
-    """Map 1–5 stress onto 0–1. Not a probability, and not asked of Gemini."""
-    return (stress_score - STRESS_SCORE_MIN) / (STRESS_SCORE_MAX - STRESS_SCORE_MIN)
-
-
-def _convert_answer(key: str, raw: Any) -> int | None:
-    """Map one raw answer onto the 1–5 stress scale, or None when it cannot."""
-    if isinstance(raw, bool) or raw is None:
-        return None
-    try:
-        number = float(raw)
-    except (TypeError, ValueError):
-        return None
-    if not math.isfinite(number):
-        return None
-    if key == "sleep_hours_avg":
-        if number >= 8:
-            return 1
-        if number >= 7:
-            return 2
-        if number >= 6:
-            return 3
-        if number >= 5:
-            return 4
-        return 5
-    if key in POSITIVE_ITEM_KEYS:
-        number = 6 - number
-    if number != int(number):
-        return None
-    converted = int(number)
-    if converted < 1 or converted > 5:
-        return None
-    return converted
-
-
-def expected_stress_score(answers: Mapping[str, Any]) -> tuple[dict[str, int], float]:
-    """Convert the 11 answers and return (scored_items, mean rounded to 2 decimals)."""
-    if not isinstance(answers, Mapping):
-        raise ValueError("answers must include the 11 raw check-in values.")
-    scored: dict[str, int] = {}
-    for key in RAW_ANSWER_KEYS:
-        converted = _convert_answer(key, answers.get(key))
-        if converted is None:
-            raise ValueError(f"Cannot convert {key} onto the 1-5 stress scale.")
-        scored[key] = converted
-    average = round(sum(scored.values()) / len(RAW_ANSWER_KEYS), 2)
-    return scored, average
-
-
 def _normalise_soft_label(value: Any) -> tuple[bool, Any]:
     if not isinstance(value, str):
         return False, "soft_label must be a string."
@@ -713,26 +626,6 @@ def _normalise_tips(value: Any) -> tuple[bool, Any]:
     return True, cleaned
 
 
-def _tier_consistency_error(
-    stress_score: float,
-    risk_category: str,
-    soft_label: str,
-    speak_prominence: str,
-) -> str | None:
-    """Reject a tier that does not match stress_score. None means consistent."""
-    expected_category = _category_for_stress_score(stress_score)
-    if risk_category != expected_category:
-        return (
-            f"risk_category must be {expected_category} for "
-            f"stress_score {stress_score}."
-        )
-    if soft_label != _LABEL_FOR_CATEGORY[risk_category]:
-        return "soft_label must match risk_category."
-    if speak_prominence != _PROMINENCE_FOR_CATEGORY[risk_category]:
-        return "speak_prominence must match risk_category."
-    return None
-
-
 def _normalise_scored_items(value: Any) -> tuple[bool, Any]:
     """Require an object of the 11 converted integers, each from 1 to 5."""
     if not isinstance(value, dict):
@@ -748,41 +641,13 @@ def _normalise_scored_items(value: Any) -> tuple[bool, Any]:
     return True, cleaned
 
 
-def _formula_mismatch(
-    stress_score: float,
-    scored_items: dict[str, int],
-    answers: Mapping[str, Any],
-) -> str | None:
-    """None when Gemini's items and average match the raw answers."""
-    try:
-        expected_items, expected_score = expected_stress_score(answers)
-    except ValueError as exc:
-        return str(exc)
-    if scored_items != expected_items:
-        return "scored_items does not match the converted answers."
-    if abs(stress_score - expected_score) > _STRESS_SCORE_TOLERANCE:
-        return (
-            "stress_score must match the mean of the 11 converted answers "
-            f"(expected {expected_score})."
-        )
-    return None
-
-
-def validate_ai_response(
-    payload: Any,
-    answers: Mapping[str, Any] | None = None,
-) -> tuple[bool, Any]:
+def validate_ai_response(payload: Any) -> tuple[bool, Any]:
     """
-    Validate Gemini JSON against the student schema and allow-lists.
+    Validate Gemini JSON against the response schema and allow-lists.
 
-    stress_score is the mean Gemini calculated. risk_score is
-    (stress_score - 1) / 4, computed here. recommended_support is a short
-    internal string, also computed here. A tier that disagrees with
-    stress_score is invalid.
-
-    When `answers` is given, scored_items must match the formula exactly and
-    stress_score must be within 0.01 of that mean. Omit `answers` to skip
-    that check. analyse_student always passes the raw answers.
+    Checks required keys, types, ranges and allowed values only. Whether the
+    numbers and tier are right for the answers is a domain rule, checked by
+    the verify_fn the caller passes to call_gemini (logic_manager's).
 
     Returns (True, normalised_dict) or (False, error_message).
     Never raises for malformed payloads.
@@ -846,24 +711,11 @@ def validate_ai_response(
         return False, 'speak_prominence must be "low", "medium", or "high".'
     speak_prominence = speak_prominence.strip()
 
-    mismatch = _tier_consistency_error(
-        stress_score, risk_category, soft_label, speak_prominence
-    )
-    if mismatch:
-        return False, mismatch
-
-    if answers is not None:
-        formula_error = _formula_mismatch(stress_score, scored_items, answers)
-        if formula_error:
-            return False, formula_error
-
     normalised = {
         "scored_items": scored_items,
         "stress_score": stress_score,
-        "risk_score": _risk_score_from_stress(stress_score),
         "risk_category": risk_category,
         "primary_stressors": stressors,
-        "recommended_support": _RECOMMENDED_SUPPORT[risk_category],
         "confidence": confidence,
         "reasoning": reasoning.strip(),
         "soft_label": soft_label,
@@ -893,15 +745,29 @@ def parse_response(raw: Any) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def validate_response(
-    data: Any,
-    answers: Mapping[str, Any] | None = None,
-) -> tuple[bool, Any]:
+def validate_response(data: Any) -> tuple[bool, Any]:
     """Check required keys, types and ranges. Thin wrapper around validate_ai_response.
 
     Returns (True, normalised_dict) or (False, error_message). Never raises.
     """
-    return validate_ai_response(data, answers)
+    return validate_ai_response(data)
+
+
+def _run_check(
+    verify_fn: Callable[[dict[str, Any], Mapping[str, Any]], str | None],
+    ai_fields: dict[str, Any],
+    answers: Mapping[str, Any],
+) -> str | None:
+    """Run the caller's domain check on a schema-valid reply. Never raises.
+
+    Returns the problem as text, or None when the reply passes.
+    """
+    try:
+        problem = verify_fn(ai_fields, answers)
+    except Exception as exc:  # noqa: BLE001 — a broken check must not crash the pipeline
+        return f"Score check could not run: {exc}"
+    return str(problem) if problem else None
+
 
 _RESPONSE_FIELDS = (
     "scored_items",
@@ -943,7 +809,7 @@ RESPONSE_SCHEMA: dict[str, Any] = {
         "risk_category": {
             "type": "STRING",
             "enum": ["Low", "Moderate", "High"],
-            "description": "Low below 2.5, Moderate from 2.5 to 3.5 inclusive, High above 3.5.",
+            "description": "The tier for stress_score, following the rules in the prompt.",
         },
         "soft_label": {
             "type": "STRING",
@@ -1033,6 +899,7 @@ def call_gemini(
     retry_delay_sec: float = _DEFAULT_RETRY_DELAY_SEC,
     generate_fn: Callable[[str, str, str], str] | None = None,
     answers: Mapping[str, Any] | None = None,
+    verify_fn: Callable[[dict[str, Any], Mapping[str, Any]], str | None] | None = None,
 ) -> tuple[bool, dict[str, Any] | None, dict[str, str] | None]:
     """
     Call Gemini with structured JSON output, validate schema, then fall back.
@@ -1041,8 +908,12 @@ def call_gemini(
     gemini-3.5-flash-lite. Any API failure moves to the next model.
     A missing API key stops immediately. HTTP 429 does not retry the same
     model. A timeout or bad JSON may be tried once more on that same model.
-    The generator is called at most MAX_TOTAL_CALLS times. When `answers`
-    is given, a scored_items or stress_score mismatch is bad JSON.
+    The generator is called at most MAX_TOTAL_CALLS times.
+
+    When both `verify_fn` and `answers` are given, each schema-valid reply is
+    also passed to verify_fn(reply, answers). A returned message means the
+    reply is wrong for these answers; it is handled like bad JSON (retried,
+    then invalid_response). main.py passes logic_manager.verify_ai_scores.
 
     Returns (ok, validated_ai_dict_or_None, error_or_None).
     On failure, error is {"error_code", "detail", "source": "gemini"}.
@@ -1106,7 +977,11 @@ def call_gemini(
                 move_on = True
                 break
 
-            ok, result = validate_ai_response(raw_text, answers)
+            ok, result = validate_ai_response(raw_text)
+            if ok and verify_fn is not None and answers is not None:
+                problem = _run_check(verify_fn, result, answers)
+                if problem:
+                    ok, result = False, problem
             if ok:
                 return True, _mark_gemini_success(result), None
 
@@ -1142,13 +1017,15 @@ def call_api(
     *,
     generate_fn: Callable[[str, str, str], str] | None = None,
     answers: Mapping[str, Any] | None = None,
+    verify_fn: Callable[[dict[str, Any], Mapping[str, Any]], str | None] | None = None,
 ) -> tuple[bool, dict[str, Any] | None, dict[str, str] | None]:
     """Send a prompt to the AI. Thin wrapper around call_gemini.
 
     Connection errors and timeouts are caught and logged inside call_gemini;
     this never raises. Returns (ok, validated_fields_or_None, error_or_None).
     """
-    return call_gemini(prompt, generate_fn=generate_fn, answers=answers)
+    return call_gemini(prompt, generate_fn=generate_fn, answers=answers, verify_fn=verify_fn)
+
 
 def analyse_student(
     student_dict: dict[str, Any],
@@ -1159,6 +1036,8 @@ def analyse_student(
     retry_delay_sec: float = _DEFAULT_RETRY_DELAY_SEC,
     generate_fn: Callable[[str, str, str], str] | None = None,
     questions: Sequence[Mapping[str, Any]] | None = None,
+    instructions: str | None = None,
+    verify_fn: Callable[[dict[str, Any], Mapping[str, Any]], str | None] | None = None,
 ) -> tuple[bool, dict[str, Any] | None, dict[str, str] | None]:
     """
     Entry point for the AI Processing Layer.
@@ -1168,8 +1047,9 @@ def analyse_student(
     source="gemini" so Data/Flask can trust Gemini processing.
 
     `questions` is forwarded to build_prompt. Leave it unset to use the
-    built-in wording catalog. The raw answers are always passed into
-    validation so scored_items and stress_score are checked against the formula.
+    built-in wording catalog. `instructions` (the scoring rules for the
+    prompt) and `verify_fn` (the check on each reply) come from
+    logic_manager via main.py; the raw answers are passed to verify_fn.
 
     Returns (ok, enriched_record_or_None, error_or_None). Never raises for
     API / schema failures. On failure the record is None (no invented
@@ -1181,7 +1061,7 @@ def analyse_student(
             "student_dict must be a dict from io_manager.",
         )
 
-    prompt = build_prompt(student_dict, questions)
+    prompt = build_prompt(student_dict, questions, instructions)
     ok, ai_fields, err = call_gemini(
         prompt,
         api_key=api_key,
@@ -1190,6 +1070,7 @@ def analyse_student(
         retry_delay_sec=retry_delay_sec,
         generate_fn=generate_fn,
         answers=student_dict,
+        verify_fn=verify_fn,
     )
     if not ok or ai_fields is None:
         return False, None, err
