@@ -249,11 +249,6 @@ def apply_logic(record: dict[str, Any]) -> dict[str, Any]:
     return enriched
 
 
-def finalize_outcome(record: dict[str, Any]) -> dict[str, Any]:
-    """Alias of apply_logic — finalize a Gemini-enriched record."""
-    return apply_logic(record)
-
-
 def score_answers(record: dict[str, Any]) -> dict[str, Any]:
     """
     Deterministic score of the 11 answers. Caller must pass usable numbers.
