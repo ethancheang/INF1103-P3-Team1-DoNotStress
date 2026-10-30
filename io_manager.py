@@ -248,321 +248,429 @@ def _sanitize_operator_detail(raw) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Normalize helpers (Flask request.form strings)
+# Object-oriented validation, formatting, and console adapters.
 # ---------------------------------------------------------------------------
 
-def normalize_form_value(raw) -> str:
-    """Strip a single form value. None becomes ''."""
-    return _as_text(raw)
 
+class InputValidator:
+    """Validate one submission at a time without retaining student answers."""
 
-# ---------------------------------------------------------------------------
-# Validators — validate_X(raw) -> (ok, value_or_error)
-# ---------------------------------------------------------------------------
+    def __init__(self, survey_definition=survey):
+        self._survey = survey_definition
 
-def validate_student_id(raw) -> tuple[bool, str]:
-    """Require exactly seven ASCII digits, beginning with 2."""
-    text = _as_text(raw)
-    if len(text) != 7 or not text.isascii() or not text.isdigit() or not text.startswith("2"):
-        return False, "Student ID must be exactly 7 digits and start with 2 (e.g. 2605581)."
-    return True, text
+    @property
+    def questions(self):
+        """Question definitions shared by form and console validation."""
+        return self._survey.QUESTIONS
 
-def validate_feelings_text(raw):
-    if raw is not None and not isinstance(raw, str):
-        return False, 'Please enter text or leave this blank.'
-    text = _as_text(raw)
-    if len(text) > 2000:
-        return False, 'Please keep your reflection within 2,000 characters.'
-    return True, text
+    def validate_question(self, raw, question):
+        return self._survey.validate_question(raw, question)
 
+    def normalize_form_value(self, raw) -> str:
+        """Strip a single form value. None becomes ''."""
+        return _as_text(raw)
 
-def validate_student_form(form_dict):
-    record, errors = {}, {}
-    ok, value = validate_student_id(_form_get(form_dict, 'student_id'))
-    (record if ok else errors)['student_id'] = value
-    for q in survey.QUESTIONS:
-        ok, value = survey.validate_question(_form_get(form_dict, q['key']), q)
-        (record if ok else errors)[q['key']] = value
-    ok, text = validate_feelings_text(_form_get(form_dict, 'feelings_text'))
-    if not ok:
-        errors['feelings_text'] = text
-    if errors:
-        return False, errors
-    # Reflection is checked locally on the server, then discarded. Never sent
-    # to Gemini or retained in pending/saved records.
-    record['safety_flag'] = survey.safety_check(text)
-    record['survey_version'] = survey.VERSION
-    return True, record
-
-# ---------------------------------------------------------------------------
-# Formatters for web templates — strings / plain dicts of copy; no print
-# ---------------------------------------------------------------------------
-
-def format_soft_label(soft_label) -> dict:
-    """Return template copy for a soft label.
-
-    soft_label must be one of SOFT_LABELS:
-      "You're doing ok" | "Worth a check-in" | "Please reach out"
-    """
-    text = _as_text(soft_label)
-    copy = SOFT_LABEL_COPY.get(text)
-    if copy is None:
-        allowed = ", ".join(f'"{label}"' for label in SOFT_LABELS)
-        return {
-            "label": "",
-            "heading": "",
-            "body": "",
-            "tone": "",
-            "error": f"Unknown soft label. Use one of: {allowed}.",
-        }
-    return {
-        "label": copy["label"],
-        "heading": copy["heading"],
-        "body": copy["body"],
-        "tone": copy["tone"],
-        "error": None,
-    }
-
-
-def format_tips(tips) -> dict:
-    """Return template copy for an allow-listed tip list.
-
-    `tips` is a list of tip IDs (preferred) or exact allow-list strings.
-    Unknown tips are dropped — this formatter never invents copy.
-    Duplicates keep the first occurrence only.
-    """
-    items = []
-    seen = set()
-    if tips is None:
-        tips = []
-    for raw in tips:
+    def validate_student_id(self, raw) -> tuple[bool, str]:
+        """Require exactly seven ASCII digits, beginning with 2."""
         text = _as_text(raw)
-        if not text or text in seen:
-            continue
-        tip_id = None
-        tip_text = None
-        if text in TIPS_ALLOWLIST:
-            tip_id = text
-            tip_text = TIPS_ALLOWLIST[text]
-        else:
-            for known_id, known_text in TIPS_ALLOWLIST.items():
-                if text == known_text:
-                    tip_id = known_id
-                    tip_text = known_text
-                    break
-        if tip_id is None:
-            continue
-        seen.add(tip_id)
-        seen.add(tip_text)
-        items.append({"id": tip_id, "text": tip_text})
-    return {
-        "heading": "Suggestions for you",
-        "items": items,
-        "texts": [item["text"] for item in items],
-    }
+        if len(text) != 7 or not text.isascii() or not text.isdigit() or not text.startswith("2"):
+            return False, "Student ID must be exactly 7 digits and start with 2 (e.g. 2605581)."
+        return True, text
+
+    def validate_feelings_text(self, raw):
+        if raw is not None and not isinstance(raw, str):
+            return False, 'Please enter text or leave this blank.'
+        text = _as_text(raw)
+        if len(text) > 2000:
+            return False, 'Please keep your reflection within 2,000 characters.'
+        return True, text
+
+    def validate_student_form(self, form_dict):
+        record, errors = {}, {}
+        ok, value = self.validate_student_id(_form_get(form_dict, 'student_id'))
+        (record if ok else errors)['student_id'] = value
+        for q in self.questions:
+            ok, value = self.validate_question(_form_get(form_dict, q['key']), q)
+            (record if ok else errors)[q['key']] = value
+        ok, text = self.validate_feelings_text(_form_get(form_dict, 'feelings_text'))
+        if not ok:
+            errors['feelings_text'] = text
+        if errors:
+            return False, errors
+        # Reflection is checked locally on the server, then discarded. Never sent
+        # to Gemini or retained in pending/saved records.
+        record['safety_flag'] = self._survey.safety_check(text)
+        record['survey_version'] = self._survey.VERSION
+        return True, record
 
 
-def format_speak_to_advisor_panel(speak_prominence) -> dict:
-    """Return the Speak-to-Advisor panel copy and hardcoded contacts.
+class ResultFormatter:
+    """Build presentation dictionaries without scoring or storing records."""
 
-    speak_prominence is "low" | "medium" | "high" and changes tone only.
-    Contacts are always the same real values — never invented:
-      email    SITCounselling@SingaporeTech.edu.sg
-      helpline 6592 2030 (SIT Counselling 24-hour helpline)
-      sos      1767
-      mindline 1771
-      mailto   mailto:SITCounselling@SingaporeTech.edu.sg
+    def format_soft_label(self, soft_label) -> dict:
+        """Return template copy for a soft label.
 
-    Unknown prominence still includes those contacts and uses medium copy.
-    """
-    prominence = _as_text(speak_prominence).lower()
-    copy = SPEAK_PANEL_COPY.get(prominence)
-    error = None
-    if copy is None:
-        prominence = "medium"
-        copy = SPEAK_PANEL_COPY["medium"]
-        allowed = ", ".join(SPEAK_PROMINENCE)
-        error = f"Unknown speak_prominence. Use one of: {allowed}."
-    return {
-        "prominence": prominence,
-        "heading": copy["heading"],
-        "body": copy["body"],
-        "cta": copy["cta"],
-        "email": ADVISOR_EMAIL,
-        "helpline": ADVISOR_HELPLINE,
-        "sos": SOS_HELPLINE,
-        "mindline": MINDLINE_HELPLINE,
-        "mailto": ADVISOR_MAILTO,
-        "contacts": dict(ADVISOR_CONTACTS),
-        "error": error,
-    }
+        soft_label must be one of SOFT_LABELS:
+          "You're doing ok" | "Worth a check-in" | "Please reach out"
+        """
+        text = _as_text(soft_label)
+        copy = SOFT_LABEL_COPY.get(text)
+        if copy is None:
+            allowed = ", ".join(f'"{label}"' for label in SOFT_LABELS)
+            return {
+                "label": "",
+                "heading": "",
+                "body": "",
+                "tone": "",
+                "error": f"Unknown soft label. Use one of: {allowed}.",
+            }
+        return {
+            "label": copy["label"],
+            "heading": copy["heading"],
+            "body": copy["body"],
+            "tone": copy["tone"],
+            "error": None,
+        }
 
+    def format_tips(self, tips) -> dict:
+        """Return template copy for an allow-listed tip list.
 
-def _ai_failure_copy(error_code, detail=None) -> dict:
-    """Shared payload for AI-required failure pages (no soft-label happy path)."""
-    code = _as_text(error_code).lower()
-    unknown = False
-    if code not in AI_ERROR_CODES:
-        unknown = bool(code)
-        code = "unavailable"
-    if not code:
-        code = "unavailable"
+        `tips` is a list of tip IDs (preferred) or exact allow-list strings.
+        Unknown tips are dropped — this formatter never invents copy.
+        Duplicates keep the first occurrence only.
+        """
+        items = []
+        seen = set()
+        if tips is None:
+            tips = []
+        for raw in tips:
+            text = _as_text(raw)
+            if not text or text in seen:
+                continue
+            tip_id = None
+            tip_text = None
+            if text in TIPS_ALLOWLIST:
+                tip_id = text
+                tip_text = TIPS_ALLOWLIST[text]
+            else:
+                for known_id, known_text in TIPS_ALLOWLIST.items():
+                    if text == known_text:
+                        tip_id = known_id
+                        tip_text = known_text
+                        break
+            if tip_id is None:
+                continue
+            seen.add(tip_id)
+            seen.add(tip_text)
+            items.append({"id": tip_id, "text": tip_text})
+        return {
+            "heading": "Suggestions for you",
+            "items": items,
+            "texts": [item["text"] for item in items],
+        }
 
-    body = AI_RATE_LIMITED_BODY if code == "rate_limited" else AI_UNAVAILABLE_BODY
-    hint = AI_ERROR_HINTS[code]
-    reason = _sanitize_operator_detail(detail)
-    if reason:
-        hint = f"{hint} Detail: {reason}."
+    def format_speak_to_advisor_panel(self, speak_prominence) -> dict:
+        """Return the Speak-to-Advisor panel copy and hardcoded contacts.
 
-    panel = format_speak_to_advisor_panel("high")
-    error = None
-    if unknown:
-        allowed = ", ".join(AI_ERROR_CODES)
-        error = f"Unknown AI error_code. Use one of: {allowed}."
+        speak_prominence is "low" | "medium" | "high" and changes tone only.
+        Contacts are always the same real values — never invented:
+          email    SITCounselling@SingaporeTech.edu.sg
+          helpline 6592 2030 (SIT Counselling 24-hour helpline)
+          sos      1767
+          mindline 1771
+          mailto   mailto:SITCounselling@SingaporeTech.edu.sg
 
-    return {
-        "heading": AI_UNAVAILABLE_HEADING,
-        "body": body,
-        "message": body,
-        "hint": hint,
-        "action_label": AI_UNAVAILABLE_ACTION_LABEL,
-        "tone": AI_UNAVAILABLE_TONE,
-        "ai_required": True,
-        "error_code": code,
-        "reason": reason,
-        "speak_to_advisor": panel,
-        "email": ADVISOR_EMAIL,
-        "helpline": ADVISOR_HELPLINE,
-        "mailto": ADVISOR_MAILTO,
-        "contacts": {
+        Unknown prominence still includes those contacts and uses medium copy.
+        """
+        prominence = _as_text(speak_prominence).lower()
+        copy = SPEAK_PANEL_COPY.get(prominence)
+        error = None
+        if copy is None:
+            prominence = "medium"
+            copy = SPEAK_PANEL_COPY["medium"]
+            allowed = ", ".join(SPEAK_PROMINENCE)
+            error = f"Unknown speak_prominence. Use one of: {allowed}."
+        return {
+            "prominence": prominence,
+            "heading": copy["heading"],
+            "body": copy["body"],
+            "cta": copy["cta"],
+            "email": ADVISOR_EMAIL,
+            "helpline": ADVISOR_HELPLINE,
+            "sos": SOS_HELPLINE,
+            "mindline": MINDLINE_HELPLINE,
+            "mailto": ADVISOR_MAILTO,
+            "contacts": dict(ADVISOR_CONTACTS),
+            "error": error,
+        }
+
+    def _ai_failure_copy(self, error_code, detail=None) -> dict:
+        """Shared payload for AI-required failure pages (no soft-label happy path)."""
+        code = _as_text(error_code).lower()
+        unknown = False
+        if code not in AI_ERROR_CODES:
+            unknown = bool(code)
+            code = "unavailable"
+        if not code:
+            code = "unavailable"
+
+        body = AI_RATE_LIMITED_BODY if code == "rate_limited" else AI_UNAVAILABLE_BODY
+        hint = AI_ERROR_HINTS[code]
+        reason = _sanitize_operator_detail(detail)
+        if reason:
+            hint = f"{hint} Detail: {reason}."
+
+        panel = self.format_speak_to_advisor_panel("high")
+        error = None
+        if unknown:
+            allowed = ", ".join(AI_ERROR_CODES)
+            error = f"Unknown AI error_code. Use one of: {allowed}."
+
+        return {
+            "heading": AI_UNAVAILABLE_HEADING,
+            "body": body,
+            "message": body,
+            "hint": hint,
+            "action_label": AI_UNAVAILABLE_ACTION_LABEL,
+            "tone": AI_UNAVAILABLE_TONE,
+            "ai_required": True,
+            "error_code": code,
+            "reason": reason,
+            "speak_to_advisor": panel,
             "email": ADVISOR_EMAIL,
             "helpline": ADVISOR_HELPLINE,
             "mailto": ADVISOR_MAILTO,
-        },
-        "error": error,
-    }
+            "contacts": {
+                "email": ADVISOR_EMAIL,
+                "helpline": ADVISOR_HELPLINE,
+                "mailto": ADVISOR_MAILTO,
+            },
+            "error": error,
+        }
+
+    def format_ai_error(self, error_code, detail=None) -> dict:
+        """Map an AI failure code to the same student-facing error dict.
+
+        Known codes: missing_api_key, timeout, invalid_response,
+        retries_exhausted, rate_limited, unavailable. rate_limited uses calm
+        student copy. Unknown codes still return a valid error page
+        (unavailable copy + contacts) and set `error`.
+        """
+        return self._ai_failure_copy(error_code, detail=detail)
+
+    def format_student_record(self, record: dict) -> dict:
+        """Return a plain dict of labelled values for a confirmation template."""
+        if not record:
+            return {
+                "heading": "Your check-in",
+                "fields": [],
+                "empty": True,
+            }
+        fields = []
+        for key in RECORD_FIELD_ORDER:
+            if key not in record:
+                continue
+            value = record[key]
+            if key == "feelings_text":
+                display = str(value).strip() if value is not None else ""
+                if not display:
+                    display = "(skipped)"
+            elif key == "sleep_hours_avg" and value is not None:
+                display = f"{float(value):.1f}"
+            elif value is not None and survey.QUESTION_MAP.get(key, {}).get("options"):
+                q = survey.QUESTION_MAP[key]
+                display = f"{value} · {q['options'][int(value) - q['min']]}"
+            else:
+                display = "(skipped)" if value is None else str(value)
+            fields.append({
+                "key": key,
+                "label": FORM_PROMPTS[key],
+                "value": display,
+            })
+        return {
+            "heading": "Your check-in",
+            "fields": fields,
+            "empty": len(fields) == 0,
+        }
+
+
+class ConsoleIO:
+    """Console adapter composed from validation and presentation services."""
+
+    def __init__(self, validator=None, formatter=None, *, read=None, write=None):
+        self._validator = validator if validator is not None else InputValidator()
+        self._formatter = formatter if formatter is not None else ResultFormatter()
+        self._read = read
+        self._write = write
+
+    def _read_line(self, prompt):
+        return (self._read if self._read is not None else input)(prompt)
+
+    def _write_line(self, message):
+        (self._write if self._write is not None else print)(message)
+
+    def print_message(self, message: str) -> None:
+        self._write_line(message)
+
+    def print_error(self, message: str) -> None:
+        self._write_line(f"Error: {message}")
+
+    def display_record(self, record: dict[str, Any]) -> None:
+        """Print one check-in record using format_student_record."""
+        view = self._formatter.format_student_record(record)
+        self._write_line(view["heading"])
+        for field in view["fields"]:
+            self._write_line(f"  {field['label']}: {field['value']}")
+
+    def display_list(self, records: list[dict[str, Any]]) -> None:
+        """Print a short one-line summary for each saved record."""
+        if not records:
+            self._write_line("No records.")
+            return
+        for number, record in enumerate(records, 1):
+            self._write_line(f"{number}. {record.get('student_id', '?')} | "
+                  f"{record.get('risk_category', '?')} | {record.get('stress_score', '?')}")
+
+    def display_result(self, result: dict[str, Any]) -> None:
+        """Print the outcome of a check-in using the existing formatters."""
+        if not result or not result.get("ok"):
+            code = (result or {}).get("error_code") or (result or {}).get("error")
+            copy = self._formatter.format_ai_error(code)
+            self._write_line(copy.get("heading", "We couldn't complete your check-in"))
+            self._write_line(copy.get("body", ""))
+            return
+        self._write_line(self._formatter.format_soft_label(result.get("soft_label"))["heading"] or result.get("soft_label"))
+        self._write_line(f"Stress score: {result.get('stress_score')}")
+        for text in self._formatter.format_tips(result.get("tips"))["texts"]:
+            self._write_line(f"  - {text}")
+
+    def _prompt_until_valid(self, prompt: str, validator):
+        """Read a line, validate, and re-prompt with the error until valid."""
+        while True:
+            raw = self._read_line(prompt)
+            ok, result = validator(raw)
+            if ok:
+                return result
+            self.print_error(result)
+
+    def get_student_id(self) -> str:
+        return self._prompt_until_valid(
+            "Student ID (7 digits starting with 2, e.g. 2605581): ",
+            self._validator.validate_student_id,
+        )
+
+    def collect_student_record(self):
+        """CLI uses the same question definitions and validation as the website."""
+        values = {'student_id':self.get_student_id()}
+        for q in self._validator.questions:
+            self.print_message(q['prompt'])
+            if q.get('options'):
+                self.print_message(' | '.join(f"{i + q['min']}: {label}" for i, label in enumerate(q['options'])))
+            values[q['key']] = self._prompt_until_valid(
+                f"{q['min']}–{q['max']}" + (' (optional; Enter to skip)' if q.get('optional') else '') + ': ',
+                lambda raw, item=q: self._validator.validate_question(raw, item))
+        values['feelings_text'] = self._prompt_until_valid('Optional reflection (not saved): ', self._validator.validate_feelings_text)
+        return self._validator.validate_student_form(values)[1]
+
+
+# Compatibility API for existing routes and Phase 1 callers.
+# All behaviour lives in the classes above; these objects retain no submissions.
+_default_validator = InputValidator()
+_default_formatter = ResultFormatter()
+_default_console = ConsoleIO(_default_validator, _default_formatter)
+
+
+
+def normalize_form_value(raw) -> str:
+    """Compatibility wrapper; delegate to InputValidator."""
+    return _default_validator.normalize_form_value(raw)
+
+
+def validate_student_id(raw) -> tuple[bool, str]:
+    """Compatibility wrapper; delegate to InputValidator."""
+    return _default_validator.validate_student_id(raw)
+
+
+def validate_feelings_text(raw):
+    """Compatibility wrapper; delegate to InputValidator."""
+    return _default_validator.validate_feelings_text(raw)
+
+
+def validate_student_form(form_dict):
+    """Compatibility wrapper; delegate to InputValidator."""
+    return _default_validator.validate_student_form(form_dict)
+
+
+def format_soft_label(soft_label) -> dict:
+    """Compatibility wrapper; delegate to ResultFormatter."""
+    return _default_formatter.format_soft_label(soft_label)
+
+
+def format_tips(tips) -> dict:
+    """Compatibility wrapper; delegate to ResultFormatter."""
+    return _default_formatter.format_tips(tips)
+
+
+def format_speak_to_advisor_panel(speak_prominence) -> dict:
+    """Compatibility wrapper; delegate to ResultFormatter."""
+    return _default_formatter.format_speak_to_advisor_panel(speak_prominence)
+
+
+def _ai_failure_copy(error_code, detail=None) -> dict:
+    """Compatibility wrapper; delegate to ResultFormatter."""
+    return _default_formatter._ai_failure_copy(error_code, detail)
+
 
 def format_ai_error(error_code, detail=None) -> dict:
-    """Map an AI failure code to the same student-facing error dict.
-
-    Known codes: missing_api_key, timeout, invalid_response,
-    retries_exhausted, rate_limited, unavailable. rate_limited uses calm
-    student copy. Unknown codes still return a valid error page
-    (unavailable copy + contacts) and set `error`.
-    """
-    return _ai_failure_copy(error_code, detail=detail)
+    """Compatibility wrapper; delegate to ResultFormatter."""
+    return _default_formatter.format_ai_error(error_code, detail)
 
 
 def format_student_record(record: dict) -> dict:
-    """Return a plain dict of labelled values for a confirmation template."""
-    if not record:
-        return {
-            "heading": "Your check-in",
-            "fields": [],
-            "empty": True,
-        }
-    fields = []
-    for key in RECORD_FIELD_ORDER:
-        if key not in record:
-            continue
-        value = record[key]
-        if key == "feelings_text":
-            display = str(value).strip() if value is not None else ""
-            if not display:
-                display = "(skipped)"
-        elif key == "sleep_hours_avg" and value is not None:
-            display = f"{float(value):.1f}"
-        elif value is not None and survey.QUESTION_MAP.get(key, {}).get("options"):
-            q = survey.QUESTION_MAP[key]
-            display = f"{value} · {q['options'][int(value) - q['min']]}"
-        else:
-            display = "(skipped)" if value is None else str(value)
-        fields.append({
-            "key": key,
-            "label": FORM_PROMPTS[key],
-            "value": display,
-        })
-    return {
-        "heading": "Your check-in",
-        "fields": fields,
-        "empty": len(fields) == 0,
-    }
+    """Compatibility wrapper; delegate to ResultFormatter."""
+    return _default_formatter.format_student_record(record)
 
-
-# ---------------------------------------------------------------------------
-# Thin CLI helper — smoke tests only; field names match the web form
-# ---------------------------------------------------------------------------
 
 def print_message(message: str) -> None:
-    print(message)
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console.print_message(message)
 
 
 def print_error(message: str) -> None:
-    print(f"Error: {message}")
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console.print_error(message)
 
 
 def display_record(record: dict[str, Any]) -> None:
-    """Print one check-in record using format_student_record."""
-    view = format_student_record(record)
-    print(view["heading"])
-    for field in view["fields"]:
-        print(f"  {field['label']}: {field['value']}")
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console.display_record(record)
 
 
 def display_list(records: list[dict[str, Any]]) -> None:
-    """Print a short one-line summary for each saved record."""
-    if not records:
-        print("No records.")
-        return
-    for number, record in enumerate(records, 1):
-        print(f"{number}. {record.get('student_id', '?')} | "
-              f"{record.get('risk_category', '?')} | {record.get('stress_score', '?')}")
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console.display_list(records)
 
 
 def display_result(result: dict[str, Any]) -> None:
-    """Print the outcome of a check-in using the existing formatters."""
-    if not result or not result.get("ok"):
-        code = (result or {}).get("error_code") or (result or {}).get("error")
-        copy = format_ai_error(code)
-        print(copy.get("heading", "We couldn't complete your check-in"))
-        print(copy.get("body", ""))
-        return
-    print(format_soft_label(result.get("soft_label"))["heading"] or result.get("soft_label"))
-    print(f"Stress score: {result.get('stress_score')}")
-    for text in format_tips(result.get("tips"))["texts"]:
-        print(f"  - {text}")
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console.display_result(result)
 
 
 def _prompt_until_valid(prompt: str, validator):
-    """Read a line, validate, and re-prompt with the error until valid."""
-    while True:
-        raw = input(prompt)
-        ok, result = validator(raw)
-        if ok:
-            return result
-        print_error(result)
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console._prompt_until_valid(prompt, validator)
 
 
 def get_student_id() -> str:
-    return _prompt_until_valid(
-        "Student ID (7 digits starting with 2, e.g. 2605581): ",
-        validate_student_id,
-    )
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console.get_student_id()
 
 
 def collect_student_record():
-    """CLI uses the same question definitions and validation as the website."""
-    values = {'student_id':get_student_id()}
-    for q in survey.QUESTIONS:
-        print_message(q['prompt'])
-        if q.get('options'):
-            print_message(' | '.join(f"{i + q['min']}: {label}" for i, label in enumerate(q['options'])))
-        values[q['key']] = _prompt_until_valid(
-            f"{q['min']}–{q['max']}" + (' (optional; Enter to skip)' if q.get('optional') else '') + ': ',
-            lambda raw, item=q: survey.validate_question(raw, item))
-    values['feelings_text'] = _prompt_until_valid('Optional reflection (not saved): ', validate_feelings_text)
-    return validate_student_form(values)[1]
+    """Compatibility wrapper; delegate to ConsoleIO."""
+    return _default_console.collect_student_record()
 
 
 if __name__ == '__main__':
-    print_message(str(format_student_record(collect_student_record())))
+    _default_console.print_message(str(_default_formatter.format_student_record(
+        _default_console.collect_student_record())))
