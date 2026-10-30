@@ -21,12 +21,16 @@ a half-written JSON file.
 """
 from __future__ import annotations
 import json
+import logging
 import os
+import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 _PACKAGE_ROOT = Path(__file__).resolve().parent
 _DEFAULT_DATA_PATH = _PACKAGE_ROOT / "data" / "student_records.json"
 def get_default_data_path() -> str:
@@ -187,6 +191,14 @@ def _read_records_file(
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup = path.with_name(f"{path.stem}.corrupt-{stamp}.json")
+        try:
+            shutil.copy2(path, backup)
+        except OSError as copy_exc:
+            logger.warning("Corrupt data file %s could not be backed up: %s", path, copy_exc)
+            return False, [], f"Corrupted JSON in data file and backup failed: {exc}"
+        logger.warning("Corrupt data file %s backed up to %s", path, backup)
         return True, [], f"Corrupted JSON in data file: {exc}"
     if payload is None:
         return True, [], None
@@ -253,8 +265,12 @@ def _write_records_file(
         if temporary is not None:
             try:
                 temporary.unlink()
-            except OSError:
-                pass
+            except OSError as exc:
+                # Safe to ignore: the temp file may already be gone, and any
+                # real write error has already been returned above.
+                logger.debug("Temp file cleanup failed: %s", type(exc).__name__)
+
+
 def load_all_records(
     data_path: str | None = None,
 ) -> dict[str, Any]:
@@ -351,6 +367,30 @@ def save_record(
         "path": str(path),
         "record": stored,
     }
+
+
+def save(
+    record: dict[str, Any],
+    data_path: str | None = None,
+    *,
+    opt_in: Any = False,
+) -> dict[str, Any]:
+    """Append one record. Thin wrapper around save_record (same consent rules)."""
+    return save_record(record, data_path, opt_in=opt_in)
+
+
+def load(data_path: str | None = None) -> list[dict[str, Any]]:
+    """Return all saved records; an empty list if the file is missing or corrupt."""
+    return load_all_records(data_path)["records"]
+
+
+def query(
+    filter_fn: Callable[[dict[str, Any]], Any],
+    data_path: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return the saved records where filter_fn(record) is truthy."""
+    return [record for record in load(data_path) if filter_fn(record)]
+
 def save_pending_record(
     record: dict[str, Any],
     data_path: str | None = None,
@@ -552,33 +592,9 @@ def filter_records(
                 continue
         out.append(record)
     return out
-def get_record_by_student_id(
-    student_id: str,
-    data_path: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return all historical records for one student ID."""
+
     loaded = load_all_records(data_path)
     return filter_records(
         loaded["records"],
         student_id=student_id,
-    )
-def get_records_by_risk_category(
-    category: str,
-    data_path: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return all records matching a risk category."""
-    loaded = load_all_records(data_path)
-    return filter_records(
-        loaded["records"],
-        risk_category=category,
-    )
-def get_records_by_cohort_year(
-    year_prefix: str,
-    data_path: str | None = None,
-) -> list[dict[str, Any]]:
-    """Return records based on the first two digits of student ID."""
-    loaded = load_all_records(data_path)
-    return filter_records(
-        loaded["records"],
-        cohort_year=year_prefix,
     )

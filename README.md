@@ -1,4 +1,19 @@
 # INF1103-P3-Team1-DoNotStress
+## Problem
+University students often don't notice their stress building until it affects their studies, sleep or wellbeing, and many don't reach out for support early. Existing counselling services rely on students coming forward themselves.
+
+## Objectives
+- Give SIT students a quick, private stress check-in based on validated research questions (PSS-4, MSPSS and others) on a 1–5 scale.
+- Use Gemini AI to analyse each check-in and return a structured stress score, tier and personalised tips.
+- Point students to SIT Counselling and helplines, especially when stress is high or a safety concern is detected.
+- Let SIT wellbeing staff view records through an admin-only page to spot students who may need support.
+
+## Target users
+SIT students (check-ins) and SIT wellbeing staff (admin records view).
+
+## Industry relevance
+Student mental health is a growing priority for universities. DoNotStress shows how AI can support early-warning wellbeing screening, while staying non-diagnostic and protecting student privacy (Student IDs are never sent to the AI).
+
 
 Student wellbeing app with a campus check-in UI and the team's AI/backend pipeline.
 
@@ -31,7 +46,7 @@ The interface opens without a key, but assessment requires Gemini. Missing crede
 ## Evidence questionnaire v3 (single 1–5 scale)
 
 The questionnaire follows section 2 of `donotstress_question_evidence.docx` (9 October 2026).
-`survey.py` owns question wording, options, chapter explanations and the reflection safety check. `logic_manager.py` owns deterministic scoring, context flags and factor cards, and rejects a Gemini score that is more than 0.01 from that score.
+`survey.py` owns question wording, options, chapter explanations and the reflection safety check. Gemini (via `ai_manager.py`) produces the score; `logic_manager.py` only re-checks it against the formula as an audit, rejecting mismatches over 0.01 (saved as pending), and never substitutes its own score. `logic_manager.py` also owns context flags and factor cards.
 The browser receives the same definitions from Flask. Required answers start unselected, except the sleep slider, which starts at 7 hours and uses that position as the answer.
 
 1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items as full sentences, each beginning "In the past month, how often have you felt…". The chapter title is "Start with the bigger picture." Each item is 1 (never) to 5 (very often). Items 2 and 3 are reverse-scored.
@@ -86,6 +101,15 @@ This is a single-process local app. A production deployment needs a shared serve
 - `templates/base.html`, `templates/checkin.html`: page shell.
 - `static/style.css`, `static/campus.js`: campus UI, sliders, review, and results.
 - Legacy result/error templates remain available; the current interface renders these states in the shared campus UI.
+
+## Required functions
+
+| Manager file | Required functions |
+| --- | --- |
+| `ai_manager.py` | `build_prompt`, `call_api`, `parse_response`, `validate_response` |
+| `logic_manager.py` | `evaluate`, `score`, `route` |
+| `data_manager.py` | `save`, `load`, `query(filter_fn)` |
+| `io_manager.py` | `display_record`, `display_list`, `display_result` |
 
 ## Tests
 
