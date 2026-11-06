@@ -15,9 +15,12 @@ from werkzeug.security import check_password_hash
 
 import ai_manager
 import data_manager
-import io_manager
+from io_manager import InputValidator, ResultFormatter
 import logic_manager
 import survey
+
+input_validator = InputValidator()
+result_formatter = ResultFormatter()
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -61,11 +64,11 @@ def process_checkin(record, *, generate_fn=None, max_attempts=3, retry_delay_sec
 
 def result_view(record, saved=False):
     """Only send allow-listed, student-facing copy to the browser."""
-    advisor = io_manager.format_speak_to_advisor_panel(record['speak_prominence'])
+    advisor = result_formatter.format_speak_to_advisor_panel(record['speak_prominence'])
     advisor.pop('cta', None)
     return {
-        'soft': io_manager.format_soft_label(record['soft_label']),
-        'tips': io_manager.format_tips(record['tips']),
+        'soft': result_formatter.format_soft_label(record['soft_label']),
+        'tips': result_formatter.format_tips(record['tips']),
         'advisor': advisor,
         'saved': saved,
         'insights': {
@@ -253,10 +256,11 @@ def create_app(test_config=None):
         if not hasattr(values, 'get'):
             return jsonify(message='Please submit a check-in form.'), 400
         safety = survey.safety_check(values.get('feelings_text', ''))
-        ok, record = io_manager.validate_student_form(values)
-        if not ok:
-            return jsonify(errors=record, safety_flag=safety,
-                           advisor=io_manager.format_speak_to_advisor_panel('high') if safety else None), 400
+        validation = input_validator.validate_form(values)
+        if not validation.is_valid:
+            return jsonify(errors=validation.errors, safety_flag=safety,
+                           advisor=result_formatter.format_speak_to_advisor_panel('high') if safety else None), 400
+        record = validation.to_record()
         clear_pending()
         fingerprint = submission_fingerprint(record)
         try:
@@ -291,7 +295,7 @@ def create_app(test_config=None):
                         remember_submission(fingerprint, pending_id, pending_save=True)
             except Exception:
                 logger.warning('Pending check-in could not be saved')
-            copy = io_manager.format_ai_error(outcome)
+            copy = result_formatter.format_ai_error(outcome)
             return jsonify(
                 message='We could not complete your check-in right now. Your answers are still here; please try again.',
                 error_code=outcome, safety_flag=safety, advisor=copy['speak_to_advisor'],

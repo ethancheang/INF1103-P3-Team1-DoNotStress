@@ -3,6 +3,8 @@
 Question wording, scales and scoring definitions live in survey.py.
 Student ID: seven ASCII digits beginning with 2. Reflection is ephemeral.
 """
+from abc import ABC, abstractmethod
+from copy import deepcopy
 from typing import Any
 
 import survey
@@ -191,60 +193,56 @@ AI_ERROR_HINTS = {
 # Internal helpers (pure)
 # ---------------------------------------------------------------------------
 
-def _as_text(raw) -> str:
-    """Normalize raw input to a stripped string. None becomes empty."""
-    if raw is None:
-        return ""
-    return str(raw).strip()
+class _InputText:
+    """Stateless normalization and operator-detail redaction."""
 
+    @staticmethod
+    def _as_text(raw) -> str:
+        """Normalize raw input to a stripped string. None becomes empty."""
+        if raw is None:
+            return ""
+        return str(raw).strip()
 
-def _looks_like_int(text: str) -> bool:
-    """True when text is a base-10 integer (optional leading + or -)."""
-    if not text:
+    @staticmethod
+    def _form_get(form_dict, key: str):
+        """Read one key from a Flask request.form-like mapping."""
+        if form_dict is None:
+            return ""
+        getter = getattr(form_dict, "get", None)
+        if getter is None:
+            return ""
+        value = getter(key)
+        if value is None:
+            return ""
+        return value
+
+    @staticmethod
+    def _looks_like_secret(text: str) -> bool:
+        """True when operator text might contain a key or token — do not show it."""
+        if not text:
+            return False
+        compact = "".join(text.split())
+        lowered = compact.lower()
+        if "gemini_api_key=" in lowered or "api_key=" in lowered:
+            return True
+        if "bearer" in lowered and len(compact) > 20:
+            return True
+        # Long token-like strings (Google API keys are typically 39+ chars).
+        if len(compact) >= 32 and compact.isalnum():
+            return True
         return False
-    if text[0] in "+-":
-        return len(text) > 1 and text[1:].isdigit()
-    return text.isdigit()
 
-def _form_get(form_dict, key: str):
-    """Read one key from a Flask request.form-like mapping."""
-    if form_dict is None:
-        return ""
-    getter = getattr(form_dict, "get", None)
-    if getter is None:
-        return ""
-    value = getter(key)
-    if value is None:
-        return ""
-    return value
-
-
-def _looks_like_secret(text: str) -> bool:
-    """True when operator text might contain a key or token — do not show it."""
-    if not text:
-        return False
-    compact = "".join(text.split())
-    lowered = compact.lower()
-    if "gemini_api_key=" in lowered or "api_key=" in lowered:
-        return True
-    if "bearer" in lowered and len(compact) > 20:
-        return True
-    # Long token-like strings (Google API keys are typically 39+ chars).
-    if len(compact) >= 32 and compact.isalnum():
-        return True
-    return False
-
-
-def _sanitize_operator_detail(raw) -> str | None:
-    """Keep a short operator note; drop anything that looks like a secret."""
-    text = _as_text(raw)
-    if not text:
-        return None
-    if _looks_like_secret(text):
-        return None
-    if len(text) > 200:
-        text = text[:200].rstrip() + "…"
-    return text
+    @staticmethod
+    def _sanitize_operator_detail(raw) -> str | None:
+        """Keep a short operator note; drop anything that looks like a secret."""
+        text = _InputText._as_text(raw)
+        if not text:
+            return None
+        if _InputText._looks_like_secret(text):
+            return None
+        if len(text) > 200:
+            text = text[:200].rstrip() + "…"
+        return text
 
 
 # ---------------------------------------------------------------------------
@@ -252,60 +250,176 @@ def _sanitize_operator_detail(raw) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-class InputValidator:
-    """Validate one submission at a time without retaining student answers."""
+class FieldValidator(ABC):
+    """Contract: validate raw input into (True, value) or (False, message).
 
-    def __init__(self, survey_definition=survey):
-        self._survey = survey_definition
+    Invalid user input is reported, not raised. Implementations do not retain
+    answers or mutate the input. Callers need no concrete-type checks.
+    """
 
-    @property
-    def questions(self):
-        """Question definitions shared by form and console validation."""
-        return self._survey.QUESTIONS
+    @abstractmethod
+    def validate(self, raw: Any) -> tuple[bool, Any]:
+        """Return a normalized value or a user-facing validation error."""
 
-    def validate_question(self, raw, question):
-        return self._survey.validate_question(raw, question)
 
-    def normalize_form_value(self, raw) -> str:
-        """Strip a single form value. None becomes ''."""
-        return _as_text(raw)
+class StudentIdValidator(FieldValidator):
+    """Validate the institution's seven-digit student identifier."""
 
-    def validate_student_id(self, raw) -> tuple[bool, str]:
-        """Require exactly seven ASCII digits, beginning with 2."""
-        text = _as_text(raw)
+    def validate(self, raw: Any) -> tuple[bool, Any]:
+        text = _InputText._as_text(raw)
         if len(text) != 7 or not text.isascii() or not text.isdigit() or not text.startswith("2"):
             return False, "Student ID must be exactly 7 digits and start with 2 (e.g. 2605581)."
         return True, text
 
-    def validate_feelings_text(self, raw):
+
+class ReflectionValidator(FieldValidator):
+    """Validate optional reflection without storing its contents."""
+
+    def validate(self, raw: Any) -> tuple[bool, Any]:
         if raw is not None and not isinstance(raw, str):
             return False, 'Please enter text or leave this blank.'
-        text = _as_text(raw)
+        text = _InputText._as_text(raw)
         if len(text) > 2000:
             return False, 'Please keep your reflection within 2,000 characters.'
         return True, text
 
+
+class SurveyQuestionValidator(FieldValidator):
+    """Adapt a survey question to the shared validation contract."""
+
+    def __init__(self, question, survey_definition=survey):
+        self._question = deepcopy(question)
+        self._survey = survey_definition
+
+    def validate(self, raw: Any) -> tuple[bool, Any]:
+        return self._survey.validate_question(raw, self._question)
+
+
+class FormField:
+    """A named input field associated with an independently usable policy."""
+
+    def __init__(self, key: str, validator: FieldValidator):
+        self._key = key
+        self._validator = validator
+
+    @property
+    def key(self) -> str:
+        return self._key
+
+    def validate_from(self, values) -> tuple[bool, Any]:
+        return self._validator.validate(_InputText._form_get(values, self._key))
+
+
+class FormValidationResult:
+    """Own one validation outcome; never expose partial or mutable records.
+
+    Construction is for the validator, after all fields have been checked.
+    Raw reflection is excluded even if a caller supplies it accidentally.
+    """
+
+    def __init__(self, *, record=None, errors=None):
+        if (record is None) == (errors is None):
+            raise ValueError('Supply either a valid record or field errors.')
+        if errors is not None and not errors:
+            raise ValueError('An invalid result must contain field errors.')
+        self._errors = deepcopy(errors) if errors is not None else {}
+        self._record = deepcopy(record) if record is not None else None
+        if self._record is not None:
+            self._record.pop('feelings_text', None)
+
+    @property
+    def is_valid(self) -> bool:
+        return self._record is not None
+
+    @property
+    def errors(self) -> dict:
+        return deepcopy(self._errors)
+
+    def to_record(self) -> dict:
+        """Export a detached record for the AI pipeline only after success."""
+        if not self.is_valid:
+            raise ValueError('Cannot export a record from invalid input.')
+        return deepcopy(self._record)
+
+    def as_legacy_tuple(self) -> tuple[bool, dict]:
+        return self.is_valid, self.to_record() if self.is_valid else self.errors
+
+
+class InputValidator:
+    """Coordinate field validators without retaining student answers.
+
+    Default field validators are owned parts. Injected validators are shared
+    collaborators, allowing a policy to change without editing this class.
+    """
+
+    def __init__(self, survey_definition=survey, *, student_id_validator=None,
+                 reflection_validator=None):
+        self._survey = survey_definition
+        self._student_id_validator = (student_id_validator if student_id_validator is not None
+                                      else StudentIdValidator())
+        self._reflection_validator = (reflection_validator if reflection_validator is not None
+                                      else ReflectionValidator())
+        self._questions = deepcopy(survey_definition.QUESTIONS)
+        self._fields = (
+            FormField('student_id', self._student_id_validator),
+            *(FormField(q['key'], SurveyQuestionValidator(q, self._survey))
+              for q in self._questions),
+            FormField('feelings_text', self._reflection_validator),
+        )
+
+    @property
+    def questions(self):
+        """Return a defensive copy so callers cannot alter the survey."""
+        return deepcopy(self._questions)
+
+    def validate_question(self, raw, question):
+        return SurveyQuestionValidator(question, self._survey).validate(raw)
+
+    def normalize_form_value(self, raw) -> str:
+        return _InputText._as_text(raw)
+
+    def validate_student_id(self, raw) -> tuple[bool, str]:
+        return self._student_id_validator.validate(raw)
+
+    def validate_feelings_text(self, raw):
+        return self._reflection_validator.validate(raw)
+
     def validate_student_form(self, form_dict):
+        """Compatibility contract for callers that still expect a tuple."""
+        return self.validate_form(form_dict).as_legacy_tuple()
+
+    def validate_form(self, form_dict) -> FormValidationResult:
+        """Validate a submission through the form's owned field objects."""
         record, errors = {}, {}
-        ok, value = self.validate_student_id(_form_get(form_dict, 'student_id'))
-        (record if ok else errors)['student_id'] = value
-        for q in self.questions:
-            ok, value = self.validate_question(_form_get(form_dict, q['key']), q)
-            (record if ok else errors)[q['key']] = value
-        ok, text = self.validate_feelings_text(_form_get(form_dict, 'feelings_text'))
-        if not ok:
-            errors['feelings_text'] = text
+        text = ''
+        for field in self._fields:
+            key = field.key
+            ok, value = field.validate_from(form_dict)
+            if not ok:
+                errors[key] = value
+            elif key == 'feelings_text':
+                text = value
+            else:
+                record[key] = value
         if errors:
-            return False, errors
+            return FormValidationResult(errors=errors)
         # Reflection is checked locally on the server, then discarded. Never sent
         # to Gemini or retained in pending/saved records.
         record['safety_flag'] = self._survey.safety_check(text)
         record['survey_version'] = self._survey.VERSION
-        return True, record
+        return FormValidationResult(record=record)
 
 
 class ResultFormatter:
     """Build presentation dictionaries without scoring or storing records."""
+
+    def __init__(self, survey_definition=survey):
+        self._questions = {q['key']: deepcopy(q) for q in survey_definition.QUESTIONS}
+        self._prompts = {
+            'student_id': FORM_PROMPTS['student_id'],
+            **{key: q['prompt'] for key, q in self._questions.items()},
+            'feelings_text': FORM_PROMPTS['feelings_text'],
+        }
 
     def format_soft_label(self, soft_label) -> dict:
         """Return template copy for a soft label.
@@ -313,7 +427,7 @@ class ResultFormatter:
         soft_label must be one of SOFT_LABELS:
           "You're doing ok" | "Worth a check-in" | "Please reach out"
         """
-        text = _as_text(soft_label)
+        text = _InputText._as_text(soft_label)
         copy = SOFT_LABEL_COPY.get(text)
         if copy is None:
             allowed = ", ".join(f'"{label}"' for label in SOFT_LABELS)
@@ -344,7 +458,7 @@ class ResultFormatter:
         if tips is None:
             tips = []
         for raw in tips:
-            text = _as_text(raw)
+            text = _InputText._as_text(raw)
             if not text or text in seen:
                 continue
             tip_id = None
@@ -382,7 +496,7 @@ class ResultFormatter:
 
         Unknown prominence still includes those contacts and uses medium copy.
         """
-        prominence = _as_text(speak_prominence).lower()
+        prominence = _InputText._as_text(speak_prominence).lower()
         copy = SPEAK_PANEL_COPY.get(prominence)
         error = None
         if copy is None:
@@ -406,7 +520,7 @@ class ResultFormatter:
 
     def _ai_failure_copy(self, error_code, detail=None) -> dict:
         """Shared payload for AI-required failure pages (no soft-label happy path)."""
-        code = _as_text(error_code).lower()
+        code = _InputText._as_text(error_code).lower()
         unknown = False
         if code not in AI_ERROR_CODES:
             unknown = bool(code)
@@ -416,7 +530,7 @@ class ResultFormatter:
 
         body = AI_RATE_LIMITED_BODY if code == "rate_limited" else AI_UNAVAILABLE_BODY
         hint = AI_ERROR_HINTS[code]
-        reason = _sanitize_operator_detail(detail)
+        reason = _InputText._sanitize_operator_detail(detail)
         if reason:
             hint = f"{hint} Detail: {reason}."
 
@@ -467,7 +581,7 @@ class ResultFormatter:
                 "empty": True,
             }
         fields = []
-        for key in RECORD_FIELD_ORDER:
+        for key in self._prompts:
             if key not in record:
                 continue
             value = record[key]
@@ -477,14 +591,14 @@ class ResultFormatter:
                     display = "(skipped)"
             elif key == "sleep_hours_avg" and value is not None:
                 display = f"{float(value):.1f}"
-            elif value is not None and survey.QUESTION_MAP.get(key, {}).get("options"):
-                q = survey.QUESTION_MAP[key]
+            elif value is not None and self._questions.get(key, {}).get("options"):
+                q = self._questions[key]
                 display = f"{value} · {q['options'][int(value) - q['min']]}"
             else:
                 display = "(skipped)" if value is None else str(value)
             fields.append({
                 "key": key,
-                "label": FORM_PROMPTS[key],
+                "label": self._prompts[key],
                 "value": display,
             })
         return {
@@ -570,105 +684,33 @@ class ConsoleIO:
                 f"{q['min']}–{q['max']}" + (' (optional; Enter to skip)' if q.get('optional') else '') + ': ',
                 lambda raw, item=q: self._validator.validate_question(raw, item))
         values['feelings_text'] = self._prompt_until_valid('Optional reflection (not saved): ', self._validator.validate_feelings_text)
-        return self._validator.validate_student_form(values)[1]
+        return self._validator.validate_form(values).to_record()
 
 
-# Compatibility API for existing routes and Phase 1 callers.
-# All behaviour lives in the classes above; these objects retain no submissions.
+# Transitional bound-method aliases for Phase 1 integrations and tests.
+# Production web routes use explicit objects; there is no duplicate behavior.
 _default_validator = InputValidator()
 _default_formatter = ResultFormatter()
 _default_console = ConsoleIO(_default_validator, _default_formatter)
 
-
-
-def normalize_form_value(raw) -> str:
-    """Compatibility wrapper; delegate to InputValidator."""
-    return _default_validator.normalize_form_value(raw)
-
-
-def validate_student_id(raw) -> tuple[bool, str]:
-    """Compatibility wrapper; delegate to InputValidator."""
-    return _default_validator.validate_student_id(raw)
-
-
-def validate_feelings_text(raw):
-    """Compatibility wrapper; delegate to InputValidator."""
-    return _default_validator.validate_feelings_text(raw)
-
-
-def validate_student_form(form_dict):
-    """Compatibility wrapper; delegate to InputValidator."""
-    return _default_validator.validate_student_form(form_dict)
-
-
-def format_soft_label(soft_label) -> dict:
-    """Compatibility wrapper; delegate to ResultFormatter."""
-    return _default_formatter.format_soft_label(soft_label)
-
-
-def format_tips(tips) -> dict:
-    """Compatibility wrapper; delegate to ResultFormatter."""
-    return _default_formatter.format_tips(tips)
-
-
-def format_speak_to_advisor_panel(speak_prominence) -> dict:
-    """Compatibility wrapper; delegate to ResultFormatter."""
-    return _default_formatter.format_speak_to_advisor_panel(speak_prominence)
-
-
-def _ai_failure_copy(error_code, detail=None) -> dict:
-    """Compatibility wrapper; delegate to ResultFormatter."""
-    return _default_formatter._ai_failure_copy(error_code, detail)
-
-
-def format_ai_error(error_code, detail=None) -> dict:
-    """Compatibility wrapper; delegate to ResultFormatter."""
-    return _default_formatter.format_ai_error(error_code, detail)
-
-
-def format_student_record(record: dict) -> dict:
-    """Compatibility wrapper; delegate to ResultFormatter."""
-    return _default_formatter.format_student_record(record)
-
-
-def print_message(message: str) -> None:
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console.print_message(message)
-
-
-def print_error(message: str) -> None:
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console.print_error(message)
-
-
-def display_record(record: dict[str, Any]) -> None:
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console.display_record(record)
-
-
-def display_list(records: list[dict[str, Any]]) -> None:
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console.display_list(records)
-
-
-def display_result(result: dict[str, Any]) -> None:
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console.display_result(result)
-
-
-def _prompt_until_valid(prompt: str, validator):
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console._prompt_until_valid(prompt, validator)
-
-
-def get_student_id() -> str:
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console.get_student_id()
-
-
-def collect_student_record():
-    """Compatibility wrapper; delegate to ConsoleIO."""
-    return _default_console.collect_student_record()
+normalize_form_value = _default_validator.normalize_form_value
+validate_student_id = _default_validator.validate_student_id
+validate_feelings_text = _default_validator.validate_feelings_text
+validate_student_form = _default_validator.validate_student_form
+format_soft_label = _default_formatter.format_soft_label
+format_tips = _default_formatter.format_tips
+format_speak_to_advisor_panel = _default_formatter.format_speak_to_advisor_panel
+_ai_failure_copy = _default_formatter._ai_failure_copy
+format_ai_error = _default_formatter.format_ai_error
+format_student_record = _default_formatter.format_student_record
+print_message = _default_console.print_message
+print_error = _default_console.print_error
+display_record = _default_console.display_record
+display_list = _default_console.display_list
+display_result = _default_console.display_result
+_prompt_until_valid = _default_console._prompt_until_valid
+get_student_id = _default_console.get_student_id
+collect_student_record = _default_console.collect_student_record
 
 
 if __name__ == '__main__':

@@ -30,7 +30,8 @@ class InputValidatorTests(unittest.TestCase):
         self.assertNotIn('feelings_text', record)
         self.assertEqual(record['survey_version'], survey.VERSION)
         self.assertFalse(self.validator.validate_student_form({})[0])
-        self.assertEqual(set(vars(self.validator)), {'_survey'})
+        self.assertNotIn('feelings_text', vars(self.validator))
+        self.assertTrue(self.validator.validate_student_form(values)[0])
 
     def test_injected_survey_is_used(self):
         definition = SimpleNamespace(QUESTIONS=[], VERSION='test', safety_check=Mock(return_value=True))
