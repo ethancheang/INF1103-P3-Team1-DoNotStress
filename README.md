@@ -25,6 +25,10 @@ Open this project folder in the VS Code terminal:
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -r requirements.txt
 .\.venv\Scripts\python.exe main.py
+
+or you want to run as Windows APP
+.\.venv\Scripts\python.exe gui.py
+
 ```
 
 Open http://127.0.0.1:5000. If only the Python launcher is available, use `py -m venv .venv` for the first command.
