@@ -1,0 +1,97 @@
+[
+  {
+    "student_id": "2602111",
+    "survey_version": "evidence-v3",
+    "pss_1": 2,
+    "pss_2": 2,
+    "pss_3": 2,
+    "pss_4": 2,
+    "sleep_hours_avg": 3.5,
+    "sleep_quality": 2,
+    "pas_workload": 4,
+    "pas_catchup": 4,
+    "fin_stress": 4,
+    "mspss_friends": 1,
+    "mspss_family": 1,
+    "safety_flag": false,
+    "scored_items": {
+      "pss_1": 2,
+      "pss_2": 4,
+      "pss_3": 4,
+      "pss_4": 2,
+      "sleep_hours_avg": 5,
+      "sleep_quality": 2,
+      "pas_workload": 4,
+      "pas_catchup": 4,
+      "fin_stress": 4,
+      "mspss_friends": 5,
+      "mspss_family": 5
+    },
+    "stress_score": 3.73,
+    "risk_category": "High",
+    "soft_label": "Please reach out",
+    "speak_prominence": "high",
+    "primary_stressors": [
+      "academic_overload",
+      "financial_pressure",
+      "low_social_support",
+      "sleep_deprivation"
+    ],
+    "tips": [
+      "talk_to_someone",
+      "workload_chunks",
+      "sleep_routine",
+      "keep_social_contact"
+    ],
+    "reasoning": "It seems like things have been feeling quite overwhelming lately, especially with your coursework, finances, and feeling disconnected from support. Please remember to give yourself grace and take things one step at a time. Reaching out for support can really help lighten the load right now.",
+    "confidence": 0.95,
+    "ok": true,
+    "error": null,
+    "source": "ai_logic",
+    "ai_ok": true,
+    "logic_rule": "v3",
+    "logic_stress_score": 3.73,
+    "risk_score": 0.6825,
+    "recommended_support": "Internal: high stress. The UI shows tips, not this field.",
+    "logic_clamp_notes": [
+      "support_priority: High tier with low social support"
+    ],
+    "support_priority": true,
+    "context_flags": {
+      "sleep": true,
+      "workload": true,
+      "finances": true,
+      "support": true
+    },
+    "support_mean": 1.0,
+    "factor_insights": [
+      {
+        "title": "Rest & recovery",
+        "flagged": true,
+        "value": "3.5 hours · Fairly good quality",
+        "text": "Sleep and stress affect each other. When sleep is short or restless, everyday tasks can feel harder, and stress can make it harder to sleep well."
+      },
+      {
+        "title": "Study demands",
+        "flagged": true,
+        "value": "4/5 · Agree",
+        "text": "A heavy workload can leave less time to rest and recharge. Feeling behind or overloaded is one of the most common sources of student stress."
+      },
+      {
+        "title": "Money pressures",
+        "flagged": true,
+        "value": "4/5 · High stress",
+        "text": "Financial worries can add to the pressure of studying. Concerns about money often weigh on focus and sleep."
+      },
+      {
+        "title": "Support & connection",
+        "flagged": true,
+        "value": "1/5 agreement across 2 answers",
+        "text": "Having people to turn to can make stressful times easier to handle. Strong support from friends or family helps protect against stress."
+      }
+    ],
+    "record_id": "fed1c26ae0af41a7921924d88db013c8",
+    "saved_at": "2026-11-09T14:51:25.049067+00:00",
+    "save_opt_in": true
+  }
+]
