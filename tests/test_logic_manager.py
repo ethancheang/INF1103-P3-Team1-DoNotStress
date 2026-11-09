@@ -3,121 +3,114 @@
 Uses hardcoded sample AI replies (sample_ai_records) so no live Gemini API
 is required. Covers scoring, business rules, response validation, and
 failure cases (malformed AI output, score mismatch).
+
+Written with unittest, so it runs with either test runner:
+    python -m unittest discover -s tests -v
+    python -m pytest -v
 """
+
 from __future__ import annotations
 
 import copy
-import pytest
+import unittest
 
 from logic_manager import (
-    LogicManager,
-    ScoreCalculator,
     AIScoreVerifier,
-    SafetyOverrideRule,
-    SupportPriorityRule,
-    RiskTier,
+    EnrichedRecord,
+    LogicManager,
     RecordValidationError,
+    RiskTier,
+    RuleContext,
+    SafetyOverrideRule,
+    ScoreCalculator,
     ScoreMismatchError,
+    StudentAnswers,
+    SupportPriorityRule,
 )
-from logic_manager import EnrichedRecord, RuleContext, StudentAnswers
-from sample_ai_records import (
-    LOW_STRESS,
-    HIGH_LOW_SUPPORT,
-)
+from sample_ai_records import HIGH_LOW_SUPPORT, LOW_STRESS
 
 
-@pytest.fixture
-def calculator():
-    return ScoreCalculator()
+class ScoreCalculatorTests(unittest.TestCase):
+    def setUp(self):
+        self.calculator = ScoreCalculator()
 
-
-@pytest.fixture
-def logic(calculator):
-    return LogicManager(calculator=calculator)
-
-
-@pytest.fixture
-def verifier(calculator):
-    return AIScoreVerifier(calculator)
-
-
-class TestScoreCalculator:
-    def test_low_stress_score_within_tolerance(self, calculator):
+    def test_low_stress_score_within_tolerance(self):
         answers = StudentAnswers.from_mapping(LOW_STRESS)
-        score = calculator.stress_score(answers)
-        assert calculator.within_tolerance(LOW_STRESS["stress_score"], score)
+        score = self.calculator.stress_score(answers)
+        self.assertTrue(self.calculator.within_tolerance(LOW_STRESS["stress_score"], score))
 
-    def test_tier_for_low(self, calculator):
-        assert calculator.tier_for(1.8) == RiskTier.LOW
+    def test_tier_for_low(self):
+        self.assertIs(self.calculator.tier_for(1.8), RiskTier.LOW)
 
-    def test_tier_for_moderate(self, calculator):
-        assert calculator.tier_for(3.2) == RiskTier.MODERATE
+    def test_tier_for_moderate(self):
+        self.assertIs(self.calculator.tier_for(3.2), RiskTier.MODERATE)
 
-    def test_tier_for_high(self, calculator):
-        assert calculator.tier_for(4.5) == RiskTier.HIGH
+    def test_tier_for_high(self):
+        self.assertIs(self.calculator.tier_for(4.5), RiskTier.HIGH)
 
 
-class TestBusinessRules:
-    def _ctx(self, record_dict):
+class BusinessRuleTests(unittest.TestCase):
+    @staticmethod
+    def context(record_dict):
         enriched = EnrichedRecord.from_dict(record_dict)
-        calc = ScoreCalculator()
-        scores = calc.breakdown(enriched.answers)
+        scores = ScoreCalculator().breakdown(enriched.answers)
         return RuleContext(record=enriched, scores=scores)
 
     def test_safety_override_raises_to_high(self):
-        rule = SafetyOverrideRule()
         record = copy.deepcopy(LOW_STRESS)
         record["safety_flag"] = True
-        ctx = self._ctx(record)
-        outcome = rule.evaluate(ctx)
-        assert outcome.triggered is True
-        assert outcome.minimum_tier == RiskTier.HIGH
-        assert "talk_to_someone" in outcome.lead_tips
+        outcome = SafetyOverrideRule().evaluate(self.context(record))
+        self.assertTrue(outcome.triggered)
+        self.assertIs(outcome.minimum_tier, RiskTier.HIGH)
+        self.assertIn("talk_to_someone", outcome.lead_tips)
 
     def test_support_priority_fires_on_high_plus_low_support(self):
-        rule = SupportPriorityRule()
-        ctx = self._ctx(HIGH_LOW_SUPPORT)
-        outcome = rule.evaluate(ctx)
-        assert outcome.triggered is True
-        assert "talk_to_someone" in outcome.lead_tips
+        outcome = SupportPriorityRule().evaluate(self.context(HIGH_LOW_SUPPORT))
+        self.assertTrue(outcome.triggered)
+        self.assertIn("talk_to_someone", outcome.lead_tips)
 
     def test_support_priority_does_not_fire_on_low(self):
-        rule = SupportPriorityRule()
-        ctx = self._ctx(LOW_STRESS)
-        outcome = rule.evaluate(ctx)
-        assert outcome.triggered is False
+        outcome = SupportPriorityRule().evaluate(self.context(LOW_STRESS))
+        self.assertFalse(outcome.triggered)
 
 
-class TestLogicManagerEvaluate:
-    def test_evaluate_low_stress_succeeds(self, logic):
-        result = logic.evaluate(LOW_STRESS)
-        assert result is not None
-        assert result.tier == RiskTier.LOW
+class LogicManagerEvaluateTests(unittest.TestCase):
+    def setUp(self):
+        self.logic = LogicManager(calculator=ScoreCalculator())
 
-    def test_evaluate_high_low_support(self, logic):
-        result = logic.evaluate(HIGH_LOW_SUPPORT)
-        assert result is not None
-        assert result.tier in (RiskTier.HIGH, RiskTier.MODERATE)
+    def test_evaluate_low_stress_succeeds(self):
+        result = self.logic.evaluate(LOW_STRESS)
+        self.assertIs(result.tier, RiskTier.LOW)
 
-    def test_malformed_missing_fields_raises(self, logic):
+    def test_evaluate_high_low_support(self):
+        result = self.logic.evaluate(HIGH_LOW_SUPPORT)
+        self.assertIs(result.tier, RiskTier.HIGH)
+        self.assertTrue(result.support_priority)
+
+    def test_malformed_missing_fields_raises(self):
         bad = {"student_id": "x", "safety_flag": False}  # missing AI fields
-        with pytest.raises(RecordValidationError):
-            logic.evaluate(bad)
+        with self.assertRaises(RecordValidationError):
+            self.logic.evaluate(bad)
 
-    def test_score_mismatch_raises(self, logic):
+    def test_score_mismatch_raises(self):
         bad = copy.deepcopy(LOW_STRESS)
         bad["stress_score"] = 4.9  # deliberately wrong
-        with pytest.raises(ScoreMismatchError):
-            logic.evaluate(bad)
+        with self.assertRaises(ScoreMismatchError):
+            self.logic.evaluate(bad)
 
 
-class TestAIScoreVerifier:
-    def test_verifier_accepts_matching_score(self, verifier):
-        err = verifier.verify(LOW_STRESS, LOW_STRESS)
-        assert err is None or isinstance(err, str)
+class AIScoreVerifierTests(unittest.TestCase):
+    def setUp(self):
+        self.verifier = AIScoreVerifier(ScoreCalculator())
 
-    def test_verifier_rejects_mismatch(self, verifier):
+    def test_verifier_accepts_matching_score(self):
+        self.assertIsNone(self.verifier.verify(LOW_STRESS, LOW_STRESS))
+
+    def test_verifier_rejects_mismatch(self):
         bad = copy.deepcopy(LOW_STRESS)
         bad["stress_score"] = 5.0
-        err = verifier.verify(bad, LOW_STRESS)
-        assert err is not None
+        self.assertIsNotNone(self.verifier.verify(bad, LOW_STRESS))
+
+
+if __name__ == "__main__":
+    unittest.main()

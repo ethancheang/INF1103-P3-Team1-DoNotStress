@@ -179,11 +179,28 @@ function home(){main.innerHTML=`<section class="ds-hero-video"><video class="ds-
       </div>
       <p id="ds-record-status" role="status" aria-live="polite"></p>
       </div>
+      <section class="ds-cohort" id="ds-record-summary" aria-label="Cohort summary" aria-live="polite"></section>
       <div class="ds-record-table" role="region" aria-label="Saved check-ins table" tabindex="0">
       <table><caption>All saved student check-ins</caption>${colgroup}<thead><tr>${heads}</tr></thead><tbody id="ds-record-rows"></tbody></table></div>
       <p class="ds-record-note">Answers are on a 1–5 scale, where 1 is the lowest. Sleep is shown in hours. All times are in Singapore time (SGT).</p>
       <button class="ds-link" data-action="refresh-records">Refresh records</button></section>`;
     loadRecords();
+  }
+  function summaryPanel(summary) {
+    if(!summary||!summary.checkins||!summary.checkins.total)return '';
+    const counts=summary.checkins, stress=summary.stress||{};
+    const items=part=>((summary[part]||{}).items||[]);
+    const tiers=items('tiers').map(t=>`<li><span class="ds-risk ds-risk-${riskClass(t.category)}">${escape(t.label)}</span><strong>${escape(t.count)}</strong><span>${escape(t.percent)}%</span></li>`).join('');
+    const stressors=items('stressors').map(s=>`<li><span>${escape(s.label)}</span><strong>${escape(s.count)}</strong></li>`).join('')||'<li><span>None named yet</span></li>';
+    const factors=items('factors').map(f=>`<li><span>${escape(f.label)}</span><strong>${escape(f.count)}</strong><span>${escape(f.percent)}%</span></li>`).join('');
+    const average=stress.average_score===null||stress.average_score===undefined?'—':`${escape(stress.average_score)} / 5`;
+    return `<h3>Cohort summary</h3><p class="ds-record-note">For the ${escape(counts.total)} check-ins matching the filters above: ${escape(counts.evaluated)} evaluated, ${escape(counts.pending)} pending. Percentages are of evaluated check-ins.</p>
+      <div class="ds-cohort-grid">
+        <article class="ds-cohort-card"><h4>Tiers</h4><ul>${tiers}</ul></article>
+        <article class="ds-cohort-card"><h4>Average stress score</h4><p class="ds-cohort-big">${average}</p><p>Support priority: ${escape(stress.support_priority||0)} · Safety flag: ${escape(stress.safety_flags||0)}</p></article>
+        <article class="ds-cohort-card"><h4>Top stressors (AI)</h4><ul>${stressors}</ul></article>
+        <article class="ds-cohort-card"><h4>Flagged factors</h4><ul>${factors}</ul></article>
+      </div>`;
   }
   function savedDate(value) {
     if(!value)return '—';
@@ -213,6 +230,7 @@ function home(){main.innerHTML=`<section class="ds-hero-video"><video class="ds-
       cohort.innerHTML='<option value="">All cohorts</option>'+data.cohorts.map(year=>`<option value="${escape(year)}">20${escape(year)}</option>`).join('');
       cohort.value=recordFilters.cohort_year;
       status.textContent=`Showing ${data.matching} of ${data.total} check-ins`;
+      main.querySelector('#ds-record-summary').innerHTML=summaryPanel(data.summary);
       const cell=value=>escape(value===null||value===undefined||value===''?'—':value);
       const answerCell=(key,value)=>{
         if(value===null||value===undefined||value==='')return '<td class="ds-num ds-eq">—</td>';
@@ -229,7 +247,7 @@ function home(){main.innerHTML=`<section class="ds-hero-video"><video class="ds-
       const answersFor=row=>['pss_1','pss_2','pss_3','pss_4','sleep_hours_avg','sleep_quality','pas_workload','pas_catchup','fin_stress','mspss_friends','mspss_family'].map(key=>answerCell(key,row[key])).join('');
       main.querySelector('#ds-record-rows').innerHTML=data.records.length?data.records.map(row=>`<tr data-risk="${riskClass(row.risk_category)}"><td>${cell(row.student_id)}</td><td class="ds-num ds-eq">${cell(row.stress_score)}</td><td><span class="ds-risk ds-risk-${riskClass(row.risk_category)}">${escape(tierName(row))}</span></td>${answersFor(row)}<td>${cell(row.status)}</td><td class="ds-date">${escape(savedDate(row.saved_at))}</td></tr>`).join(''):'<tr><td colspan="16" class="ds-empty">No records found</td></tr>';
 
-    }catch(error){if(page==='records'&&requestId===recordsRequest){status.textContent='Could not load saved records. Use Refresh records to try again.';main.querySelector('#ds-record-rows').innerHTML='';}}
+    }catch(error){if(page==='records'&&requestId===recordsRequest){status.textContent='Could not load saved records. Use Refresh records to try again.';main.querySelector('#ds-record-rows').innerHTML='';main.querySelector('#ds-record-summary').innerHTML='';}}
   }
   function valid() {
     let message='', focus;

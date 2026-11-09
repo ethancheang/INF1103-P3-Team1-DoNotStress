@@ -314,3 +314,18 @@ body{margin:0;padding:0;min-height:100vh;background:light-dark(#f7f8f2,#19221e);
 #dns-campus .ds-foot-contacts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;align-items:center;gap:.55rem;max-width:40rem}
 #dns-campus .ds-foot-contacts li,#dns-campus .ds-foot-crisis,#dns-campus .ds-foot-note{margin:0;color:var(--ds-sub);font-size:clamp(.78rem,2vw,.9rem);line-height:1.55}
 #dns-campus .ds-foot-crisis,#dns-campus .ds-foot-note{max-width:42rem}
+
+#dns-campus .ds-cohort{display:block;margin:1.25rem 0 .5rem}
+#dns-campus .ds-cohort:empty{display:none}
+#dns-campus .ds-cohort h3{margin:0 0 .25rem;font-size:1.05rem}
+#dns-campus .ds-cohort-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:.75rem}
+#dns-campus .ds-cohort-card{border:1px solid var(--ds-line);border-radius:16px;padding:14px 16px;background:var(--ds-panel)}
+#dns-campus .ds-cohort-card h4{margin:0 0 .5rem;font-size:.8rem;font-weight:650;color:var(--ds-sub);text-transform:uppercase;letter-spacing:.04em}
+#dns-campus .ds-cohort-card ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.4rem;font-size:.85rem}
+#dns-campus .ds-cohort-card li{display:flex;align-items:center;gap:.5rem}
+#dns-campus .ds-cohort-card li>:first-child{flex:1;min-width:0}
+#dns-campus .ds-cohort-card li .ds-risk{flex:0 1 auto;margin-right:auto;white-space:normal}
+#dns-campus .ds-cohort-card p{margin:0;font-size:.8rem;color:var(--ds-sub)}
+#dns-campus .ds-cohort-big{font-size:1.6rem!important;font-weight:700;color:var(--ds-ink)!important;margin:.2rem 0 .4rem!important}
+@media (max-width:900px){#dns-campus .ds-cohort-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:560px){#dns-campus .ds-cohort-grid{grid-template-columns:1fr}}

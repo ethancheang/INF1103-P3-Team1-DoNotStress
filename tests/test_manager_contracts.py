@@ -5,14 +5,19 @@ whole pipeline runs without a live API or files:
 
     io (student dict) -> MockAIManager -> LogicManager -> InMemoryRecordRepository
                                                      '-> RecordingDisplay
+
+The doubles live in tests/doubles and implement the same interfaces as the
+real managers (Liskov Substitution).
 """
 
 import unittest
 
-from ai_manager import AIManagerInterface, AIProcessingError, MockAIManager
-from data_manager import InMemoryRecordRepository, RecordRepository
-from io_manager import RecordingDisplay, ResultDisplay
+from ai_manager import AIManagerInterface, AIProcessingError, TextGenerator
+from data_manager import RecordRepository
+from doubles import InMemoryRecordRepository, MockAIManager, RecordingDisplay
+from io_manager import ResultDisplay
 from logic_manager import AIScoreVerifier, LogicManager, ScoreCalculator
+from reports import ReportSection
 from sample_ai_records import HIGH_REPLY, HIGH_STUDENT, MODERATE_REPLY, MODERATE_STUDENT
 
 
@@ -63,7 +68,7 @@ class ManagerContractTests(unittest.TestCase):
         self.assertNotIn("feelings_text", self.store.load()[0])
 
     def test_interfaces_cannot_be_created_directly(self):
-        for interface in (AIManagerInterface, RecordRepository, ResultDisplay):
+        for interface in (AIManagerInterface, RecordRepository, ResultDisplay, TextGenerator, ReportSection):
             with self.subTest(interface=interface.__name__), self.assertRaises(TypeError):
                 interface()
 
