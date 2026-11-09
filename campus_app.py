@@ -1,8 +1,4 @@
-"""CampusApp: composition root and HTTP controller for the campus check-in UI.
-
-Wires the four managers (I/O, AI, Logic, Data) and the supporting services.
-Route methods stay thin: they validate the request and delegate.
-"""
+"""CampusApp: composition root and HTTP controller for the campus check-in web app."""
 
 from __future__ import annotations
 
@@ -10,35 +6,49 @@ import logging
 import os
 import secrets
 import uuid
+from collections.abc import Mapping
+from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, jsonify, redirect, render_template, request, session, url_for
+from flask.typing import ResponseReturnValue
 
-import survey
 from admin_session_manager import AdminSessionManager
-from ai_manager import GeminiAIManager
+from ai_manager import GeminiAIManager, TextGenerator
 from checkin_pipeline import CheckinPipeline
-from data_manager import DataStoreError, JsonRecordRepository
+from data_manager import DataStoreError, JsonRecordRepository, RecordRepository
 from io_manager import StudentIO
 from logic_manager import AIScoreVerifier, LogicManager, ScoreCalculator
 from pending_checkin_registry import PendingCheckinRegistry
 from records_query_service import RecordsQueryService
+from reports import CohortSummaryReport
 from result_presenter import ResultPresenter
 from submission_fingerprint import SubmissionFingerprint
+from survey import Questionnaire, SafetyCheck
 
 logger = logging.getLogger(__name__)
 
 
 class CampusApp:
-    """One running campus application. create() returns the Flask app."""
+    """One running campus web application.
 
-    def create(self, test_config=None) -> Flask:
-        app = Flask(__name__)
-        app.config.update(
+    The constructor wires the four managers and the supporting services
+    (composition root); each HTTP route is a method that validates the
+    request and delegates. ``flask_app`` is the WSGI app for Flask/Docker.
+
+        browser -> StudentIO (I/O) -> GeminiAIManager (AI) -> LogicManager (Logic)
+                -> JsonRecordRepository (Data) -> ResultPresenter -> browser
+
+    ``text_generator`` replaces the live Gemini client (tests pass a fake);
+    ``config`` overrides Flask settings such as DATA_PATH.
+    """
+
+    def __init__(self, config: Mapping[str, Any] | None = None, *, text_generator: TextGenerator | None = None) -> None:
+        self.__app = Flask(__name__)
+        self.__app.config.update(
             SECRET_KEY=os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32),
             SESSION_COOKIE_HTTPONLY=True,
             SESSION_COOKIE_SAMESITE="Lax",
             DATA_PATH=os.environ.get("DONOTSTRESS_DATA_PATH") or None,
-            AI_GENERATE_FN=None,
             AI_MAX_ATTEMPTS=3,
             AI_RETRY_DELAY_SEC=0.5,
             PENDING_TTL_SECONDS=1800,
@@ -47,309 +57,291 @@ class CampusApp:
             ADMIN_LOGIN_MAX_ATTEMPTS=5,
             ADMIN_LOGIN_WINDOW_SECONDS=300,
         )
-        if test_config:
-            app.config.update(test_config)
+        if config:
+            self.__app.config.update(config)
+        settings = self.__app.config
 
+        # The four managers. One ScoreCalculator is shared by Logic and by the
+        # verifier the AI Manager uses, so the prompt, the reply check and the
+        # final evaluation always use the same scoring rules.
         calculator = ScoreCalculator()
-        logic = LogicManager(calculator=calculator)
         verifier = AIScoreVerifier(calculator)
-        store = JsonRecordRepository(app.config["DATA_PATH"])
-        io = StudentIO()
-        ai = GeminiAIManager(
-            verifier=verifier,
-            generate_fn=app.config["AI_GENERATE_FN"],
-            max_attempts=app.config["AI_MAX_ATTEMPTS"],
-            retry_delay_sec=app.config["AI_RETRY_DELAY_SEC"],
+        self.__io = StudentIO()
+        self.__ai = GeminiAIManager(
+            verifier,
+            text_generator,
+            questions=Questionnaire.QUESTIONS,
+            max_attempts=settings["AI_MAX_ATTEMPTS"],
+            retry_delay_sec=settings["AI_RETRY_DELAY_SEC"],
         )
-        pipeline = CheckinPipeline(ai, logic, verifier)
-        presenter = ResultPresenter(io)
-        fingerprint = SubmissionFingerprint()
-        pending = PendingCheckinRegistry()
-        admin = AdminSessionManager(
-            max_attempts=app.config["ADMIN_LOGIN_MAX_ATTEMPTS"],
-            window_seconds=app.config["ADMIN_LOGIN_WINDOW_SECONDS"],
-            session_seconds=app.config["ADMIN_SESSION_SECONDS"],
+        self.__logic = LogicManager(calculator=calculator)
+        self.__store: RecordRepository = JsonRecordRepository(settings["DATA_PATH"])
+
+        # Supporting services.
+        self.__safety = SafetyCheck()
+        self.__pipeline = CheckinPipeline(self.__ai, self.__logic)
+        self.__presenter = ResultPresenter(self.__io)
+        self.__fingerprint = SubmissionFingerprint()
+        self.__pending = PendingCheckinRegistry()
+        self.__admin = AdminSessionManager(
+            max_attempts=settings["ADMIN_LOGIN_MAX_ATTEMPTS"],
+            window_seconds=settings["ADMIN_LOGIN_WINDOW_SECONDS"],
+            session_seconds=settings["ADMIN_SESSION_SECONDS"],
         )
-        records_query = RecordsQueryService()
+        self.__records_query = RecordsQueryService()
+        self.__summary_report = CohortSummaryReport()
 
-        app.extensions["store"] = store
-        app.extensions["io"] = io
-        app.extensions["ai"] = ai
-        app.extensions["pending_checkins"] = pending.pending
-        app.extensions["pending_submissions"] = pending.submissions
-        app.extensions["admin_sessions"] = admin
+        self.__app.extensions["store"] = self.__store
+        self.__register()
 
-        self._register_hooks(app, pending, admin)
-        self._register_routes(
-            app, store, io, ai, pipeline, presenter, fingerprint, pending, admin, records_query
+    @property
+    def flask_app(self) -> Flask:
+        return self.__app
+
+    @property
+    def store(self) -> RecordRepository:
+        return self.__store
+
+    def run(self) -> None:
+        """Start the local development server (``python main.py``)."""
+        self.__app.run(
+            host="127.0.0.1",
+            port=int(os.environ.get("PORT", "5000")),
+            debug=os.environ.get("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"},
         )
-        return app
 
-    def _register_hooks(self, app, pending: PendingCheckinRegistry, admin: AdminSessionManager) -> None:
-        @app.before_request
-        def expire_records_and_check_csrf():
-            pending.expire(app.config["PENDING_TTL_SECONDS"])
-            admin.expire()
-            if request.method == "POST":
-                expected = session.get("csrf_token", "")
-                provided = request.headers.get("X-CSRF-Token", "")
-                if not provided and not request.is_json:
-                    provided = request.form.get("csrf_token", "")
-                if not expected or not secrets.compare_digest(
-                    provided.encode("utf-8"), expected.encode("utf-8")
-                ):
-                    return jsonify(message="This page has expired. Reload and try again."), 403
+    # -- wiring -------------------------------------------------------------
 
-        @app.errorhandler(413)
-        def oversized_request(error):
+    def __register(self) -> None:
+        app = self.__app
+        app.before_request(self.before_request)
+        app.after_request(self.after_request)
+        app.register_error_handler(413, self.oversized_request)
+        routes = (
+            ("/", "checkin", self.checkin, ("GET",)),
+            ("/", "submit_checkin", self.submit_checkin, ("POST",)),
+            ("/garden", "retired_page", self.retired_page, ("GET",)),
+            ("/admin/login", "admin_login", self.admin_login, ("GET", "POST")),
+            ("/admin/logout", "admin_logout", self.admin_logout, ("POST",)),
+            ("/records", "records_page", self.records_page, ("GET",)),
+            ("/api/records", "saved_records", self.saved_records, ("GET",)),
+            ("/result", "result", self.result, ("GET",)),
+            ("/save", "save_checkin", self.save_checkin, ("POST",)),
+            ("/new", "new_checkin", self.new_checkin, ("GET",)),
+        )
+        for rule, endpoint, view, methods in routes:
+            app.add_url_rule(rule, endpoint, view, methods=list(methods))
+
+    # -- request hooks ------------------------------------------------------
+
+    def before_request(self) -> ResponseReturnValue | None:
+        """Expire old in-memory state and require the CSRF token on every POST."""
+        self.__pending.expire(self.__app.config["PENDING_TTL_SECONDS"])
+        self.__admin.expire()
+        if request.method != "POST":
+            return None
+        expected = session.get("csrf_token", "")
+        provided = request.headers.get("X-CSRF-Token", "")
+        if not provided and not request.is_json:
+            provided = request.form.get("csrf_token", "")
+        if not expected or not secrets.compare_digest(provided.encode("utf-8"), expected.encode("utf-8")):
+            return jsonify(message="This page has expired. Reload and try again."), 403
+        return None
+
+    def after_request(self, response: Response) -> Response:
+        if request.endpoint != "static":
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    def oversized_request(self, error: Exception) -> ResponseReturnValue:
+        return jsonify(message="Your response is too long. Please shorten it and try again."), 413
+
+    # -- pages --------------------------------------------------------------
+
+    def checkin(self) -> ResponseReturnValue:
+        return self.__render_campus()
+
+    def retired_page(self) -> ResponseReturnValue:
+        """Legacy URL from the removed garden page."""
+        return redirect(url_for("checkin"))
+
+    def result(self) -> ResponseReturnValue:
+        """Refreshing the result only reads memory; the check-in was saved once already."""
+        if not self.__pending.current(session):
+            return redirect(url_for("checkin"))
+        return self.__render_campus("result")
+
+    def new_checkin(self) -> ResponseReturnValue:
+        self.__pending.clear(session)
+        return redirect(url_for("checkin"))
+
+    # -- check-in -----------------------------------------------------------
+
+    def submit_checkin(self) -> ResponseReturnValue:
+        values = request.get_json(silent=True) if request.is_json else request.form
+        if not isinstance(values, Mapping):
+            return jsonify(message="Please submit a check-in form."), 400
+        safety = self.__safety.is_flagged(values.get("feelings_text", ""))
+        ok, record = self.__io.validate_form(values)
+        if not ok:
             return jsonify(
-                message="Your response is too long. Please shorten it and try again."
-            ), 413
+                errors=record, safety_flag=safety, advisor=self.__io.format_advisor("high") if safety else None
+            ), 400
+        self.__pending.clear(session)
+        identity = self.__fingerprint.of(record)
+        try:
+            ok, outcome = self.__pipeline.process(record)
+        except Exception:  # noqa: BLE001 - the student must never see a crash page
+            logger.warning("Check-in pipeline could not complete")
+            ok, outcome = False, "unavailable"
+        if not ok:
+            self.__save_pending(identity, record)
+            copy = self.__io.format_ai_error(outcome)
+            return jsonify(
+                message="We could not complete your check-in right now. Your answers are still here; please try again.",
+                error_code=outcome,
+                safety_flag=safety,
+                advisor=copy["speak_to_advisor"],
+            ), 503
+        saved, outcome = self.__save_evaluated(identity, outcome)
+        if not saved:
+            return jsonify(
+                message="We could not save your check-in just now. Your answers are still here; please try again."
+            ), 500
+        token = secrets.token_urlsafe(32)
+        self.__pending.store_result(token, outcome, saved=True)
+        session["checkin_token"] = token
+        return jsonify(ok=True, result=self.__presenter.build(outcome, saved=True))
 
-        @app.after_request
-        def prevent_answer_caching(response):
-            if request.endpoint != "static":
-                response.headers["Cache-Control"] = "no-store"
-            return response
+    def save_checkin(self) -> ResponseReturnValue:
+        """Retry a missed write. A result that is already saved is left as it is."""
+        with self.__pending.locked():
+            entry = self.__pending.current(session)
+            if not entry:
+                return jsonify(message="Your result has expired. Please start a new check-in."), 409
+            if entry["saved"]:
+                return jsonify(ok=True, saved=True)
+            try:
+                self.__store.save(entry["record"])
+                entry["saved"] = True
+            except Exception as exc:  # noqa: BLE001 - DataStoreError or anything unexpected
+                logger.warning("Retrying the pending save failed: %s", type(exc).__name__)
+                return jsonify(message="Your check-in could not be saved. Please try again."), 500
+        return jsonify(ok=True, saved=True)
 
-    def _register_routes(
-        self,
-        app,
-        store,
-        io,
-        ai,
-        pipeline: CheckinPipeline,
-        presenter: ResultPresenter,
-        fingerprint: SubmissionFingerprint,
-        pending: PendingCheckinRegistry,
-        admin: AdminSessionManager,
-        records_query: RecordsQueryService,
-    ) -> None:
-        def render_campus(page: str = "home"):
-            session.setdefault("csrf_token", secrets.token_urlsafe(32))
-            entry = pending.current(session)
-            return render_template(
-                "checkin.html",
-                boot={
-                    "page": page,
-                    "survey": survey.public_config(),
-                    "isAdmin": admin.is_admin(session),
-                    "adminLoginUrl": url_for("admin_login"),
-                    "result": presenter.build(entry["record"], entry["saved"]) if entry else None,
-                    "csrfToken": session["csrf_token"],
-                    "submitUrl": url_for("submit_checkin"),
-                    "saveUrl": url_for("save_checkin"),
-                    "newUrl": url_for("new_checkin"),
-                    "homeUrl": url_for("checkin"),
-                    "resultUrl": url_for("result"),
-                    "recordsPageUrl": url_for("records_page"),
-                    "recordsUrl": url_for("saved_records"),
-                },
-            )
+    # -- admin --------------------------------------------------------------
 
-        @app.get("/")
-        def checkin():
-            return render_campus()
-
-        @app.get("/garden")
-        def retired_page():
-            return redirect(url_for("checkin"))
-
-        @app.route("/admin/login", methods=["GET", "POST"])
-        def admin_login():
-            if admin.is_admin(session):
-                return redirect(url_for("records_page"))
-            session.setdefault("csrf_token", secrets.token_urlsafe(32))
-            error, status = None, 200
-            if request.method == "POST":
-                values = request.get_json(silent=True) if request.is_json else request.form
-                values = values if isinstance(values, dict) or hasattr(values, "get") else {}
-                username, password = values.get("username", ""), values.get("password", "")
-                address = request.remote_addr or "local"
-                if admin.record_attempt(address):
-                    error, status = (
-                        "Too many sign-in attempts. Please try again in five minutes.",
-                        429,
-                    )
-                elif admin.check_password(username, password):
-                    admin.clear_attempts(address)
-                    admin.grant(session)
-                    return redirect(url_for("records_page"))
-                else:
-                    error, status = "Incorrect username or password.", 401
-            return render_template(
-                "admin_login.html", error=error, csrf_token=session["csrf_token"]
-            ), status
-
-        @app.post("/admin/logout")
-        def admin_logout():
-            admin.revoke(session)
-            pending.clear(session)
-            pending.forget_csrf(session.get("csrf_token"))
-            session.clear()
-            return redirect(url_for("checkin"))
-
-        @app.post("/")
-        def submit_checkin():
+    def admin_login(self) -> ResponseReturnValue:
+        if self.__admin.is_admin(session):
+            return redirect(url_for("records_page"))
+        session.setdefault("csrf_token", secrets.token_urlsafe(32))
+        error, status = None, 200
+        if request.method == "POST":
             values = request.get_json(silent=True) if request.is_json else request.form
-            if not hasattr(values, "get"):
-                return jsonify(message="Please submit a check-in form."), 400
-            safety = survey.safety_check(values.get("feelings_text", ""))
-            ok, record = io.validate_form(values)
-            if not ok:
-                return jsonify(
-                    errors=record,
-                    safety_flag=safety,
-                    advisor=io.format_advisor("high") if safety else None,
-                ), 400
-            pending.clear(session)
-            identity = fingerprint.of(record)
-            try:
-                ok, outcome = pipeline.process(
-                    record,
-                    generate_fn=app.config["AI_GENERATE_FN"],
-                    max_attempts=app.config["AI_MAX_ATTEMPTS"],
-                    retry_delay_sec=app.config["AI_RETRY_DELAY_SEC"],
-                )
-            except Exception:
-                logger.warning("Check-in pipeline could not complete")
-                ok, outcome = False, "unavailable"
-            if not ok:
-                self._save_pending(store, pending, session, identity, record)
-                copy = io.format_ai_error(outcome)
-                return jsonify(
-                    message=(
-                        "We could not complete your check-in right now. "
-                        "Your answers are still here; please try again."
-                    ),
-                    error_code=outcome,
-                    safety_flag=safety,
-                    advisor=copy["speak_to_advisor"],
-                ), 503
-            saved, outcome = self._save_evaluated(store, pending, session, identity, outcome)
-            if not saved.get("ok"):
-                return jsonify(
-                    message=(
-                        "We could not save your check-in just now. "
-                        "Your answers are still here; please try again."
-                    )
-                ), 500
-            token = secrets.token_urlsafe(32)
-            pending.store_result(token, outcome, saved=True)
-            session["checkin_token"] = token
-            return jsonify(ok=True, result=presenter.build(outcome, saved=True))
+            values = values if isinstance(values, Mapping) else {}
+            username, password = values.get("username", ""), values.get("password", "")
+            address = request.remote_addr or "local"
+            if self.__admin.record_attempt(address):
+                error, status = "Too many sign-in attempts. Please try again in five minutes.", 429
+            elif self.__admin.check_password(username, password):
+                self.__admin.clear_attempts(address)
+                self.__admin.grant(session)
+                return redirect(url_for("records_page"))
+            else:
+                error, status = "Incorrect username or password.", 401
+        return render_template("admin_login.html", error=error, csrf_token=session["csrf_token"]), status
 
-        @app.get("/records")
-        def records_page():
-            if not admin.is_admin(session):
-                return redirect(url_for("admin_login"))
-            return render_campus("records")
+    def admin_logout(self) -> ResponseReturnValue:
+        self.__admin.revoke(session)
+        self.__pending.clear(session)
+        self.__pending.forget_csrf(session.get("csrf_token"))
+        session.clear()
+        return redirect(url_for("checkin"))
 
-        @app.get("/api/records")
-        def saved_records():
-            if not admin.is_admin(session):
-                return jsonify(message="Admin sign-in is required to view saved records."), 401
-            try:
-                loaded = store.load_all()
-            except Exception as exc:
-                logger.warning("Loading saved records failed: %s", type(exc).__name__)
-                loaded = {"ok": False}
-            if not loaded.get("ok") or loaded.get("error"):
-                return jsonify(
-                    message="Saved records could not be loaded. Please try again."
-                ), 500
-            records = records_query.current_version(loaded.get("records", []))
-            cohorts = records_query.cohorts(records)
-            query = request.args.get("student_id", "").strip()
-            tier = request.args.get("tier", "").strip()
-            cohort = request.args.get("cohort_year", "").strip()
-            message = records_query.validate_filters(tier, cohort)
-            if message:
-                return jsonify(message=message), 400
-            rows = records_query.rows(
-                records, student_id=query, tier=tier, cohort=cohort, store=store
-            )
-            return jsonify(
-                records=rows, total=len(records), matching=len(rows), cohorts=cohorts
-            )
+    def records_page(self) -> ResponseReturnValue:
+        if not self.__admin.is_admin(session):
+            return redirect(url_for("admin_login"))
+        return self.__render_campus("records")
 
-        @app.get("/result")
-        def result():
-            if not pending.current(session):
-                return redirect(url_for("checkin"))
-            return render_campus("result")
-
-        @app.post("/save")
-        def save_checkin():
-            with pending.locked():
-                entry = pending.current(session)
-                if not entry:
-                    return jsonify(
-                        message="Your result has expired. Please start a new check-in."
-                    ), 409
-                if entry["saved"]:
-                    return jsonify(ok=True, saved=True)
-                try:
-                    store.save(entry["record"])
-                    entry["saved"] = True
-                except DataStoreError as exc:
-                    logger.warning("Retrying the pending save failed: %s", type(exc).__name__)
-                    return jsonify(
-                        message="Your check-in could not be saved. Please try again."
-                    ), 500
-                except Exception as exc:
-                    logger.warning("Retrying the pending save failed: %s", type(exc).__name__)
-                    return jsonify(
-                        message="Your check-in could not be saved. Please try again."
-                    ), 500
-            return jsonify(ok=True, saved=True)
-
-        @app.get("/new")
-        def new_checkin():
-            pending.clear(session)
-            return redirect(url_for("checkin"))
-
-    def _save_pending(self, store, pending, flask_session, identity, record) -> None:
-        """AI did not finish. The same answers in this session are one pending row."""
+    def saved_records(self) -> ResponseReturnValue:
+        """Saved check-ins for the admin table, plus the cohort summary for the same filters."""
+        if not self.__admin.is_admin(session):
+            return jsonify(message="Admin sign-in is required to view saved records."), 401
         try:
-            with pending.locked():
-                pending_id = pending.matched_id(flask_session, identity)
-                if pending_id is None:
-                    record_id = uuid.uuid4().hex
-                    try:
-                        stored = store.save_pending({**record, "record_id": record_id})
-                        pending.remember(
-                            flask_session,
-                            identity,
-                            stored.get("record_id") or record_id,
-                            pending_save=True,
-                        )
-                    except DataStoreError:
-                        logger.warning("Pending check-in could not be saved")
+            loaded = self.__store.load()
+        except Exception as exc:  # noqa: BLE001 - DataStoreError (corrupt file) or an unexpected read error
+            logger.warning("Loading saved records failed: %s", type(exc).__name__)
+            return jsonify(message="Saved records could not be loaded. Please try again."), 500
+        query = self.__records_query
+        records = query.current_version(loaded)
+        student_id = request.args.get("student_id", "").strip()
+        tier = request.args.get("tier", "").strip()
+        cohort = request.args.get("cohort_year", "").strip()
+        message = query.validate_filters(tier, cohort)
+        if message:
+            return jsonify(message=message), 400
+        matching = query.matching(records, student_id=student_id, tier=tier, cohort=cohort)
+        rows = query.rows(matching)
+        return jsonify(
+            records=rows,
+            total=len(records),
+            matching=len(rows),
+            cohorts=query.cohorts(records),
+            summary=self.__io.format_summary(self.__summary_report.build(matching)),
+        )
+
+    # -- helpers ------------------------------------------------------------
+
+    def __render_campus(self, page: str = "home") -> ResponseReturnValue:
+        session.setdefault("csrf_token", secrets.token_urlsafe(32))
+        entry = self.__pending.current(session)
+        return render_template(
+            "checkin.html",
+            boot={
+                "page": page,
+                "survey": Questionnaire.public_config(),
+                "isAdmin": self.__admin.is_admin(session),
+                "adminLoginUrl": url_for("admin_login"),
+                "result": self.__presenter.build(entry["record"], entry["saved"]) if entry else None,
+                "csrfToken": session["csrf_token"],
+                "submitUrl": url_for("submit_checkin"),
+                "saveUrl": url_for("save_checkin"),
+                "newUrl": url_for("new_checkin"),
+                "homeUrl": url_for("checkin"),
+                "resultUrl": url_for("result"),
+                "recordsPageUrl": url_for("records_page"),
+                "recordsUrl": url_for("saved_records"),
+            },
+        )
+
+    def __save_pending(self, identity: str, record: Mapping[str, Any]) -> None:
+        """AI did not finish. The same answers in this session stay one pending row."""
+        try:
+            with self.__pending.locked():
+                pending_id = self.__pending.matched_id(session, identity)
+                if pending_id is not None:
+                    self.__pending.remember(session, identity, pending_id, pending_save=True)
+                    return
+                record_id = uuid.uuid4().hex
+                stored = self.__store.save_pending({**record, "record_id": record_id})
+                self.__pending.remember(session, identity, stored.get("record_id") or record_id, pending_save=True)
+        except Exception as exc:  # noqa: BLE001 - DataStoreError or unexpected; the student still sees retry copy
+            logger.warning("Pending check-in could not be saved: %s", type(exc).__name__)
+
+    def __save_evaluated(self, identity: str, outcome: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+        """Save the evaluated record, upgrading this session's pending row if there is one."""
+        try:
+            with self.__pending.locked():
+                pending_id = self.__pending.matched_id(session, identity)
+                if pending_id:
+                    outcome = {**outcome, "record_id": pending_id}
+                    stored = self.__store.replace_pending(pending_id, outcome)
                 else:
-                    pending.remember(flask_session, identity, pending_id, pending_save=True)
-        except Exception:
-            logger.warning("Pending check-in could not be saved")
-
-    def _save_evaluated(self, store, pending, flask_session, identity, outcome) -> tuple[dict, dict]:
-        try:
-            with pending.locked():
-                pending_id = pending.matched_id(flask_session, identity)
-                try:
-                    if pending_id:
-                        outcome = {**outcome, "record_id": pending_id}
-                        stored = store.replace_pending(pending_id, outcome)
-                    else:
-                        stored = store.save(outcome)
-                    stored_id = stored.get("record_id")
-                    if stored_id:
-                        pending.remember(
-                            flask_session, identity, stored_id, pending_save=False
-                        )
-                    return {"ok": True, "record": stored}, outcome
-                except DataStoreError as exc:
-                    logger.warning("Saving the check-in failed: %s", type(exc).__name__)
-                    return {"ok": False}, outcome
-        except Exception as exc:
+                    stored = self.__store.save(outcome)
+                stored_id = stored.get("record_id")
+                if stored_id:
+                    self.__pending.remember(session, identity, stored_id, pending_save=False)
+                return True, outcome
+        except Exception as exc:  # noqa: BLE001 - DataStoreError or unexpected
             logger.warning("Saving the check-in failed: %s", type(exc).__name__)
-            return {"ok": False}, outcome
+            return False, outcome

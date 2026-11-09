@@ -1,35 +1,19 @@
-"""DoNotStress entry point.
+"""DoNotStress web app entry point.
 
-Composition root only. The four managers and the supporting services are
-wired in CampusApp; this module just builds the Flask app and starts it.
+All wiring lives in CampusApp; this file only loads the local .env file,
+builds the app and starts it.
 
-    campus UI  →  StudentIO (I/O)
-               →  GeminiAIManager (AI)
-               →  LogicManager (Logic)
-               →  JsonRecordRepository (Data)
+    python main.py                                  # local development server
+    python -m flask --app main:app run              # Flask CLI (used by the Dockerfile)
 """
-
-from __future__ import annotations
-
-import os
 
 from dotenv import load_dotenv
 
 from campus_app import CampusApp
 
 load_dotenv()
-
-
-def create_app(test_config=None):
-    """Flask application factory. Used by `flask --app main` and the Dockerfile."""
-    return CampusApp().create(test_config)
-
-
-app = create_app()
+campus = CampusApp()
+app = campus.flask_app
 
 if __name__ == "__main__":
-    app.run(
-        host="127.0.0.1",
-        port=int(os.environ.get("PORT", "5000")),
-        debug=os.environ.get("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"},
-    )
+    campus.run()

@@ -29,11 +29,23 @@ python -m venv .venv
 
 Open http://127.0.0.1:5000. If only the Python launcher is available, use `py -m venv .venv` for the first command.
 
-`main.py` is the single entry point for the frontend and backend. For Flask CLI or WSGI tools, use `main:app`, for example:
+`main.py` is the entry point for the web app; it builds one `CampusApp` (which wires the four managers) and starts it. For Flask CLI or WSGI tools, use `main:app`, for example:
 
 ```powershell
-.\.venv\Scripts\python.exe -m flask --app main run
+.\.venv\Scripts\python.exe -m flask --app main:app run
 ```
+
+The desktop version (the advanced feature, see below) starts with `.\.venv\Scripts\python.exe gui.py`. It needs Tkinter, which is included with the python.org installer for Windows.
+
+## Run with Docker
+
+```powershell
+docker build -t donotstress .
+docker run --rm donotstress python -m pytest -v
+docker run --rm --name donotstress -p 5000:5000 --env-file .env -v donotstress-data:/app/data donotstress
+```
+
+The first command builds the image, the second runs the tests inside it (no API key needed), and the third starts the app at http://127.0.0.1:5000. Create `.env` from `.env.example` first; it is never copied into the image. Saved check-ins stay in the `donotstress-data` volume. Step-by-step instructions (including Windows), environment variables, troubleshooting and deployment notes are in `DOCKER.md`.
 
 ## AI configuration
 
@@ -46,7 +58,7 @@ The interface opens without a key, but assessment requires Gemini. Missing crede
 ## Evidence questionnaire v3 (single 1–5 scale)
 
 The questionnaire follows section 2 of `donotstress_question_evidence.docx` (9 October 2026).
-`survey.py` owns question wording, options, chapter explanations and the reflection safety check. Gemini (via `ai_manager.py`) produces the score; the `logic_manager` package (`LogicManager`) only re-checks it against the formula as an audit, rejecting mismatches over 0.01 (saved as pending), and never substitutes its own score. `logic_manager` also owns context flags and factor cards.
+The `survey` package (`Questionnaire`, `SafetyCheck`) owns question wording, options, chapter explanations and the reflection safety check. Gemini (via the `ai_manager` package) produces the score; the `logic_manager` package (`LogicManager`) only re-checks it against the formula as an audit, rejecting mismatches over 0.01 (saved as pending), and never substitutes its own score. `logic_manager` also owns context flags and factor cards.
 The browser receives the same definitions from Flask. Required answers start unselected, except the sleep slider, which starts at 7 hours and uses that position as the answer.
 
 1. **Your month:** Student ID (seven ASCII digits beginning with 2), then all four PSS-4 items as full sentences, each beginning "In the past month, how often have you felt…". The chapter title is "Start with the bigger picture." Each item is 1 (never) to 5 (very often). Items 2 and 3 are reverse-scored.
@@ -86,39 +98,102 @@ Support contacts are always available, including without an AI result, in the pa
 
 ## Flow and storage
 
-`main.py` validates with `io_manager`, runs `ai_manager.analyse_student` (with the prompt rules and score check from `logic_manager.AIScoreVerifier`), then `LogicManager.evaluate`, and saves `EvaluationResult.to_record()`. Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
+`CampusApp.submit_checkin` validates with `StudentIO` (I/O Manager), runs `CheckinPipeline`: `GeminiAIManager.analyse` (AI Manager, with the prompt rules and score check from `logic_manager.AIScoreVerifier`), then `LogicManager.evaluate` (Logic Manager), and saves `EvaluationResult.to_record()` through `JsonRecordRepository` (Data Manager). Student-facing results and tips are formatted by `StudentIO` and `ResultPresenter`. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
 
 Before submission, the review step says that answers are used to share a few suggestions, while the student ID stays private and anything written in the reflection box is not stored. The server checks reflection text then discards it; only the boolean safety flag remains in a result. Numeric answers are sent for suggestions; the ID and reflection are not. Request bodies must not be logged by a deployment proxy. After a successful check-in the result is shown at `/result`. Session cookies contain only opaque identifiers and a CSRF token, not answers. The in-memory result expires after 30 minutes; the saved file is separate. `/garden` redirects to the home page.
 
-Every completed check-in is saved automatically to `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) through `data_manager`. Reflection text is never stored. A finished AI result is written with `save_record`. If Gemini cannot complete the check-in, the answers are still saved as a pending record and the student is asked to try again; no result page is shown. Refreshing `/result` does not write a second copy.
+Every completed check-in is saved automatically to `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) through `data_manager`. Reflection text is never stored. A finished AI result is written with `JsonRecordRepository.save`. If Gemini cannot complete the check-in, the answers are still saved as a pending record and the student is asked to try again; no result page is shown. Refreshing `/result` does not write a second copy.
 
 This is a single-process local app. A production deployment needs a shared server-side session/record store, authentication and access controls appropriate to student records, and a production server.
 
 ## Files
 
-- `main.py`: combined Flask entry point and orchestration.
-- `io_manager.py`, `ai_manager.py`, `data_manager.py`: existing team layers.
-- `logic_manager/`: object-oriented Logic Manager package (`LogicManager`, business rules, scoring and the score check used by the AI layer).
-- `templates/base.html`, `templates/checkin.html`: page shell.
-- `static/style.css`, `static/campus.js`: campus UI, sliders, review, and results.
-- Legacy result/error templates remain available; the current interface renders these states in the shared campus UI.
+Every class lives in its own `.py` file, named after the class. There are no module-level functions; `main.py` and `gui.py` only build the app object and start it.
+
+| Folder / file | What it holds |
+| --- | --- |
+| `main.py` | Web entry point (`main:app`). |
+| `campus_app.py` | `CampusApp`: wires the four managers and handles the HTTP routes. |
+| `io_manager/` | **I/O Manager**: `StudentIO`, `StudentFormValidator`, `ResultDisplay`, `ConsoleResultDisplay`. |
+| `ai_manager/` | **AI Manager**: `GeminiAIManager`, `PromptBuilder`, `TextGenerator`, `GeminiTextGenerator`, `ResponseParser`, `ResponseValidator`, `AIResponseSchema`, `AIErrorClassifier`, `RetryPolicy`, `ScoreVerifier`, `AIManagerInterface`, `AIProcessingError`. |
+| `logic_manager/` | **Logic Manager**: `LogicManager`, the business rules (`BaseEvaluator` and its subclasses), `ScoreCalculator`, `ScoringPolicy`, `AIScoreVerifier`, `TipPlanner`, `FactorCardBuilder` and the record/result value objects. |
+| `data_manager/` | **Data Manager**: `JsonRecordRepository`, `RecordRepository`, `JsonRecordsFile`, `AIRecordCheck`, `RecordFilter`, `RecordStatus`, `DataStoreError`. |
+| `reports/` | Phase 2 new feature: `CohortSummaryReport` and its `ReportSection` subclasses. |
+| `survey/` | `Questionnaire` (question wording, sections, answer checks) and `SafetyCheck`. |
+| `checkin_pipeline.py`, `result_presenter.py`, `records_query_service.py`, `submission_fingerprint.py`, `pending_checkin_registry.py`, `admin_session_manager.py` | Supporting services used by `CampusApp`. |
+| `gui.py`, `checkin_worker.py`, `desktop_palette.py` | Advanced feature: the desktop app, its background worker thread and its colour themes. |
+| `templates/`, `static/` | Page shell, campus UI script, styles and media. |
+| `tests/` | Automated tests; `tests/doubles/` holds the test doubles (fake AI client, in-memory store, recording display). |
+| `.github/workflows/tests.yml` | CI: runs the tests on every push and pull request, directly and inside Docker. |
+| `Dockerfile`, `.dockerignore`, `DOCKER.md` | Container image (Python 3.12, non-root, health check) and how to build, test and run it. |
 
 ## Required functions
 
-| Manager file | Required functions |
+The Phase 1 required functions are now methods of the manager classes:
+
+| Manager | Phase 2 methods |
 | --- | --- |
-| `ai_manager.py` | `build_prompt`, `call_api`, `parse_response`, `validate_response` |
-| `logic_manager/` | `LogicManager.evaluate`, `LogicManager.score`, `LogicManager.route` |
-| `data_manager.py` | `save`, `load`, `query(filter_fn)` |
-| `io_manager.py` | `display_record`, `display_list`, `display_result` |
+| AI (`GeminiAIManager`) | `build_prompt`, `call_api`, `parse_response`, `validate_response`, plus `analyse` (the `AIManagerInterface` method) |
+| Logic (`LogicManager`) | `evaluate`, `score`, `route` |
+| Data (`JsonRecordRepository`) | `save`, `load`, `query(predicate)`, plus `save_pending`, `replace_pending` |
+| I/O (`StudentIO`, `ResultDisplay`) | `validate_form`; `display_record`, `display_list`, `display_result`, `display_summary` |
+
+## Phase 2 design
+
+A summary for the engineering report. The UML class diagram must show exactly these classes, attributes and methods.
+
+### OOP concepts
+
+| Concept | Where it is demonstrated |
+| --- | --- |
+| Classes and objects | `CampusApp.__init__` creates one object of each manager and service; `gui.DoNotStressApp` does the same for the desktop app. |
+| Encapsulation | Private `__attributes` with read-only properties, e.g. `GeminiAIManager.__generator`, `JsonRecordRepository.__file`, `LogicManager.__rules`; `_protected` helpers for subclasses, e.g. `ReportSection._evaluated`. |
+| Abstract classes | `ReportSection` (abstract `key`/`build` plus shared helpers), `ContextFlagRule` (template method: subclasses implement `_is_raised`), `RecordRepository` (abstract `load`/`save` plus a concrete `query`), `TextGenerator` (abstract `generate` plus default `is_configured`/`redact`). |
+| Inheritance | `SleepFlagRule` → `ContextFlagRule` → `BaseEvaluator`; `GeminiTextGenerator` → `TextGenerator`; `JsonRecordRepository` → `RecordRepository`; `ScoreMismatchError` → `LogicManagerError`. |
+| Interfaces | `AIManagerInterface`, `ResultDisplay` and `BaseEvaluator` (ABCs with only abstract methods), and `ScoreVerifier` (a `Protocol` that `AIScoreVerifier` satisfies). |
+| Association | `LogicManager` and `AIScoreVerifier` share one `ScoreCalculator`; `CheckinPipeline` uses the AI and Logic managers; `ResultPresenter` and `ConsoleResultDisplay` use a `StudentIO`. None of them owns the other. |
+| Aggregation | `LogicManager(rules=...)`: rules are created outside and can be reused; `CohortSummaryReport(sections=...)`; the `TextGenerator` passed to `GeminiAIManager`. |
+| Composition | `GeminiAIManager` creates and owns its `PromptBuilder`, `ResponseParser`, `ResponseValidator`, `AIErrorClassifier` and `RetryPolicy`; `LogicManager` owns its `TipPlanner` and `FactorCardBuilder`; `JsonRecordRepository` owns its `JsonRecordsFile` and `AIRecordCheck`; `StudentIO` owns its `StudentFormValidator`. |
+| Polymorphism | `LogicManager` calls `rule.evaluate(context)` on every `BaseEvaluator`; `CohortSummaryReport` calls `section.build(records)` on every `ReportSection`; `GeminiAIManager` calls `generate()` on any `TextGenerator`. There are no type checks in these loops. |
+
+### SOLID
+
+* **SRP**: the AI Manager is split by reason to change: `PromptBuilder` (wording), `ResponseParser` (JSON), `ResponseValidator` (schema), `AIErrorClassifier` (error codes), `RetryPolicy` (timing) and `GeminiTextGenerator` (HTTP). The Data Manager is split the same way: `JsonRecordsFile` (file I/O), `AIRecordCheck` (what may be saved), `RecordFilter` (search).
+* **OCP**: a new business rule is a new `BaseEvaluator` subclass passed to `LogicManager`; a new summary section is a new `ReportSection`; a new AI provider is a new `TextGenerator`; new thresholds are a new `ScoringPolicy`. No existing class changes. Tests: `test_new_rule_can_be_added_without_changing_logic_manager`, `test_a_new_section_plugs_in_without_changing_the_report`.
+* **LSP**: every rule keeps the `BaseEvaluator` contract, and `RuleOutcome` refuses changes from a rule that did not fire (`test_every_rule_keeps_the_shared_contract`). The JSON and in-memory repositories behave the same (`RepositoryContractTests`). Every `ReportSection` keeps its contract (`test_every_section_keeps_the_shared_contract`). `MockAIManager` stands in for `GeminiAIManager` in `CheckinPipeline`.
+* **DIP** (extra): `CheckinPipeline` depends on `AIManagerInterface`; `GeminiAIManager` depends on the `TextGenerator` and `ScoreVerifier` abstractions, not on concrete classes.
+
+### New feature: cohort summary for staff
+
+* **Problem:** in Phase 1, wellbeing staff could only read the records table row by row, so patterns across a cohort were easy to miss.
+* **Access:** Admin sign in → Saved records. The summary sits above the table and follows the active filters (student ID, tier, cohort year). It shows evaluated and pending counts, the tier split, the average stress score, support-priority and safety counts, the top AI-named stressors and how often each factor was flagged. `/api/records` returns it as `summary`.
+* **Classes:** `reports.CohortSummaryReport` with `CheckinCountSection`, `TierDistributionSection`, `StressScoreSection`, `StressorRankingSection` and `FactorFlagSection` (all `ReportSection`); `StudentIO.format_summary` adds the labels; `ConsoleResultDisplay.display_summary` prints it.
+* **Tests:** `tests/test_cohort_summary.py` and `AdminTests.test_records_filters_and_cohort_summary` in `tests/test_campus_app.py`.
+
+### Advanced feature: desktop GUI with a background worker thread
+
+`python gui.py` opens a Tkinter desktop check-in that uses the same four managers. `CheckinWorker` runs the AI call, the Logic evaluation and the save on a background thread, so the window stays responsive while Gemini works. The window reads the outcome from a thread-safe queue on its own thread, because Tkinter must only be used from one thread. `DesktopPalette` provides the light and dark themes. Tests: `tests/test_checkin_worker.py`.
+
+### Exception handling
+
+| Situation | Where it is handled | What the user sees | Tests |
+| --- | --- | --- | --- |
+| API connection failure, timeout, rate limit, model unavailable | `GeminiAIManager.call_api` retries with back-off and model fallback; `AIErrorClassifier` picks the code; then `AIProcessingError` is raised | "We could not complete your check-in right now…" plus support contacts; the answers are saved as a pending record | `test_ai_manager.py`, `test_campus_app.py` |
+| Malformed API response (not JSON, wrong schema, wrong arithmetic) | `ResponseParser` returns None, `ResponseValidator` returns an error, or `AIScoreVerifier` reports a mismatch, and the call is retried; `LogicManager` checks the record again (`RecordValidationError`, `ScoreMismatchError`) | Same retry message; a result is never invented | `test_ai_manager.py`, `test_logic_manager_oop.py` |
+| Missing API key | `GeminiAIManager` checks `TextGenerator.is_configured()` before any call | "The assessment service is not configured." | `test_ai_manager.py`, `test_campus_app.py` |
+| Missing or corrupt data file | `JsonRecordsFile.read`: a missing or empty file means no records; a corrupt file raises `DataStoreError` and is never overwritten | Admin table: "Saved records could not be loaded"; check-in: "We could not save your check-in just now…" | `test_data_manager.py`, `test_campus_app.py` |
+| Invalid user input | `StudentFormValidator.validate` collects every problem; `CampusApp.before_request` checks the CSRF token | 400 with one message per field; 403 "This page has expired" | `test_io_manager.py`, `test_campus_app.py` |
 
 ## Tests
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m pytest -v
 ```
 
-Tests inject a simulated Gemini response but run the real schema validator, Logic finalizer, I/O formatters, and data saver. They make no network calls and only save synthetic test data in a temporary directory.
+Both commands run the same 153 tests (every test file uses `unittest`, so pytest is optional). Install `requirements.txt` into the virtual environment first.
+
+The tests replace the live Gemini client with `tests/doubles/ScriptedTextGenerator` and use the hardcoded sample replies in `tests/sample_ai_records.py`, so they need no API key or network. They cover the business rules, scoring and routing, AI response parsing and validation, retries and failure codes, persistence (including missing and corrupt files), input validation, the web routes end to end, the new feature and the worker thread. `tests/test_coding_requirements.py` also checks one class per file and no module-level functions. CI (`.github/workflows/tests.yml`) runs the suite on Python 3.12 and inside the Docker image on every push and pull request.
 
 ## Saved check-ins and detailed results
 
@@ -129,7 +204,7 @@ Use **Admin sign in** (or `/admin/login`) with the fixed coursework account:
 - Username: `admin`
 - Password: `DoNotStress2026!`
 
-The credential check runs on the server; `main.py` contains a password hash. Credentials are not embedded in the login page, JavaScript or browser configuration. This shared, documented demo account is for the local prototype, not public deployment with real student records.
+The credential check runs on the server: `admin_session_manager.py` compares the password with a stored hash. Credentials are not embedded in the login page, JavaScript or browser configuration. This shared, documented demo account is for the local prototype, not public deployment with real student records.
 
 Successful sign-in opens **Saved records** at `/records`. The header is rendered from the server session on every page. While that session is valid, Home and Check-in still show **Admin view** and **Log out**. `/records` is admin-only and redirects unauthenticated users to sign-in, and `/api/records` returns 401 before loading any records. Admin access expires after 30 minutes. **Log out** revokes the server-side admin token, clears the current browser session, and returns to Student view. Restarting the app revokes admin sessions. Five failed sign-in attempts within five minutes temporarily block further attempts from that address.
 

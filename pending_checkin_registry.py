@@ -84,6 +84,8 @@ class PendingCheckinRegistry:
             }
 
     def forget_csrf(self, csrf_token: str | None) -> None:
+        if not csrf_token:
+            return
         with self._lock:
             self._submissions.pop(csrf_token, None)
 
