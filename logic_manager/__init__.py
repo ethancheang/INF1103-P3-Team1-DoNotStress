@@ -4,7 +4,7 @@ Applies the team's domain rules to a check-in that Gemini has already
 analysed: it re-checks Gemini's score, runs the business rules, classifies
 the outcome, and prepares the result for storage and for display.
 
-Wiring in main.py::
+Wiring in campus_app.py::
 
     from logic_manager import AIScoreVerifier, LogicManager, ScoreCalculator
 
@@ -15,7 +15,7 @@ Wiring in main.py::
     enriched = ai.analyse(student)                  # dict from ai_manager
     result = logic.evaluate(enriched)               # EvaluationResult, or LogicManagerError
     store.save(result.to_record())                  # data_manager
-    display.display_result(result.to_display())     # io_manager
+    display.display_result(result.to_display())     # io_manager (ResultDisplay)
 
 Plain Python only: no printing, no network and no files. Every method gives
 the same answer for the same input, so tests can use hardcoded sample AI
@@ -33,10 +33,10 @@ from .context_flag_rule import ContextFlagRule
 from .enriched_record import EnrichedRecord
 from .evaluation_result import EvaluationResult
 from .factor_card import FactorCard
-from .factor_cards import FactorCardBuilder
+from .factor_card_builder import FactorCardBuilder
 from .finance_flag_rule import FinanceFlagRule
 from .logic_manager_error import LogicManagerError
-from .record_evaluator import LogicManager
+from .logic_manager import LogicManager
 from .record_validation_error import RecordValidationError
 from .risk_tier import RiskTier
 from .rule_context import RuleContext
