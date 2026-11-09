@@ -29,8 +29,8 @@ Open this project folder in the VS Code terminal:
 
 ```powershell
 python -m venv .venv
-.\\\\.venv\\\\Scripts\\\\python.exe -m pip install -r requirements.txt
-.\\\\.venv\\\\Scripts\\\\python.exe main.py
+.venv\\\\Scripts\\\\python.exe -m pip install -r requirements.txt
+.venv\\\\Scripts\\\\python.exe main.py
 ```
 
 Open http://127.0.0.1:5000. If only the Python launcher is available, use `py -m venv .venv` for the first command.
@@ -38,7 +38,7 @@ Open http://127.0.0.1:5000. If only the Python launcher is available, use `py -m
 `main.py` is the entry point for the web app; it builds one `CampusApp` (which wires the four managers) and starts it. For Flask CLI or WSGI tools, use `main:app`, for example:
 
 ```powershell
-.\\\\.venv\\\\Scripts\\\\python.exe -m flask --app main:app run
+.venv\\\\Scripts\\\\python.exe -m flask --app main:app run
 ```
 
 The desktop version (the advanced feature, see below) starts with `.\\\\.venv\\\\Scripts\\\\python.exe gui.py`. It needs Tkinter, which is included with the python.org installer for Windows.
