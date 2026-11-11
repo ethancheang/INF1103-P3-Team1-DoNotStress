@@ -44,6 +44,8 @@
 #Delete the repository
 #Bypass branch protection rules (if they are enabled)
 #Access billing or other account-level settings
+#Bottom line:
+#A Collaborator can push or merge into main only if branch protection is turned off. Most team leaders turn branch protection on to prevent this.
 
 
 #University students often don't notice their stress building until it affects their studies, sleep or wellbeing, and many don't reach out for support early. Existing counselling services rely on students coming forward themselves.
