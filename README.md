@@ -31,6 +31,21 @@
 #Bottom line:
 #With the Contributor role alone, you and your teammates generally cannot accidentally merge into main. The risk only exists if branch protection has been disabled.
 
+#On GitHub, Collaborator is the term used when someone is added to a personal repository (not an organization repo). It is similar to the Write role.What a Collaborator can do
+#Clone and pull the repository
+#Push to branches (unless the branch is protected)
+#Create and delete branches
+#Open, comment on, and close Pull Requests
+#Manage issues
+#View the repository (even if it is private)
+#What a Collaborator cannot do
+#Change repository settings (name, visibility, etc.)
+#Manage collaborators or access rights
+#Delete the repository
+#Bypass branch protection rules (if they are enabled)
+#Access billing or other account-level settings
+
+
 #University students often don't notice their stress building until it affects their studies, sleep or wellbeing, and many don't reach out for support early. Existing counselling services rely on students coming forward themselves.
 
 ## Objectives
