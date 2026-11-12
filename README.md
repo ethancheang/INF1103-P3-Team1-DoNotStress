@@ -1,52 +1,5 @@
-# INF1103-P3-Team1-DoNotStress--FOR REFERENCE ONLY--NOT FOR PROJECT SUBMISSION-Project in Full Production Mode Docker Ready-Ready to run fully. For Sharing only. NOT FOR PROJECT SUBMISSION.
+# INF1103-P3-Team1-DoNotStress--FOR REFERENCE ONLY--NOT FOR PROJECT SUBMISSION. For Sharing only. NOT FOR PROJECT SUBMISSION.
 ## Problem
-
-#With the Contributor role in Github, it is very difficult (and usually impossible) to accidentally merge changes into the main branch.
-
-#What a Contributor can do
-#--Clone or pull the repository
-#--Create new branches
-#--Push to non-protected branches
-#--Open Pull Requests
-#--Comment on issues and Pull Requests
-
-#What a Contributor cannot do (by default)
-#--Merge a Pull Request into main
-#--Push directly to a protected main branch
-#--Change repository settings or branch protection rules
-
-#About accidental merges
-#Even users with higher access still cannot merge into main if branch protection rules are enabled. These rules are commonly used to prevent accidental or unauthorized changes to main.
-
-#Since every team member only has the Contributor role, none of you should be able to merge into main unless :
-
-#--Branch protection has been turned off, and
-#--Contributors have been given extra permission to merge.
-
-#Recommendation
-#--Ask your team leader to check these two settings:
-#--Branch protection rules are enabled on the main branch
-#--Only specific people (or higher roles) are allowed to merge
-
-#Bottom line:
-#With the Contributor role alone, you and your teammates generally cannot accidentally merge into main. The risk only exists if branch protection has been disabled.
-
-#On GitHub, Collaborator is the term used when someone is added to a personal repository (not an organization repo). It is similar to the Write role.What a Collaborator can do
-#Clone and pull the repository
-#Push to branches (unless the branch is protected)
-#Create and delete branches
-#Open, comment on, and close Pull Requests
-#Manage issues
-#View the repository (even if it is private)
-#What a Collaborator cannot do
-#Change repository settings (name, visibility, etc.)
-#Manage collaborators or access rights
-#Delete the repository
-#Bypass branch protection rules (if they are enabled)
-#Access billing or other account-level settings
-#Bottom line:
-#A Collaborator can push or merge into main only if branch protection is turned off. Most team leaders turn branch protection on to prevent this.
-
 
 #University students often don't notice their stress building until it affects their studies, sleep or wellbeing, and many don't reach out for support early. Existing counselling services rely on students coming forward themselves.
 
