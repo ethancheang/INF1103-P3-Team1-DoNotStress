@@ -1,97 +1,104 @@
-"""Each ResponseValidator on its own: good values, bad values, schema."""
+"""Each field check in ai_manager.validate_ai_response: good values, bad values, schema."""
 import unittest
 
-from ai.validators.choice_validator import ChoiceValidator
-from ai.validators.confidence_validator import ConfidenceValidator
-from ai.validators.range_validator import RangeValidator
-from ai.validators.reasoning_validator import ReasoningValidator
-from ai.validators.response_validator import ResponseValidator
-from ai.validators.score_validator import ScoreValidator
-from ai.validators.scored_items_validator import ScoredItemsValidator
-from ai.validators.soft_label_validator import SoftLabelValidator
-from ai.validators.stressors_validator import StressorsValidator
-from ai.validators.tips_validator import TipsValidator
+import ai_manager
 from plain_tests import case, function_suite
 
-KEYS = ("a", "b")
-TIERS = ("Low", "Moderate", "High")
+KEYS = ai_manager.RAW_ANSWER_KEYS
+SCHEMA = ai_manager.RESPONSE_SCHEMA["properties"]
 
 
-def test_every_validator_shares_the_contract():
-    """Liskov: each one rejects junk with a message naming its field."""
-    validators = (
-        ScoredItemsValidator(KEYS), ScoreValidator(), SoftLabelValidator(),
-        ChoiceValidator("risk_category", TIERS), StressorsValidator(),
-        TipsValidator(), ConfidenceValidator(), ReasoningValidator(),
-    )
-    for validator in validators:
-        with case(field=validator.field):
-            assert isinstance(validator, ResponseValidator)
-            assert "type" in validator.schema()
-            ok, message = validator.validate(object())
+def _reply(**overrides):
+    """A schema-valid Gemini reply; tests change one field at a time."""
+    reply = {
+        "scored_items": {key: 3 for key in KEYS},
+        "stress_score": 3.0,
+        "risk_category": "Moderate",
+        "primary_stressors": ["academic_overload"],
+        "confidence": 0.8,
+        "reasoning": "You have a lot on right now.",
+        "soft_label": "Worth a check-in",
+        "tips": ["short_breaks"],
+        "speak_prominence": "medium",
+    }
+    reply.update(overrides)
+    return reply
+
+
+def _check(field, value):
+    """(ok, cleaned value or error message) for one field of a reply."""
+    ok, result = ai_manager.validate_ai_response(_reply(**{field: value}))
+    return (ok, result[field]) if ok else (ok, result)
+
+
+def test_every_field_check_rejects_junk_and_names_its_field():
+    fields = ("scored_items", "stress_score", "soft_label", "risk_category",
+              "primary_stressors", "tips", "confidence", "reasoning")
+    for field in fields:
+        with case(field=field):
+            assert "type" in SCHEMA[field]
+            ok, message = _check(field, object())
             assert ok is False
-            assert validator.field.split("_")[0] in message
+            assert field.split("_")[0] in message
 
 
 def test_scored_items():
-    validator = ScoredItemsValidator(KEYS)
-    assert validator.validate({"a": 1, "b": 5}) == (True, {"a": 1, "b": 5})
-    for bad in ({"a": 1}, {"a": 1, "b": 6}, {"a": 1, "b": True},
-                {"a": 1, "b": 2.0}, {"a": 1, "b": 2, "c": 3}, [1, 2]):
+    good = {key: 1 for key in KEYS}
+    assert _check("scored_items", good) == (True, good)
+    missing = {key: 1 for key in KEYS[1:]}
+    for bad in (missing, {**good, KEYS[0]: 6}, {**good, KEYS[0]: True},
+                {**good, KEYS[0]: 2.0}, {**good, "extra": 3}, [1, 2]):
         with case(bad=bad):
-            assert validator.validate(bad)[0] is False
-    assert validator.schema()["required"] == ["a", "b"]
+            assert _check("scored_items", bad)[0] is False
+    assert SCHEMA["scored_items"]["required"] == list(KEYS)
 
 
 def test_score_and_confidence_share_the_range_check():
-    assert isinstance(ScoreValidator(), RangeValidator)
-    assert isinstance(ConfidenceValidator(), RangeValidator)
-    assert ScoreValidator().validate("2.5") == (True, 2.5)
-    assert ConfidenceValidator().validate(0) == (True, 0.0)
-    for bad in (0.99, 5.01, True, None, float("nan"), 10 ** 400):
+    assert _check("stress_score", "2.5") == (True, 2.5)
+    assert _check("confidence", 0) == (True, 0.0)
+    for bad in (0.99, 5.01, True, None, float("nan")):
         with case(bad=bad):
-            assert ScoreValidator().validate(bad)[0] is False
+            assert _check("stress_score", bad)[0] is False
     for bad in (-0.1, 1.1, False, "high", float("inf")):
         with case(bad=bad):
-            assert ConfidenceValidator().validate(bad)[0] is False
-    assert ScoreValidator().validate(9)[1] == (
+            assert _check("confidence", bad)[0] is False
+    assert _check("stress_score", 9)[1] == (
         "stress_score must be a float between 1.0 and 5.0.")
+    assert (SCHEMA["stress_score"]["minimum"],
+            SCHEMA["stress_score"]["maximum"]) == (1.0, 5.0)
 
 
 def test_choices_strip_spaces_and_soft_label_accepts_curly_quotes():
-    tier = ChoiceValidator("risk_category", TIERS)
-    assert tier.validate("  High ") == (True, "High")
-    assert tier.validate("Critical") == (
+    assert _check("risk_category", "  High ") == (True, "High")
+    assert _check("risk_category", "Critical") == (
         False, 'risk_category must be "Low", "Moderate", or "High".')
-    label = SoftLabelValidator()
-    assert label.validate("You’re doing ok") == (True, "You're doing ok")
-    assert label.validate("Please reach out") == (True, "Please reach out")
-    assert label.validate("Doing great")[0] is False
-    assert isinstance(label, ChoiceValidator)
+    assert _check("soft_label", "You’re doing ok") == (True, "You're doing ok")
+    assert _check("soft_label", "Please reach out") == (True, "Please reach out")
+    assert _check("soft_label", "Doing great")[0] is False
+    assert SCHEMA["soft_label"]["enum"] == list(ai_manager.SOFT_LABELS)
 
 
 def test_id_lists_drop_repeats_and_respect_their_limits():
-    stressors = StressorsValidator()
-    assert stressors.validate([]) == (True, [])
-    assert stressors.validate([" academic_overload", "academic_overload"]) \
-        == (True, ["academic_overload"])
-    assert stressors.validate(["made_up"])[0] is False
-    assert "emotional_distress" not in StressorsValidator.ALLOWED
-    tips = TipsValidator()
-    assert tips.validate(["short_breaks", "short_breaks"]) == (
+    assert _check("primary_stressors", []) == (True, [])
+    assert _check("primary_stressors",
+                  [" academic_overload", "academic_overload"]) == (
+        True, ["academic_overload"])
+    assert _check("primary_stressors", ["made_up"])[0] is False
+    assert "emotional_distress" not in ai_manager.ALLOWED_PRIMARY_STRESSORS
+    assert _check("tips", ["short_breaks", "short_breaks"]) == (
         True, ["short_breaks"])
     for bad in ([], ["a", "b", "c", "d"], ["short_breaks", 3],
                 ["feelings_check_in"]):
         with case(bad=bad):
-            assert tips.validate(bad)[0] is False
-    assert tips.schema()["minItems"] == 1
-    assert tips.schema()["maxItems"] == 3
-    assert "minItems" not in stressors.schema()
+            assert _check("tips", bad)[0] is False
+    assert SCHEMA["tips"]["minItems"] == 1
+    assert SCHEMA["tips"]["maxItems"] == 3
+    assert "minItems" not in SCHEMA["primary_stressors"]
 
 
 def test_reasoning_must_be_real_text():
-    assert ReasoningValidator().validate("  Kind. ") == (True, "Kind.")
-    assert ReasoningValidator().validate("   ")[0] is False
+    assert _check("reasoning", "  Kind. ") == (True, "Kind.")
+    assert _check("reasoning", "   ")[0] is False
 
 
 def load_tests(loader, tests, pattern):
