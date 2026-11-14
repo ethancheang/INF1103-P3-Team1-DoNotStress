@@ -169,6 +169,22 @@ REQUIRED_AI_FIELDS = (
     "confidence",
 )
 
+# Trend over a student's past check-ins. A guide, not a diagnosis.
+TREND_SIMILAR_WITHIN = 0.25    # scores this close count as about the same
+TREND_WINDOW = 5               # direction uses the last five scores
+TREND_SLOPE_THRESHOLD = 0.1    # change per check-in that counts as moving
+TREND_MIN_FOR_DIRECTION = 3
+
+TREND_NONE = "none"
+TREND_FIRST = "first"
+TREND_LOWER = "lower"
+TREND_SIMILAR = "similar"
+TREND_HIGHER = "higher"
+TREND_NOT_ENOUGH = "not_enough"
+TREND_EASING = "easing"
+TREND_STEADY = "steady"
+TREND_BUILDING = "building"
+
 # Answer labels for the factor cards (1-based).
 SLEEP_QUALITY_OPTIONS = ("Very good", "Fairly good", "Okay", "Fairly bad", "Very bad")
 AGREE_OPTIONS = ("Strongly disagree", "Disagree", "Neutral", "Agree", "Strongly agree")
@@ -475,6 +491,51 @@ def scoring_instructions() -> str:
     )
 
 
+def trend(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """How a student's stress scores are moving, from their saved check-ins.
+
+    records is a list of plain check-in dicts. They are put in saved_at
+    order (oldest first); pending check-ins and rows without a numeric
+    stress_score are skipped. Returns a plain dict:
+      comparison  "none", "first", or "lower" / "similar" / "higher" than
+                  the previous score (within 0.25 counts as similar)
+      direction   "not_enough" (under three scores), or "easing" /
+                  "steady" / "building" from the least-squares slope of
+                  the last five scores
+      latest, previous, change, average  (None when there are too few)
+    Lower stress is better. Never raises on odd input.
+    """
+    rows = [row for row in records if isinstance(row, dict)] if isinstance(records, list) else []
+    rows.sort(key=lambda row: str(row.get("saved_at") or ""))
+    scores = [
+        float(row["stress_score"]) for row in rows
+        if row.get("status") != "pending"
+        and isinstance(row.get("stress_score"), (int, float))
+        and not isinstance(row.get("stress_score"), bool)
+    ]
+    result: dict[str, Any] = {
+        "comparison": TREND_NONE, "direction": TREND_NOT_ENOUGH,
+        "latest": None, "previous": None, "change": None, "average": None,
+    }
+    if not scores:
+        return result
+    result["average"] = round(sum(scores) / len(scores), 2)
+    result["latest"] = scores[-1]
+    if len(scores) == 1:
+        result["comparison"] = TREND_FIRST
+        return result
+    latest, previous = scores[-1], scores[-2]
+    change = latest - previous
+    if abs(change) <= TREND_SIMILAR_WITHIN:
+        result["comparison"] = TREND_SIMILAR
+    else:
+        result["comparison"] = TREND_LOWER if change < 0 else TREND_HIGHER
+    result["previous"] = previous
+    result["change"] = round(change, 2)
+    result["direction"] = _trend_direction(scores)
+    return result
+
+
 def context_flags(record: dict[str, Any], support_mean: float) -> dict[str, bool]:
     """The four context flags from the raw answers."""
     return {
@@ -633,6 +694,24 @@ def _merge_tips(lead: list[str], gemini: list[str], flagged: list[str]) -> list[
         if tip_id not in ordered:
             ordered.append(tip_id)
     return ordered[:MAX_TIPS]
+
+
+def _trend_direction(scores: list[float]) -> str:
+    """Easing, steady or building, from the slope of the recent scores."""
+    if len(scores) < TREND_MIN_FOR_DIRECTION:
+        return TREND_NOT_ENOUGH
+    recent = scores[-TREND_WINDOW:]
+    count = len(recent)
+    mean_x = (count - 1) / 2
+    mean_y = sum(recent) / count
+    spread = sum((index - mean_x) ** 2 for index in range(count))
+    slope = sum((index - mean_x) * (value - mean_y)
+                for index, value in enumerate(recent)) / spread
+    if slope < -TREND_SLOPE_THRESHOLD:
+        return TREND_EASING
+    if slope > TREND_SLOPE_THRESHOLD:
+        return TREND_BUILDING
+    return TREND_STEADY
 
 
 def _within_tolerance(gemini_score: float, logic_score: float) -> bool:
