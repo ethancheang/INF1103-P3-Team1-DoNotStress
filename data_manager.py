@@ -481,6 +481,74 @@ def query(
     """Return the saved records where filter_fn(record) is truthy."""
     return [record for record in load(data_path) if filter_fn(record)]
 
+def history_for(
+    student_id: str,
+    data_path: str | None = None,
+    *,
+    survey_version: str | None = None,
+) -> dict[str, Any]:
+    """One student's check-ins, oldest first, as a dict.
+
+    The whole file is loaded and then filtered in memory; it does not
+    read only that student's rows from disk. Only an exact Student ID
+    match is returned. Finished check-ins are listed with their scores;
+    pending ones (Gemini could not finish) are only counted. When
+    survey_version is given, other questionnaire versions are skipped.
+
+    Raises OSError when the file cannot be read safely, so a broken
+    file is never shown as an empty history.
+    """
+
+    loaded = load_all_records(data_path)
+
+    if not loaded["ok"] or loaded["error"]:
+        raise OSError(loaded["error"] or "Could not read data file.")
+
+    wanted = str(student_id).strip()
+    finished: list[dict[str, Any]] = []
+    pending_count = 0
+
+    for row in loaded["records"]:
+        if not wanted or str(row.get("student_id") or "").strip() != wanted:
+            continue
+        if (
+            survey_version is not None
+            and row.get("survey_version") != survey_version
+        ):
+            continue
+        if _is_pending_row(row):
+            pending_count += 1
+            continue
+        stored = dict(row)
+        stored.pop("feelings_text", None)
+        stored.pop("reflection", None)
+        finished.append(stored)
+
+    finished.sort(key=lambda row: str(row.get("saved_at") or ""))
+    scores = [
+        float(row["stress_score"])
+        for row in finished
+        if isinstance(row.get("stress_score"), (int, float))
+        and not isinstance(row.get("stress_score"), bool)
+    ]
+
+    return {
+        "student_id": wanted,
+        "records": finished,
+        "scores": scores,
+        "pending_count": pending_count,
+        "count": len(finished),
+    }
+
+
+def _is_pending_row(row: dict[str, Any]) -> bool:
+    """Marked pending, or never successfully processed by the AI."""
+    pending = str(row.get("status") or "").strip().lower() == "pending"
+    source = str(row.get("source") or "").strip().lower()
+    processed = row.get("ai_ok") is True or source in _AI_SUCCESS_SOURCES
+    return pending or not processed
+
+
 def save_pending_record(
     record: dict[str, Any],
     data_path: str | None = None,

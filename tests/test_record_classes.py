@@ -1,11 +1,14 @@
-"""Unit tests for the Record classes in records/."""
+"""Unit tests for the Record classes in records/ and data_manager.history_for()."""
 
+import tempfile
 import unittest
+from pathlib import Path
+
+import data_manager
 
 from records.check_in_record import CheckInRecord
 from records.pending_record import PendingRecord
 from records.record import Record
-from records.stress_history import StressHistory
 
 
 def finished(saved_at: str, score: float) -> CheckInRecord:
@@ -59,22 +62,49 @@ class RecordTests(unittest.TestCase):
             self.assertFalse(record.belongs_to("2999999"))
 
 
-class StressHistoryTests(unittest.TestCase):
+class HistoryForTests(unittest.TestCase):
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.path = str(Path(temp.name) / "records.json")
+
+    def save(self, record):
+        saved = data_manager.save_record(record.to_row(), self.path, opt_in=True)
+        self.assertTrue(saved["ok"], saved["error"])
 
     def test_history_sorted_oldest_first(self):
-        history = StressHistory("2123456", [
-            finished("2026-11-09T10:00:00Z", 4.0),
-            finished("2026-11-02T10:00:00Z", 2.0),
-        ], pending_count=1)
-        self.assertEqual(history.scores, [2.0, 4.0])
-        self.assertEqual(history.latest.score, 4.0)
-        self.assertEqual(history.previous.score, 2.0)
-        self.assertEqual(history.pending_count, 1)
+        self.save(finished("2026-11-09T10:00:00Z", 4.0))
+        self.save(finished("2026-11-02T10:00:00Z", 2.0))
+        pending = PendingRecord({"student_id": "2123456"}).to_row()
+        self.assertTrue(data_manager.save_pending_record(
+            pending, self.path, opt_in=True)["ok"])
+        history = data_manager.history_for("2123456", self.path)
+        self.assertEqual(history["scores"], [2.0, 4.0])
+        self.assertEqual(history["records"][-1]["stress_score"], 4.0)
+        self.assertEqual(history["records"][-2]["stress_score"], 2.0)
+        self.assertEqual(history["count"], 2)
+        self.assertEqual(history["pending_count"], 1)
 
-    def test_records_list_is_a_copy(self):
-        history = StressHistory("2123456", [finished("2026-11-09T10:00:00Z", 3.0)])
-        history.records.clear()
-        self.assertEqual(history.count, 1)
+    def test_only_an_exact_student_id_match_is_returned(self):
+        self.save(finished("2026-11-09T10:00:00Z", 3.0))
+        other = CheckInRecord({**finished("2026-11-10T10:00:00Z", 1.0).to_row(),
+                               "student_id": "2123457"})
+        self.save(other)
+        history = data_manager.history_for(" 2123456 ", self.path)
+        self.assertEqual(history["student_id"], "2123456")
+        self.assertEqual(history["count"], 1)
+        self.assertNotIn("reflection", history["records"][0])
+        history["records"].clear()
+        self.assertEqual(data_manager.history_for("2123456", self.path)["count"], 1)
+        self.assertEqual(data_manager.history_for("212345", self.path)["count"], 0)
+        self.assertEqual(data_manager.history_for("", self.path)["count"], 0)
+
+    def test_a_corrupt_file_is_never_an_empty_history(self):
+        Path(self.path).write_text("[{broken", encoding="utf-8")
+        with self.assertLogs("data_manager", level="WARNING"):
+            with self.assertRaises(OSError):
+                data_manager.history_for("2123456", self.path)
 
 
 if __name__ == "__main__":
