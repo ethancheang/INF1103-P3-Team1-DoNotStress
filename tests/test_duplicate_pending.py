@@ -173,7 +173,7 @@ def test_different_answers_save_a_second_pending_row():
 
 def test_pending_write_uses_atomic_replace():
     with pending_app() as ctx:
-        with patch('data_manager.os.replace', wraps=os.replace) as replaced:
+        with patch('json_storage.os.replace', wraps=os.replace) as replaced:
             assert post_checkin(ctx).status_code == 503
         assert replaced.called
         assert Path(replaced.call_args.args[1]) == ctx.path

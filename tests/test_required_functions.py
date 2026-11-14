@@ -20,10 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import ai_manager
-import data_manager
+from data_manager import DataManager
+from records.check_in_record import CheckInRecord
 import io_manager
 import logic_manager
 from logic_manager import LogicManager
+from plain_tests import capture_logs
 
 LOGIC = LogicManager()
 
@@ -111,14 +113,22 @@ def test_score_rejects_mismatched_ai_score() -> None:
 def test_save_load_query_and_missing_or_corrupt_file() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "records.json")
-        assert data_manager.load(path) == []
+        data = DataManager(path)
+        assert data.load() == []
         record = LOGIC.evaluate(_enriched())
-        assert data_manager.save(record, path, opt_in=True)["ok"] is True
-        assert len(data_manager.load(path)) == 1
-        assert len(data_manager.query(lambda r: r["risk_category"] == "Moderate", path)) == 1
-        assert data_manager.query(lambda r: False, path) == []
+        assert data.save(CheckInRecord(record), opt_in=True)["ok"] is True
+        assert len(data.load()) == 1
+        assert len(data.query(lambda r: r.get("risk_category") == "Moderate")) == 1
+        assert data.query(lambda r: False) == []
         Path(path).write_text("{not json", encoding="utf-8")
-        assert data_manager.load(path) == []
+        # A corrupt file is backed up and reported, never read as empty.
+        with capture_logs("data_manager", level="WARNING"):
+            try:
+                data.load()
+            except OSError as error:
+                assert "Corrupted" in str(error)
+            else:
+                raise AssertionError("a corrupt file must raise")
 
 
 def test_display_functions_print() -> None:

@@ -14,9 +14,11 @@ from flask import Flask, jsonify, redirect, render_template, request, session, u
 from werkzeug.security import check_password_hash
 
 import ai_manager
-import data_manager
 import io_manager
+from data_manager import DataManager
 from logic_manager import LogicManager
+from records.check_in_record import CheckInRecord
+from records.pending_record import PendingRecord
 import survey
 
 load_dotenv()
@@ -101,6 +103,9 @@ def create_app(test_config=None):
     )
     if test_config:
         app.config.update(test_config)
+    # The app's only records writer: DataManager owns its JSONStorage.
+    data = DataManager(app.config['DATA_PATH'])
+    app.extensions['data_manager'] = data
     # Single-process local app: retain records temporarily in server memory,
     # never inside Flask's client-readable signed session cookie.
     pending = {}
@@ -280,14 +285,14 @@ def create_app(test_config=None):
                     pending_id = matched_pending_id(fingerprint)
                     if pending_id is None:
                         record_id = uuid.uuid4().hex
-                        saved = data_manager.save_pending_record(
-                            {**record, 'record_id': record_id},
-                            data_path=app.config['DATA_PATH'], opt_in=True,
+                        saved = data.save(
+                            PendingRecord({**record, 'record_id': record_id}),
+                            opt_in=True,
                         )
-                        if saved.get('ok') and isinstance(saved.get('record'), dict):
+                        if saved.get('ok'):
                             remember_submission(
                                 fingerprint,
-                                saved['record'].get('record_id') or record_id,
+                                saved.get('record_id') or record_id,
                                 pending_save=True,
                             )
                     else:
@@ -304,16 +309,13 @@ def create_app(test_config=None):
                 pending_id = matched_pending_id(fingerprint)
                 if pending_id:
                     outcome = {**outcome, 'record_id': pending_id}
-                    saved = data_manager.replace_pending_record(
-                        pending_id, outcome,
-                        data_path=app.config['DATA_PATH'], opt_in=True,
+                    saved = data.replace_pending_record(
+                        pending_id, CheckInRecord(outcome), opt_in=True,
                     )
                 else:
-                    saved = data_manager.save_record(
-                        outcome, data_path=app.config['DATA_PATH'], opt_in=True,
-                    )
+                    saved = data.save(CheckInRecord(outcome), opt_in=True)
                 if saved.get('ok'):
-                    stored_id = (saved.get('record') or {}).get('record_id')
+                    stored_id = saved.get('record_id')
                     if stored_id:
                         remember_submission(fingerprint, stored_id, pending_save=False)
         except Exception as exc:
@@ -340,29 +342,20 @@ def create_app(test_config=None):
             return jsonify(message='Admin sign-in is required to view saved records.'), 401
         try:
             with lock:
-                loaded = data_manager.load_all_records(app.config['DATA_PATH'])
+                loaded = data.load()
         except Exception as exc:
             logger.warning("Loading saved records failed: %s", type(exc).__name__)
-            loaded = {'ok': False}
-        if not loaded.get('ok') or loaded.get('error'):
             return jsonify(message='Saved records could not be loaded. Please try again.'), 500
-        records = [item for item in loaded.get('records', [])
-                   if isinstance(item, dict) and item.get('survey_version') == survey.VERSION]
-        cohorts = sorted({str(item.get('student_id', ''))[:2] for item in records
-                          if len(str(item.get('student_id', ''))) >= 2
-                          and str(item.get('student_id', ''))[:2].isascii()
-                          and str(item.get('student_id', ''))[:2].isdigit()}, reverse=True)
+        records = [item for item in loaded if item.get('survey_version') == survey.VERSION]
+        cohorts = data.cohorts(records)
         query = request.args.get('student_id', '').strip()
         tier = request.args.get('tier', '').strip()
         cohort = request.args.get('cohort_year', '').strip()
-        if tier and tier not in data_manager.TIER_TO_CATEGORY:
+        if tier and tier not in DataManager.TIER_TO_CATEGORY:
             return jsonify(message="Choose a tier: You're doing ok, Worth a check-in, or Please reach out."), 400
         if cohort and (len(cohort) not in (2, 4) or not cohort.isascii() or not cohort.isdigit()):
             return jsonify(message='Choose a valid cohort year.'), 400
-        filtered = data_manager.filter_records(records, **{
-            key: value for key, value in {'tier': tier, 'cohort_year': cohort}.items() if value
-        })
-        filtered = [item for item in filtered if query in str(item.get('student_id', ''))]
+        filtered = data.filter_records(records, tier, cohort, query)
         columns = ('student_id', 'stress_score', 'risk_category', 'soft_label',
                    'pss_1', 'pss_2', 'pss_3', 'pss_4',
                    'sleep_hours_avg', 'sleep_quality', 'pas_workload', 'pas_catchup',
@@ -371,12 +364,8 @@ def create_app(test_config=None):
         for item in filtered:
             row = {key: item.get(key) for key in columns}
             if not row.get('soft_label'):
-                row['soft_label'] = {value: name for name, value in data_manager.TIER_TO_CATEGORY.items()}.get(row.get('risk_category'))
-            source = str(item.get('source', '')).lower()
-            processed = item.get('ai_ok') is True or source in {
-                'gemini', 'ai', 'ai_manager', 'gemini+logic', 'ai_logic'}
-            pending = str(item.get('status', '')).strip().lower() == 'pending'
-            row['status'] = 'Pending' if pending or not processed else 'Evaluated'
+                row['soft_label'] = {value: name for name, value in DataManager.TIER_TO_CATEGORY.items()}.get(row.get('risk_category'))
+            row['status'] = 'Pending' if item.status == 'pending' else 'Evaluated'
             rows.append(row)
         rows.sort(key=lambda row: str(row.get('saved_at') or ''), reverse=True)
         return jsonify(records=rows, total=len(records), matching=len(rows), cohorts=cohorts)
@@ -399,7 +388,7 @@ def create_app(test_config=None):
             if entry['saved']:
                 return jsonify(ok=True, saved=True)
             try:
-                saved = data_manager.save_record(entry['record'], data_path=app.config['DATA_PATH'], opt_in=True)
+                saved = data.save(CheckInRecord(entry['record']), opt_in=True)
             except Exception as exc:
                 logger.warning("Retrying the pending save failed: %s", type(exc).__name__)
                 saved = {'ok': False}

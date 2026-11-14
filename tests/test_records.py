@@ -56,10 +56,11 @@ def test_seven_digits_starting_with_two():
 
 def test_corrupt_file_is_backed_up_before_save():
         with records_app() as ctx:
-            import data_manager
+            from data_manager import DataManager
+            from records.pending_record import PendingRecord
             ctx.path.write_text('[{"student_id": "2603503"', encoding='utf-8')
             with capture_logs('data_manager', level='WARNING'):
-                result = data_manager.save_pending_record({'student_id': '2000123'}, str(ctx.path), opt_in=True)
+                result = DataManager(ctx.path).save(PendingRecord({'student_id': '2000123'}), opt_in=True)
             assert result['ok']
             backups = list(Path(ctx.temp.name).glob('records.corrupt-*.json'))
             assert len(backups) == 1
