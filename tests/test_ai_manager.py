@@ -13,7 +13,7 @@ import ai_manager
 import io_manager
 from logic_manager import LogicManager
 import survey
-from plain_tests import capture_logs, function_suite
+from plain_tests import capture_logs, case, function_suite
 
 LOGIC = LogicManager()
 
@@ -748,6 +748,44 @@ def test_rate_limit_still_saves_a_pending_checkin():
         assert "feelings_text" not in stored[0]
         assert "PRIVATE NOTE" not in path.read_text(encoding="utf-8")
 
+
+
+# --- Failure dicts and error codes ----------------------------------------
+# AI outcomes are plain dicts: (ok, fields, None) or (False, None, error).
+
+def test_failure_codes_are_normalised_and_results_are_one_or_the_other():
+    assert ai_manager._structured_ai_error("made_up", "")["error_code"] == "unavailable"
+    assert ai_manager._structured_ai_error("timeout", "slow") == {
+        "error_code": "timeout", "detail": "slow", "source": "gemini"}
+    for code in ai_manager.AI_ERROR_CODES:
+        with case(code=code):
+            assert ai_manager._structured_ai_error(code, "")["error_code"] == code
+            assert ai_manager.classify_ai_error({"error_code": code}) == code
+    ok, fields, error = _call(lambda prompt, key, model: _ok_body())
+    assert ok and isinstance(fields, dict) and error is None
+    ok, fields, error = _call(lambda prompt, key, model: "not json", max_attempts=1)
+    assert not ok and fields is None
+    assert set(error) == {"error_code", "detail", "source"}
+
+
+def test_error_codes_come_from_messages_and_status_codes():
+    classify = ai_manager.classify_ai_error
+    assert classify(TimeoutError("deadline exceeded")) == "timeout"
+    assert classify("GEMINI_API_KEY is missing") == "missing_api_key"
+    assert classify(api_fault("slow down", 429)) == "rate_limited"
+    assert classify("malformed JSON body") == "invalid_response"
+    assert classify("retries exhausted") == "retries_exhausted"
+    assert classify(None) == "unavailable"
+    assert classify(ConnectionError("network unreachable")) == "unavailable"
+    extras = (
+        ("schema validation failed", "invalid_response"),
+        ("resource exhausted", "rate_limited"),
+        ("timed out waiting", "timeout"),
+        ("gemini_api_key is not set", "missing_api_key"),
+    )
+    for message, code in extras:
+        with case(message=message):
+            assert classify(message) == code
 
 def load_tests(loader, tests, pattern):
     """Let `python -m unittest discover -s tests` run this file's test_ functions."""
