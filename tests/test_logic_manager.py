@@ -146,7 +146,9 @@ def test_sleep_hour_bands():
 
 
 def test_reversed_items_only():
+    import survey
     assert lm.REVERSED_KEYS == ("pss_2", "pss_3", "mspss_friends", "mspss_family")
+    assert lm.REVERSED_KEYS == survey.REVERSED_KEYS
     for key in lm.ANSWER_KEYS:
         if key == "sleep_hours_avg":
             continue
@@ -159,6 +161,15 @@ def test_tier_boundaries():
     assert lm.category_for_score(2.5) == "Moderate"
     assert lm.category_for_score(3.5) == "Moderate"
     assert lm.category_for_score(3.51) == "High"
+
+
+def test_score_answers_reports_support_mean_and_flags():
+    scores = lm.score_answers(_answers(mspss_friends=1, mspss_family=3))
+    assert scores["scored_item_count"] == 11
+    assert scores["support_mean"] == 2
+    assert scores["context_flags"]["support"] is True
+    assert scores["risk_category"] == lm.category_for_score(
+        scores["stress_score"])
 
 
 # --- Flag Tip --------------------------------------------------------------
