@@ -11,9 +11,11 @@ from unittest.mock import patch
 
 import ai_manager
 import io_manager
-import logic_manager
+from logic_manager import LogicManager
 import survey
 from plain_tests import capture_logs, function_suite
+
+LOGIC = LogicManager()
 
 
 def _checkin():
@@ -86,7 +88,7 @@ def _for_score(score, **overrides):
 
 def _expected(answers):
     """What Gemini should return for these answers, from logic_manager (the formula's only owner)."""
-    return logic_manager.scored_items(answers), logic_manager.score_answers(answers)["stress_score"]
+    return LOGIC.scored_items(answers), LOGIC.score_answers(answers)["stress_score"]
 
 
 def _all_threes():
@@ -105,7 +107,7 @@ def _input_payload(prompt):
 # --- Prompt ----------------------------------------------------------------
 
 def test_prompt_has_raw_answers_and_wording_only():
-    prompt = ai_manager.build_prompt(_checkin(), instructions=logic_manager.scoring_instructions())
+    prompt = ai_manager.build_prompt(_checkin(), instructions=LOGIC.instructions())
     payload = _input_payload(prompt)
 
     assert set(payload) == set(ai_manager.STUDENT_PROMPT_FIELDS)
@@ -175,8 +177,8 @@ def test_ai_manager_holds_no_scoring_rules():
     bare = ai_manager.build_prompt(_checkin())
     assert "6 - answer" not in bare
     assert "below 2.5" not in bare
-    with_rules = ai_manager.build_prompt(_checkin(), instructions=logic_manager.scoring_instructions())
-    assert logic_manager.scoring_instructions() in with_rules
+    with_rules = ai_manager.build_prompt(_checkin(), instructions=LOGIC.instructions())
+    assert LOGIC.instructions() in with_rules
 
     # Schema only: a well-formed reply with the wrong tier still passes here.
     wrong_tier = _for_score(2.0, risk_category="High", soft_label="Please reach out",
@@ -301,7 +303,7 @@ def test_tier_mismatch_fails_the_logic_check():
         ok, result, error = ai_manager.call_gemini(
             "check-in", api_key="stub", max_attempts=1, retry_delay_sec=0,
             generate_fn=generate_fn, answers=_all_threes(),
-            verify_fn=logic_manager.verify_ai_scores,
+            verify_fn=LOGIC.verify,
         )
         assert not ok
         assert result is None
@@ -351,7 +353,7 @@ def test_mismatch_is_an_invalid_response():
         retry_delay_sec=0,
         generate_fn=generate_fn,
         answers=_all_threes(),
-        verify_fn=logic_manager.verify_ai_scores,
+        verify_fn=LOGIC.verify,
     )
     assert not ok
     assert result is None
@@ -454,13 +456,13 @@ def _exact_reply(answers, **overrides):
 
 # --- Formula check ---------------------------------------------------------
 # The formula itself is tested in test_logic_manager. These tests check that
-# ai_manager runs logic_manager's verify_ai_scores on every reply it is given.
+# ai_manager runs LogicManager.verify on every reply it is given.
 
 def test_exact_response_passes():
     answers = _minimum_stress()
     ok, result = ai_manager.validate_ai_response(_exact_reply(answers))
     assert ok, result
-    assert logic_manager.verify_ai_scores(result, answers) is None
+    assert LOGIC.verify(result, answers) is None
     assert result["scored_items"] == {key: 1 for key in ai_manager.RAW_ANSWER_KEYS}
     assert result["stress_score"] == 1.0
     assert result["risk_category"] == "Low"
@@ -470,8 +472,8 @@ def test_exact_response_passes():
 
     ok, enriched, error = ai_manager.analyse_student(
         answers, api_key="stub", max_attempts=1, retry_delay_sec=0, generate_fn=generate_fn,
-        instructions=logic_manager.scoring_instructions(),
-        verify_fn=logic_manager.verify_ai_scores,
+        instructions=LOGIC.instructions(),
+        verify_fn=LOGIC.verify,
     )
     assert ok, error
     assert enriched["stress_score"] == 1.0
@@ -483,7 +485,7 @@ def test_off_by_one_scored_item_fails():
     reply = _exact_reply(answers)
     reply["scored_items"] = dict(reply["scored_items"])
     reply["scored_items"]["pss_1"] = 2
-    message = logic_manager.verify_ai_scores(reply, answers)
+    message = LOGIC.verify(reply, answers)
     assert "scored_items" in message
 
     def generate_fn(prompt, api_key, model_name):
@@ -491,7 +493,7 @@ def test_off_by_one_scored_item_fails():
 
     ok, result, error = ai_manager.call_gemini(
         "check-in", api_key="stub", max_attempts=1, retry_delay_sec=0,
-        generate_fn=generate_fn, answers=answers, verify_fn=logic_manager.verify_ai_scores,
+        generate_fn=generate_fn, answers=answers, verify_fn=LOGIC.verify,
     )
     assert not ok
     assert result is None
@@ -510,7 +512,7 @@ def test_off_by_one_scored_item_fails():
 def test_stress_score_off_by_a_tenth_fails():
     answers = _minimum_stress()
     reply = _exact_reply(answers, stress_score=1.1)
-    message = logic_manager.verify_ai_scores(reply, answers)
+    message = LOGIC.verify(reply, answers)
     assert "stress_score" in message
 
     def generate_fn(prompt, api_key, model_name):
@@ -518,8 +520,8 @@ def test_stress_score_off_by_a_tenth_fails():
 
     ok, result, error = ai_manager.analyse_student(
         answers, api_key="stub", max_attempts=1, retry_delay_sec=0, generate_fn=generate_fn,
-        instructions=logic_manager.scoring_instructions(),
-        verify_fn=logic_manager.verify_ai_scores,
+        instructions=LOGIC.instructions(),
+        verify_fn=LOGIC.verify,
     )
     assert not ok
     assert error["error_code"] == "invalid_response"

@@ -16,11 +16,14 @@ from werkzeug.security import check_password_hash
 import ai_manager
 import data_manager
 import io_manager
-import logic_manager
+from logic_manager import LogicManager
 import survey
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+# Logic holds no per-request state, so one LogicManager serves every check-in.
+LOGIC = LogicManager()
 
 # Fixed coursework/demo account. Only the hash lives in server code; never
 # include credentials in templates, JavaScript or the browser boot payload.
@@ -46,14 +49,14 @@ def process_checkin(record, *, generate_fn=None, max_attempts=3, retry_delay_sec
     ok, enriched, error = ai_manager.analyse_student(
         record, generate_fn=generate_fn, max_attempts=max_attempts,
         retry_delay_sec=retry_delay_sec,
-        instructions=logic_manager.scoring_instructions(),
-        verify_fn=logic_manager.verify_ai_scores,
+        instructions=LOGIC.instructions(),
+        verify_fn=LOGIC.verify,
     )
     if not ok or not isinstance(enriched, dict):
         code = error.get('error_code', 'unavailable') if isinstance(error, dict) else 'unavailable'
         logger.warning('Check-in could not complete: %s', code)
         return False, code
-    finalized = logic_manager.apply_logic(enriched)
+    finalized = LOGIC.evaluate(enriched)
     if not isinstance(finalized, dict) or not finalized.get('ok'):
         return False, 'unavailable'
     return True, finalized

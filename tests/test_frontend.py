@@ -16,14 +16,15 @@ def fake_generate(prompt, api_key, model_name):
     # Replay the formula on the answers in the prompt so the stub matches
     # whatever the form submitted. No network call.
     import logic_manager
+    LOGIC = logic_manager.LogicManager()
     if isinstance(prompt, str) and '{' in prompt:
         answers = json.loads(prompt[prompt.rfind('{'):])
     else:
         answers = {key: 3 for key in logic_manager.ANSWER_KEYS}
         answers['sleep_hours_avg'] = 6.5
-    scored = logic_manager.scored_items(answers)
-    stress = logic_manager.score_answers(answers)['stress_score']
-    category = logic_manager.category_for_score(stress)
+    scored = LOGIC.scored_items(answers)
+    stress = LOGIC.score_answers(answers)['stress_score']
+    category = LOGIC.category_for_score(stress)
     label = logic_manager._CATEGORY_TO_LABEL[category]
     prominence = logic_manager._CATEGORY_TO_PROMINENCE[category]
     return json.dumps({
@@ -147,7 +148,7 @@ def test_optional_text():
 def test_missing_key_returns_error_and_no_logic_fallback():
     with campus_app() as ctx:
         ctx.app.config['AI_GENERATE_FN'] = None
-        with patch.dict(os.environ, {'GEMINI_API_KEY':''}), patch('main.logic_manager.apply_logic') as logic:
+        with patch.dict(os.environ, {'GEMINI_API_KEY':''}), patch('main.LOGIC.evaluate') as logic:
             response = post_checkin(ctx)
         assert response.status_code == 503
         assert response.json['error_code'] == 'missing_api_key'

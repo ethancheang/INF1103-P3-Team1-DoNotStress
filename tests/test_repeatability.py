@@ -14,10 +14,12 @@ from pathlib import Path
 
 import ai_manager
 import data_manager
-import logic_manager
+from logic_manager import LogicManager
 import main
 from plain_tests import function_suite
 from test_frontend import fake_generate
+
+LOGIC = LogicManager()
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -69,12 +71,12 @@ def test_separate_processes_give_the_same_outcome():
 
 
 def test_scoring_and_prompt_are_deterministic():
-    first_score = logic_manager.score_answers(ANSWERS)
-    first_prompt = ai_manager.build_prompt(ANSWERS, instructions=logic_manager.scoring_instructions())
+    first_score = LOGIC.score_answers(ANSWERS)
+    first_prompt = ai_manager.build_prompt(ANSWERS, instructions=LOGIC.instructions())
     for _ in range(5):
-        assert logic_manager.score_answers(ANSWERS) == first_score
+        assert LOGIC.score_answers(ANSWERS) == first_score
         assert ai_manager.build_prompt(
-            ANSWERS, instructions=logic_manager.scoring_instructions()) == first_prompt
+            ANSWERS, instructions=LOGIC.instructions()) == first_prompt
 
 
 def test_saved_records_load_the_same_every_time():

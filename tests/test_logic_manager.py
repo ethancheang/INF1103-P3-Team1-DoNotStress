@@ -1,4 +1,4 @@
-"""Tests for logic_manager: Logic validates Gemini's analysis, not replaces it.
+"""Tests for LogicManager: Logic validates Gemini's analysis, not replaces it.
 
 No real Gemini call: the AI fields come from a fake generate_fn run through
 ai_manager's own validation, or are written by hand for disagreement cases.
@@ -20,7 +20,10 @@ sys.path.insert(0, str(ROOT))
 import ai_manager
 import data_manager
 import logic_manager as lm
+from logic_manager import LogicManager
 from plain_tests import case, function_suite
+
+LOGIC = LogicManager()
 
 
 def _answers(**changes):
@@ -35,9 +38,9 @@ def _fake_generate_fn(**overrides):
     """A fake Gemini that replays the formula on the prompt's answers."""
     def generate(prompt, api_key, model_name):
         answers = json.loads(prompt[prompt.rfind("{"):])
-        scored = lm.scored_items(answers)
-        stress = lm.score_answers(answers)["stress_score"]
-        category = lm.category_for_score(stress)
+        scored = LOGIC.scored_items(answers)
+        stress = LOGIC.score_answers(answers)["stress_score"]
+        category = LOGIC.category_for_score(stress)
         reply = {
             "scored_items": scored,
             "stress_score": stress,
@@ -81,7 +84,7 @@ def _with_gemini_score(record, stress_score):
 
 def test_gemini_match_is_kept_untouched():
     enriched = _enriched()
-    result = lm.apply_logic(enriched)
+    result = LOGIC.evaluate(enriched)
     assert result["ok"]
     for key in ("stress_score", "risk_category", "soft_label",
                 "speak_prominence", "tips", "primary_stressors", "reasoning"):
@@ -93,7 +96,7 @@ def test_gemini_match_is_kept_untouched():
 
 def test_gemini_within_0_01_is_kept_untouched():
     record = _with_gemini_score(_enriched(), 3.01)
-    result = lm.apply_logic(record)
+    result = LOGIC.evaluate(record)
     assert result["ok"]
     assert result["stress_score"] == 3.01
     assert result["logic_stress_score"] == 3.0
@@ -108,7 +111,7 @@ def test_mismatch_over_0_01_returns_error():
         with case(gemini_score=gemini_score):
             record = _with_gemini_score(_enriched(), gemini_score)
             record["feelings_text"] = "private"
-            result = lm.apply_logic(record)
+            result = LOGIC.evaluate(record)
             assert not result["ok"]
             assert result["error"] == lm.ERROR_SCORE_MISMATCH
             assert result["stress_score"] == gemini_score
@@ -136,13 +139,13 @@ def test_reverse_scoring_and_sleep_conversion():
                    sleep_quality=2, pas_workload=5, pas_catchup=1,
                    fin_stress=2, mspss_friends=5, mspss_family=4)
     # 4 + (6-2) + (6-1) + 3 + 4 (5.5 h) + 2 + 5 + 1 + 2 + (6-5) + (6-4) = 33
-    assert lm.score_answers(answers)["stress_score"] == 3.0
+    assert LOGIC.score_answers(answers)["stress_score"] == 3.0
 
 
 def test_sleep_hour_bands():
     for hours, value in [(14, 1), (8, 1), (7.5, 2), (7, 2), (6.5, 3),
                          (6, 3), (5.5, 4), (5, 4), (4.5, 5), (0, 5)]:
-        assert lm.sleep_hours_stress(hours) == value, hours
+        assert LOGIC.sleep_hours_stress(hours) == value, hours
 
 
 def test_reversed_items_only():
@@ -153,22 +156,22 @@ def test_reversed_items_only():
         if key == "sleep_hours_avg":
             continue
         expected = 5 if key in lm.REVERSED_KEYS else 1
-        assert lm.scored_value(key, 1) == expected, key
+        assert LOGIC.scored_value(key, 1) == expected, key
 
 
 def test_tier_boundaries():
-    assert lm.category_for_score(2.49) == "Low"
-    assert lm.category_for_score(2.5) == "Moderate"
-    assert lm.category_for_score(3.5) == "Moderate"
-    assert lm.category_for_score(3.51) == "High"
+    assert LOGIC.category_for_score(2.49) == "Low"
+    assert LOGIC.category_for_score(2.5) == "Moderate"
+    assert LOGIC.category_for_score(3.5) == "Moderate"
+    assert LOGIC.category_for_score(3.51) == "High"
 
 
 def test_score_answers_reports_support_mean_and_flags():
-    scores = lm.score_answers(_answers(mspss_friends=1, mspss_family=3))
+    scores = LOGIC.score_answers(_answers(mspss_friends=1, mspss_family=3))
     assert scores["scored_item_count"] == 11
     assert scores["support_mean"] == 2
     assert scores["context_flags"]["support"] is True
-    assert scores["risk_category"] == lm.category_for_score(
+    assert scores["risk_category"] == LOGIC.category_for_score(
         scores["stress_score"])
 
 
@@ -186,7 +189,7 @@ FLAG_CASES = (
 def test_each_flag_adds_its_tip():
     for flag, changes, tip in FLAG_CASES:
         with case(flag=flag, changes=changes):
-            result = lm.apply_logic(_enriched(_answers(**changes)))
+            result = LOGIC.evaluate(_enriched(_answers(**changes)))
             assert result["context_flags"][flag]
             assert tip in result["tips"]
             assert result["tips"][:2] == ["short_breaks", "rest_a_little_more"]
@@ -194,7 +197,7 @@ def test_each_flag_adds_its_tip():
 
 
 def test_no_flag_adds_no_tip():
-    result = lm.apply_logic(_enriched())
+    result = LOGIC.evaluate(_enriched())
     assert not any(result["context_flags"].values())
     assert result["tips"] == ["short_breaks", "rest_a_little_more"]
 
@@ -203,7 +206,7 @@ def test_all_flags_never_exceed_four_or_replace_gemini_tips():
     gemini_tips = ["short_breaks", "rest_a_little_more", "keep_social_contact"]
     answers = _answers(sleep_hours_avg=4, pas_workload=5, fin_stress=5,
                        mspss_friends=1, mspss_family=1)
-    result = lm.apply_logic(_enriched(answers, tips=gemini_tips))
+    result = LOGIC.evaluate(_enriched(answers, tips=gemini_tips))
     assert all(result["context_flags"].values())
     assert len(result["tips"]) == 4
     assert result["tips"][:3] == gemini_tips
@@ -214,7 +217,7 @@ def test_flags_never_change_the_tier():
     answers = {key: 1 for key in lm.ANSWER_KEYS}
     answers.update(sleep_hours_avg=8, pss_2=5, pss_3=5, mspss_friends=5,
                    mspss_family=5, pas_workload=5, fin_stress=5)
-    result = lm.apply_logic(_enriched(answers))
+    result = LOGIC.evaluate(_enriched(answers))
     assert result["risk_category"] == "Low"
     assert "workload_chunks" in result["tips"]
     assert "money_worries" in result["tips"]
@@ -226,7 +229,7 @@ def test_safety_flag_forces_reach_out():
     record = _enriched(_answers(pss_1=1, pss_4=1))
     record["safety_flag"] = True
     record["feelings_text"] = "should never survive Logic"
-    result = lm.apply_logic(record)
+    result = LOGIC.evaluate(record)
     assert result["risk_category"] == "High"
     assert result["soft_label"] == "Please reach out"
     assert result["speak_prominence"] == "high"
@@ -241,7 +244,7 @@ def test_safety_moves_existing_talk_tip_first_without_dropping_gemini_tips():
     gemini_tips = ["short_breaks", "rest_a_little_more", "talk_to_someone"]
     record = _enriched(tips=gemini_tips)
     record["safety_flag"] = True
-    result = lm.apply_logic(record)
+    result = LOGIC.evaluate(record)
     assert result["tips"][0] == "talk_to_someone"
     assert set(gemini_tips) <= set(result["tips"])
 
@@ -249,7 +252,7 @@ def test_safety_moves_existing_talk_tip_first_without_dropping_gemini_tips():
 def test_only_true_safety_flag_counts():
     record = _enriched(_answers(pss_1=1, pss_4=1))
     record["safety_flag"] = "yes"
-    assert lm.apply_logic(record)["risk_category"] != "High"
+    assert LOGIC.evaluate(record)["risk_category"] != "High"
 
 
 # --- Output ----------------------------------------------------------------
@@ -257,7 +260,7 @@ def test_only_true_safety_flag_counts():
 def test_output_contract():
     record = _enriched()
     record["feelings_text"] = "private"
-    result = lm.apply_logic(record)
+    result = LOGIC.evaluate(record)
     assert result["source"] == "ai_logic"
     assert result["ai_ok"] is True
     assert result["logic_rule"] == "v3"
@@ -273,7 +276,7 @@ def test_output_contract():
 def test_input_is_not_mutated():
     record = _enriched()
     snapshot = json.dumps(record, sort_keys=True)
-    lm.apply_logic(record)
+    LOGIC.evaluate(record)
     assert json.dumps(record, sort_keys=True) == snapshot
 
 
@@ -284,7 +287,7 @@ def test_missing_ai_field_gives_error_dict():
         with case(key=key):
             record = _enriched()
             del record[key]
-            result = lm.apply_logic(record)
+            result = LOGIC.evaluate(record)
             assert not result["ok"]
             assert result["error"] == lm.ERROR_AI_FIELDS_REQUIRED
             assert key in result["missing"]
@@ -295,7 +298,7 @@ def test_missing_answer_gives_error_dict():
         with case(key=key):
             record = _enriched()
             del record[key]
-            result = lm.apply_logic(record)
+            result = LOGIC.evaluate(record)
             assert not result["ok"]
             assert key in result["missing"]
 
@@ -307,14 +310,14 @@ def test_unusable_numbers_give_error_dict():
         with case(key=key, bad=bad):
             record = _enriched()
             record[key] = bad
-            result = lm.apply_logic(record)
+            result = LOGIC.evaluate(record)
             assert not result["ok"]
             assert key in result["invalid"]
 
 
 def test_non_dict_gives_error_dict():
     for bad in (None, [], "record"):
-        result = lm.apply_logic(bad)
+        result = LOGIC.evaluate(bad)
         assert not result["ok"]
         assert "record" in result["invalid"]
 
@@ -323,7 +326,7 @@ def test_non_dict_gives_error_dict():
 
 LEGACY = ("stress_level", "academic_workload", "financial_stress", "social_support",
           "ANSWER_MAX", "PSS4", "_stress_to_pss4", "_rescale",
-          "REQUIRED_STUDENT_FIELDS", "0.40", "0.75", "finalise")
+          "REQUIRED_STUDENT_FIELDS", "0.40", "0.75", "finalise(")
 
 
 def test_no_legacy_names_in_logic_or_survey():
@@ -345,15 +348,15 @@ def test_survey_only_holds_config_and_safety():
 
 
 # --- Scoring rules handed to ai_manager ---------------------------------------
-# main.py passes scoring_instructions() and verify_ai_scores() to ai_manager,
+# main.py passes LogicManager.instructions() and verify() to ai_manager,
 # so these rules exist only here.
 
 def _exact_ai_fields(answers):
     """The reply Gemini should give for these answers."""
-    stress = lm.score_answers(answers)["stress_score"]
-    category = lm.category_for_score(stress)
+    stress = LOGIC.score_answers(answers)["stress_score"]
+    category = LOGIC.category_for_score(stress)
     return {
-        "scored_items": lm.scored_items(answers),
+        "scored_items": LOGIC.scored_items(answers),
         "stress_score": stress,
         "risk_category": category,
         "soft_label": lm._CATEGORY_TO_LABEL[category],
@@ -364,27 +367,27 @@ def _exact_ai_fields(answers):
 def test_scored_items_are_what_gemini_must_return():
     lowest = _answers(pss_1=1, pss_2=5, pss_3=5, pss_4=1, sleep_hours_avg=8, sleep_quality=1,
                       pas_workload=1, pas_catchup=1, fin_stress=1, mspss_friends=5, mspss_family=5)
-    assert lm.scored_items(lowest) == {key: 1 for key in lm.ANSWER_KEYS}
-    assert all(isinstance(value, int) for value in lm.scored_items(lowest).values())
-    assert lm.score_answers(lowest)["stress_score"] == 1.0
+    assert LOGIC.scored_items(lowest) == {key: 1 for key in lm.ANSWER_KEYS}
+    assert all(isinstance(value, int) for value in LOGIC.scored_items(lowest).values())
+    assert LOGIC.score_answers(lowest)["stress_score"] == 1.0
     for key in ("pss_2", "pss_3", "mspss_friends", "mspss_family"):
         with case(key=key):
             flipped = dict(lowest, **{key: 1})
-            assert lm.scored_items(flipped)[key] == 5
-            assert lm.score_answers(flipped)["stress_score"] == round(15 / 11, 2)
+            assert LOGIC.scored_items(flipped)[key] == 5
+            assert LOGIC.score_answers(flipped)["stress_score"] == round(15 / 11, 2)
     for hours, band in ((14, 1), (8.5, 1), (8, 1), (7.5, 2), (7, 2), (6.5, 3), (6, 3),
                         (5.5, 4), (5, 4), (4.5, 5), (0, 5)):
         with case(hours=hours):
-            assert lm.scored_items(dict(lowest, sleep_hours_avg=hours))["sleep_hours_avg"] == band
+            assert LOGIC.scored_items(dict(lowest, sleep_hours_avg=hours))["sleep_hours_avg"] == band
 
 
 def test_verify_accepts_an_exact_reply():
     for answers in (_answers(), _answers(pss_1=5, fin_stress=5, sleep_hours_avg=4.5),
                     _answers(pss_2=5, pss_3=5, mspss_friends=5, mspss_family=5)):
         with case(answers=answers):
-            assert lm.verify_ai_scores(_exact_ai_fields(answers), answers) is None
+            assert LOGIC.verify(_exact_ai_fields(answers), answers) is None
     within = dict(_exact_ai_fields(_answers()), stress_score=3.01)
-    assert lm.verify_ai_scores(within, _answers()) is None
+    assert LOGIC.verify(within, _answers()) is None
 
 
 def test_exactly_0_01_off_is_accepted_and_more_is_rejected():
@@ -394,10 +397,10 @@ def test_exactly_0_01_off_is_accepted_and_more_is_rejected():
         mean = round(total / 11, 2)
         for delta, should_pass in ((0.01, True), (-0.01, True), (0.02, False), (-0.02, False)):
             gemini = round(mean + delta, 2)
-            if not 1 <= gemini <= 5 or lm.category_for_score(gemini) != lm.category_for_score(mean):
+            if not 1 <= gemini <= 5 or LOGIC.category_for_score(gemini) != LOGIC.category_for_score(mean):
                 continue
             with case(mean=mean, gemini=gemini):
-                assert lm._within_tolerance(gemini, mean) is should_pass
+                assert LOGIC.within_tolerance(gemini, mean) is should_pass
                 accepted += should_pass
                 rejected += not should_pass
     assert accepted > 50 and rejected > 50
@@ -417,23 +420,23 @@ def test_verify_rejects_wrong_tiers_items_and_scores():
     )
     for fields, expected in cases:
         with case(expected=expected):
-            message = lm.verify_ai_scores(fields, answers)
+            message = LOGIC.verify(fields, answers)
             assert message is not None
             assert expected in message
 
 
 def test_verify_never_raises_on_bad_input():
     exact = _exact_ai_fields(_answers())
-    assert lm.verify_ai_scores(None, _answers())
-    assert lm.verify_ai_scores(exact, None)
-    assert "pss_1" in lm.verify_ai_scores(exact, {k: v for k, v in _answers().items() if k != "pss_1"})
-    assert "pss_1" in lm.verify_ai_scores(exact, _answers(pss_1=2.5))
-    assert "pss_1" in lm.verify_ai_scores(exact, _answers(pss_1="three"))
-    assert "stress_score" in lm.verify_ai_scores(dict(exact, stress_score="high"), _answers())
+    assert LOGIC.verify(None, _answers())
+    assert LOGIC.verify(exact, None)
+    assert "pss_1" in LOGIC.verify(exact, {k: v for k, v in _answers().items() if k != "pss_1"})
+    assert "pss_1" in LOGIC.verify(exact, _answers(pss_1=2.5))
+    assert "pss_1" in LOGIC.verify(exact, _answers(pss_1="three"))
+    assert "stress_score" in LOGIC.verify(dict(exact, stress_score="high"), _answers())
 
 
-def test_scoring_instructions_state_the_rules():
-    text = lm.scoring_instructions()
+def test_instructions_state_the_rules():
+    text = LOGIC.instructions()
     for expected in ("pss_2, pss_3, mspss_friends, mspss_family are positively worded",
                      "6 - answer", "8 or more hours -> 1", "5 or more -> 4", "otherwise 5",
                      "mean of those 11 converted values", "rounded to 2 decimal places",
@@ -445,7 +448,7 @@ def test_scoring_instructions_state_the_rules():
 
 
 def test_pipeline_retries_and_rejects_wrong_arithmetic():
-    """main.process_checkin wires verify_ai_scores into ai_manager.
+    """main.process_checkin wires LogicManager.verify into ai_manager.
 
     A reply with one wrong scored item is never accepted: every model in the
     chain is tried, up to the call cap, then the check-in fails.
@@ -475,18 +478,18 @@ def test_pipeline_retries_and_rejects_wrong_arithmetic():
     ok, _ = main.process_checkin(dict(record), generate_fn=capture, max_attempts=1,
                                  retry_delay_sec=0)
     assert ok
-    assert lm.scoring_instructions() in sent["prompt"]
+    assert LOGIC.instructions() in sent["prompt"]
 
 
 def test_risk_score_and_recommended_support_come_from_logic():
-    result = lm.apply_logic(_enriched())
+    result = LOGIC.evaluate(_enriched())
     assert result["ok"]
     assert result["risk_score"] == 0.5
     assert result["recommended_support"] == lm.RECOMMENDED_SUPPORT["Moderate"]
 
     record = _enriched()
     record["safety_flag"] = True
-    forced = lm.apply_logic(record)
+    forced = LOGIC.evaluate(record)
     assert forced["risk_category"] == "High"
     assert forced["recommended_support"] == lm.RECOMMENDED_SUPPORT["High"]
 
@@ -504,18 +507,18 @@ _HIGH_STRESS = dict(pss_1=5, pss_2=1, pss_3=1, pss_4=5, sleep_hours_avg=4.5, sle
 
 def test_support_priority_rule_needs_both_ai_fields():
     high = {"risk_category": "High", "primary_stressors": ["low_social_support"]}
-    assert lm.needs_support_priority(high)
-    assert not lm.needs_support_priority(dict(high, risk_category="Moderate"))
-    assert not lm.needs_support_priority(dict(high, primary_stressors=["academic_overload"]))
-    assert not lm.needs_support_priority(dict(high, primary_stressors=[]))
-    assert not lm.needs_support_priority(dict(high, primary_stressors="low_social_support"))
-    assert not lm.needs_support_priority({})
+    assert LOGIC.needs_support_priority(high)
+    assert not LOGIC.needs_support_priority(dict(high, risk_category="Moderate"))
+    assert not LOGIC.needs_support_priority(dict(high, primary_stressors=["academic_overload"]))
+    assert not LOGIC.needs_support_priority(dict(high, primary_stressors=[]))
+    assert not LOGIC.needs_support_priority(dict(high, primary_stressors="low_social_support"))
+    assert not LOGIC.needs_support_priority({})
 
 
 def test_high_tier_with_low_support_puts_talking_first():
     record = _enriched(_answers(**_HIGH_STRESS),
                        primary_stressors=["low_social_support", "academic_overload"])
-    result = lm.apply_logic(record)
+    result = LOGIC.evaluate(record)
     assert result["ok"]
     assert result["risk_category"] == "High"
     assert result["support_priority"] is True
@@ -528,13 +531,13 @@ def test_high_tier_with_low_support_puts_talking_first():
 
 
 def test_support_priority_does_not_fire_on_one_field_alone():
-    high_no_support = lm.apply_logic(
+    high_no_support = LOGIC.evaluate(
         _enriched(_answers(**_HIGH_STRESS), primary_stressors=["academic_overload"]))
     assert high_no_support["risk_category"] == "High"
     assert high_no_support["support_priority"] is False
     assert high_no_support["tips"][0] != "talk_to_someone"
 
-    moderate_low_support = lm.apply_logic(
+    moderate_low_support = LOGIC.evaluate(
         _enriched(_answers(), primary_stressors=["low_social_support"]))
     assert moderate_low_support["risk_category"] == "Moderate"
     assert moderate_low_support["support_priority"] is False
@@ -544,10 +547,31 @@ def test_support_priority_does_not_fire_on_one_field_alone():
 def test_support_priority_and_safety_together_do_not_repeat_tips():
     record = _enriched(_answers(**_HIGH_STRESS), primary_stressors=["low_social_support"])
     record["safety_flag"] = True
-    result = lm.apply_logic(record)
+    result = LOGIC.evaluate(record)
     assert result["tips"][0] == "talk_to_someone"
     assert len(result["tips"]) == len(set(result["tips"]))
     assert result["support_priority"] is True
+
+
+def test_logic_manager_is_a_base_manager_with_a_health_summary():
+    from base_manager import BaseManager
+    assert isinstance(LOGIC, BaseManager)
+    health = LOGIC.health()
+    assert health["name"] == "logic_manager"
+    assert health["tolerance"] == lm.SCORE_TOLERANCE
+    assert health["rules"] == ["safety_override", "support_priority",
+                               "context_flags"]
+
+
+def test_rules_can_be_swapped_without_changing_evaluate():
+    """Open-closed: a different rule tuple changes the policy, not evaluate()."""
+    from logic.context_flag_rule import ContextFlagRule
+    record = _enriched(_answers(pas_workload=5))
+    no_rules = LogicManager(rules=())
+    assert no_rules.health()["rules"] == []
+    assert "workload_chunks" not in no_rules.evaluate(record)["tips"]
+    flags_only = LogicManager(rules=(ContextFlagRule(),))
+    assert "workload_chunks" in flags_only.evaluate(record)["tips"]
 
 
 def load_tests(loader, tests, pattern):
