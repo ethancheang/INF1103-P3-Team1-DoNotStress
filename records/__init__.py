@@ -1,1 +1,1 @@
-"""Saved check-in records and the history built from them."""
+"""Saved check-in records: the Record parent and its two kinds."""
