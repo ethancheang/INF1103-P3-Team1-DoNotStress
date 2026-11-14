@@ -263,31 +263,6 @@ class IOManager(BaseManager):
 
     # --- Output ----------------------------------------------------------
 
-    def display_record(self, record: JSONObject) -> JSONObject:
-        """The answers of one check-in as labelled values."""
-        fields: list[JSONObject] = []
-        student_id = str(record.get("student_id") or "").strip()
-        if student_id:
-            fields.append({"key": "student_id", "label": "Student ID",
-                           "value": student_id})
-        for question in self.__questionnaire.questions:
-            key = str(question["key"])
-            value = record.get(key)
-            if isinstance(value, bool) or not isinstance(value, (int, float)):
-                continue
-            shown = f"{value:g}"
-            options = question.get("options") or []
-            step = float(question.get("step") or 1)
-            if options:
-                shown = (f"{shown} · "
-                         f"{self.__questionnaire.option_label(key, int(value))}")
-            elif step < 1:
-                shown = f"{value:.1f}"
-            fields.append({"key": key, "label": question["prompt"],
-                           "value": shown})
-        return {"heading": "Your check-in", "fields": fields,
-                "empty": not fields}
-
     def display_list(self, records: Sequence[JSONObject]) -> list[JSONObject]:
         """Admin table rows, newest first. Free text is never included."""
         newest = sorted(records, key=lambda row: str(row.get("saved_at") or ""),
@@ -313,8 +288,7 @@ class IOManager(BaseManager):
             "advisor": advisor,
             "insights": {
                 "risk_category": str(record.get("risk_category") or "Unknown"),
-                "explanation": str(record.get("reasoning") or "").split(
-                    " Logic adjusted:")[0],
+                "explanation": str(record.get("reasoning") or ""),
                 "stressors": self.__strings(record.get("primary_stressors")),
                 "factors": self.__factor_cards(record),
                 "safety_flag": record.get("safety_flag") is True,

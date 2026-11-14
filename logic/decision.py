@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
+import copy
+
 from json_types import JSONObject, JSONValue
 
 # Same private fields Record strips: a rule must never read the reflection.
 PRIVATE_FIELDS: tuple[str, ...] = ("feelings_text", "reflection")
+TIERS: dict[str, tuple[str, str]] = {
+    "Low": ("You're doing ok", "low"),
+    "Moderate": ("Worth a check-in", "medium"),
+    "High": ("Please reach out", "high"),
+}
 
 
 class Decision:
     """Gemini's tier and tips, adjusted rule by rule.
 
     It starts as exactly what Gemini returned, with the reflection
-    already removed. Rules may raise the tier, lead with a tip, suggest
-    extra tips and add notes. They cannot overwrite the tip list
-    directly: LogicManager calls finalise_tips() after the rule loop.
+    already removed. Rules may raise the tier via raise_tier(), mark
+    support priority, lead with a tip, suggest extra tips and add notes.
+    They cannot overwrite the tip list directly: LogicManager calls
+    finalise_tips() after the rule loop.
     """
 
     MAX_TIPS: int = 4
@@ -37,8 +45,8 @@ class Decision:
         self.__support_priority: bool = False
 
     def field(self, name: str) -> JSONValue:
-        """A field of the AI-enriched check-in. The reflection is never here."""
-        return self.__record.get(name)
+        """A copy of one field of the AI-enriched check-in."""
+        return copy.deepcopy(self.__record.get(name))
 
     @property
     def context_flags(self) -> dict[str, bool]:
@@ -48,33 +56,17 @@ class Decision:
     def risk_category(self) -> str:
         return self.__risk_category
 
-    @risk_category.setter
-    def risk_category(self, value: str) -> None:
-        self.__risk_category = value
-
     @property
     def soft_label(self) -> str:
         return self.__soft_label
-
-    @soft_label.setter
-    def soft_label(self, value: str) -> None:
-        self.__soft_label = value
 
     @property
     def speak_prominence(self) -> str:
         return self.__speak_prominence
 
-    @speak_prominence.setter
-    def speak_prominence(self, value: str) -> None:
-        self.__speak_prominence = value
-
     @property
     def support_priority(self) -> bool:
         return self.__support_priority
-
-    @support_priority.setter
-    def support_priority(self, value: bool) -> None:
-        self.__support_priority = value
 
     @property
     def gemini_tips(self) -> list[str]:
@@ -97,9 +89,27 @@ class Decision:
     def notes(self) -> list[str]:
         return list(self.__notes)
 
+    def raise_tier(self, category: str) -> None:
+        """Raise the tier (never lower it); label and prominence follow."""
+        if category not in TIERS:
+            raise ValueError(f"Unknown risk category: {category!r}")
+        order = list(TIERS)
+        current = (order.index(self.__risk_category)
+                   if self.__risk_category in TIERS else -1)
+        if order.index(category) > current:
+            self.__risk_category = category
+            self.__soft_label, self.__speak_prominence = TIERS[category]
+
+    def mark_support_priority(self) -> None:
+        """Flag that high stress with low social support triggered."""
+        self.__support_priority = True
+
     def lead_with(self, tip_id: str) -> None:
-        """Show this tip before all others."""
-        self.__lead_tips = [tip_id]
+        """Show this tip before all others; the first caller keeps first place."""
+        if not self.__lead_tips:
+            self.__lead_tips = [tip_id]
+        elif tip_id not in self.__lead_tips:
+            self.suggest(tip_id)
 
     def suggest(self, tip_id: str) -> None:
         """Add a tip after Gemini's, if there is room."""

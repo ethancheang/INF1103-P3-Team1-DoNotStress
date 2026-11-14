@@ -7,7 +7,6 @@ import os
 from google import genai
 
 from ai.ai_provider import AIProvider
-from ai.model_chain import DEFAULT_MODEL_CHAIN
 from json_types import JSONObject
 
 
@@ -19,7 +18,11 @@ class GeminiProvider(AIProvider):
     across models does not open a new connection each time.
     """
 
-    MODEL_CHAIN: tuple[str, ...] = DEFAULT_MODEL_CHAIN
+    MODEL_CHAIN: tuple[str, ...] = (
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+    )
     TEMPERATURE: float = 0.0
     TIMEOUT_SEC: float = 30.0
 
@@ -29,25 +32,13 @@ class GeminiProvider(AIProvider):
         if api_key is None:
             api_key = os.environ.get("GEMINI_API_KEY", "")
         self.__api_key: str = api_key.strip()
-        self.__models: tuple[str, ...] = self.__resolve_models(preferred_model)
+        self.__models: tuple[str, ...] = self.__model_order(preferred_model)
         self.__client: object | None = None
 
-    @staticmethod
-    def __resolve_models(preferred: str | None = None) -> tuple[str, ...]:
-        """The model list for one provider: env override, then the defaults."""
-        raw = os.environ.get("GEMINI_MODEL_CHAIN", "").strip()
-        if raw:
-            chain = tuple(
-                name.strip() for name in raw.split(",") if name.strip())
-        else:
-            chain = DEFAULT_MODEL_CHAIN
-        if not chain:
-            chain = DEFAULT_MODEL_CHAIN
-        first = (preferred or "").strip()
-        if not first:
-            return chain
-        rest = tuple(name for name in chain if name != first)
-        return (first, *rest)
+    def __model_order(self, preferred: str | None = None) -> tuple[str, ...]:
+        """The preferred model first, then the rest of MODEL_CHAIN, no repeats."""
+        first = (preferred or "").strip() or self.MODEL_CHAIN[0]
+        return (first, *(name for name in self.MODEL_CHAIN if name != first))
 
     @property
     def name(self) -> str:

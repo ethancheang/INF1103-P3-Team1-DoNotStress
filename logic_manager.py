@@ -55,10 +55,11 @@ CATEGORY_PROMINENCE: dict[str, str] = {
     "Low": "low", "Moderate": "medium", "High": "high",
 }
 RECOMMENDED_SUPPORT: dict[str, str] = {
-    "Low": "Internal: low stress. The UI shows tips, not this field.",
-    "Moderate": ("Internal: moderate stress. The UI shows tips, not "
-                 "this field."),
-    "High": "Internal: high stress. The UI shows tips, not this field.",
+    "Low": "Continue healthy habits and routine self-care check-ins.",
+    "Moderate": ("Consider short breaks, workload pacing, or talking with "
+                 "someone you trust."),
+    "High": ("Please reach out to SIT Counselling or someone you trust "
+             "for support."),
 }
 
 FLAG_SLEEP: str = "sleep"
@@ -187,7 +188,7 @@ class LogicManager(BaseManager):
         gemini_score = self.__number(ai_fields.get("stress_score"))
         if gemini_score is None:
             return "stress_score must be a number."
-        expected = self.category_for(gemini_score)
+        expected = self.__category_for(gemini_score)
         if ai_fields.get("risk_category") != expected:
             return (f"risk_category must be {expected} for stress_score "
                     f"{gemini_score}.")
@@ -195,92 +196,13 @@ class LogicManager(BaseManager):
             return "soft_label must match risk_category."
         if ai_fields.get("speak_prominence") != CATEGORY_PROMINENCE[expected]:
             return "speak_prominence must match risk_category."
-        if ai_fields.get("scored_items") != self.scored_items(answers):
+        if ai_fields.get("scored_items") != self.__scored_items(answers):
             return "scored_items does not match the converted answers."
-        logic_score = self.mean_stress_score(answers)
-        if not self.within_tolerance(gemini_score, logic_score):
+        logic_score = self.__mean_stress_score(answers)
+        if not self.__within_tolerance(gemini_score, logic_score):
             return ("stress_score must match the mean of the 11 converted "
                     f"answers (expected {logic_score}).")
         return None
-
-    def scored_value(self, key: str, answer: float) -> float:
-        """Sleep hours converted; positively worded items as 6 - answer."""
-        if key == SLEEP_KEY:
-            return self.sleep_hours_stress(answer)
-        if key in REVERSED_KEYS:
-            return (SCALE_MIN + SCALE_MAX) - answer
-        return answer
-
-    def sleep_hours_stress(self, hours: float) -> int:
-        for at_least, value in SLEEP_HOUR_BANDS:
-            if hours >= at_least:
-                return value
-        return SLEEP_HOURS_BELOW_ALL
-
-    def scored_items(self, answers: JSONObject) -> dict[str, int]:
-        """The answers on the 1-5 stress scale: what Gemini must return."""
-        return {key: int(self.scored_value(key, self.__require_number(answers, key)))
-                for key in ANSWER_KEYS}
-
-    def mean_stress_score(self, answers: JSONObject) -> float:
-        items = self.scored_items(answers)
-        return round(sum(items.values()) / len(items), 2)
-
-    def category_for(self, stress_score: float) -> str:
-        if stress_score > REACH_OUT_ABOVE:
-            return "High"
-        if stress_score >= CHECK_IN_FROM:
-            return "Moderate"
-        return "Low"
-
-    def risk_score_for(self, stress_score: float) -> float:
-        """The 1-5 score mapped onto 0-1. Kept for compatibility."""
-        return (stress_score - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)
-
-    def within_tolerance(self, gemini_score: float,
-                         logic_score: float) -> bool:
-        """True when Gemini is at most 0.01 away from Logic.
-
-        The tiny extra allowance absorbs float error, so exactly 0.01 off
-        (for example 4.63 against 4.64) is accepted.
-        """
-        return abs(gemini_score - logic_score) <= TOLERANCE + 1e-9
-
-    def context_flags(self, answers: JSONObject,
-                      support_mean: float | None = None) -> dict[str, bool]:
-        if support_mean is None:
-            support = [self.__require_number(answers, key)
-                       for key in SUPPORT_KEYS]
-            support_mean = round(sum(support) / len(support), 2)
-        sleep_short = (self.__require_number(answers, SLEEP_KEY)
-                       < SLEEP_FLAG_BELOW_HOURS)
-        sleep_poor = (self.__require_number(answers, "sleep_quality")
-                      >= SLEEP_QUALITY_FLAG_MIN)
-        return {
-            FLAG_SLEEP: sleep_short or sleep_poor,
-            FLAG_WORKLOAD: (self.__require_number(answers, "pas_workload")
-                            >= WORKLOAD_FLAG_MIN),
-            FLAG_FINANCES: (self.__require_number(answers, "fin_stress")
-                            >= FINANCE_FLAG_MIN),
-            FLAG_SUPPORT: support_mean < SUPPORT_FLAG_BELOW,
-        }
-
-    def support_mean(self, answers: JSONObject) -> float:
-        support = [self.__require_number(answers, key) for key in SUPPORT_KEYS]
-        return round(sum(support) / len(support), 2)
-
-    def score_answers(self, answers: JSONObject) -> JSONObject:
-        """The audit card: mean, items, flags, support mean and tier."""
-        items = self.scored_items(answers)
-        stress = round(sum(items.values()) / len(items), 2)
-        support = self.support_mean(answers)
-        return {
-            "stress_score": stress,
-            "scored_items": items,
-            "support_mean": support,
-            "risk_category": self.category_for(stress),
-            "context_flags": self.context_flags(answers, support),
-        }
 
     def evaluate(self, record: JSONObject) -> JSONObject:
         """Validate Gemini's analysis and apply every business rule.
@@ -300,12 +222,12 @@ class LogicManager(BaseManager):
         if missing or invalid:
             return self.__error_result(record, missing, invalid)
 
-        card = self.score_answers(record)
+        card = self.__score_answers(record)
         gemini_score = self.__number(record["stress_score"])
         if gemini_score is None:
             return self.__error_result(record, [], ["stress_score"])
         logic_score = float(card["stress_score"])  # type: ignore[arg-type]
-        if not self.within_tolerance(gemini_score, logic_score):
+        if not self.__within_tolerance(gemini_score, logic_score):
             return self.__mismatch_result(record, gemini_score, logic_score)
 
         flags = card["context_flags"]
@@ -322,7 +244,7 @@ class LogicManager(BaseManager):
             "ai_ok": True,
             "logic_rule": self.RULE_VERSION,
             "logic_stress_score": logic_score,
-            "risk_score": self.risk_score_for(gemini_score),
+            "risk_score": self.__risk_score_for(gemini_score),
             "recommended_support": RECOMMENDED_SUPPORT[decision.risk_category],
             "risk_category": decision.risk_category,
             "soft_label": decision.soft_label,
@@ -387,41 +309,82 @@ class LogicManager(BaseManager):
             "average": average, "count": len(scores),
         }
 
-    def build_ai_instructions(self) -> str:
-        """Compatibility alias for instructions()."""
-        return self.instructions()
+    def __scored_value(self, key: str, answer: float) -> float:
+        """Sleep hours converted; positively worded items as 6 - answer."""
+        if key == SLEEP_KEY:
+            return self.__sleep_hours_stress(answer)
+        if key in REVERSED_KEYS:
+            return (SCALE_MIN + SCALE_MAX) - answer
+        return answer
 
-    def verify_scores(self, record: JSONObject,
-                      ai_result: JSONObject | None = None) -> JSONObject:
-        """Compatibility audit dict for verify(ai_fields, answers)."""
-        fields = ai_result if isinstance(ai_result, dict) else record
-        reason = self.verify(fields, record)
-        return {"valid": reason is None, "reason": reason}
+    def __sleep_hours_stress(self, hours: float) -> int:
+        for at_least, value in SLEEP_HOUR_BANDS:
+            if hours >= at_least:
+                return value
+        return SLEEP_HOURS_BELOW_ALL
 
-    def needs_support_priority(self, record: JSONObject) -> bool:
-        """True when SupportPriorityRule applies to this record."""
-        if not isinstance(record, dict):
-            return False
-        return SupportPriorityRule().applies(Decision(record, {}))
+    def __scored_items(self, answers: JSONObject) -> dict[str, int]:
+        """The answers on the 1-5 stress scale: what Gemini must return."""
+        return {key: int(self.__scored_value(key, self.__require_number(answers, key)))
+                for key in ANSWER_KEYS}
 
-    def score(self, record: JSONObject) -> float | None:
-        """Gemini's verified stress_score, or None if Logic rejects it."""
-        result = self.evaluate(record)
-        if not result.get("ok"):
-            return None
-        return self.__number(result["stress_score"])
+    def __mean_stress_score(self, answers: JSONObject) -> float:
+        items = self.__scored_items(answers)
+        return round(sum(items.values()) / len(items), 2)
 
-    def route(self, decision: JSONObject) -> str:
-        """"Low", "Moderate", "High", or "unavailable"."""
-        if not isinstance(decision, dict) or not decision.get("ok"):
-            return "unavailable"
-        category = str(decision.get("risk_category"))
-        label = CATEGORY_LABELS.get(category)
-        if label is not None and decision.get("soft_label") == label:
-            return category
-        return "unavailable"
+    def __category_for(self, stress_score: float) -> str:
+        if stress_score > REACH_OUT_ABOVE:
+            return "High"
+        if stress_score >= CHECK_IN_FROM:
+            return "Moderate"
+        return "Low"
 
-    def answer_in_range(self, key: str, value: JSONValue) -> bool:
+    def __risk_score_for(self, stress_score: float) -> float:
+        """The 1-5 score mapped onto 0-1."""
+        return (stress_score - SCALE_MIN) / (SCALE_MAX - SCALE_MIN)
+
+    def __within_tolerance(self, gemini_score: float,
+                           logic_score: float) -> bool:
+        """True when Gemini is at most 0.01 away from Logic."""
+        return abs(gemini_score - logic_score) <= TOLERANCE + 1e-9
+
+    def __context_flags(self, answers: JSONObject,
+                        support_mean: float | None = None) -> dict[str, bool]:
+        if support_mean is None:
+            support = [self.__require_number(answers, key)
+                       for key in SUPPORT_KEYS]
+            support_mean = round(sum(support) / len(support), 2)
+        sleep_short = (self.__require_number(answers, SLEEP_KEY)
+                       < SLEEP_FLAG_BELOW_HOURS)
+        sleep_poor = (self.__require_number(answers, "sleep_quality")
+                      >= SLEEP_QUALITY_FLAG_MIN)
+        return {
+            FLAG_SLEEP: sleep_short or sleep_poor,
+            FLAG_WORKLOAD: (self.__require_number(answers, "pas_workload")
+                            >= WORKLOAD_FLAG_MIN),
+            FLAG_FINANCES: (self.__require_number(answers, "fin_stress")
+                            >= FINANCE_FLAG_MIN),
+            FLAG_SUPPORT: support_mean < SUPPORT_FLAG_BELOW,
+        }
+
+    def __support_mean(self, answers: JSONObject) -> float:
+        support = [self.__require_number(answers, key) for key in SUPPORT_KEYS]
+        return round(sum(support) / len(support), 2)
+
+    def __score_answers(self, answers: JSONObject) -> JSONObject:
+        """The audit card: mean, items, flags, support mean and tier."""
+        items = self.__scored_items(answers)
+        stress = round(sum(items.values()) / len(items), 2)
+        support = self.__support_mean(answers)
+        return {
+            "stress_score": stress,
+            "scored_items": items,
+            "support_mean": support,
+            "risk_category": self.__category_for(stress),
+            "context_flags": self.__context_flags(answers, support),
+        }
+
+    def __answer_in_range(self, key: str, value: JSONValue) -> bool:
         number = self.__number(value)
         if number is None:
             return False
@@ -435,7 +398,7 @@ class LogicManager(BaseManager):
         missing = [key for key in needed if key not in record]
         numbers = ("stress_score",) + ANSWER_KEYS
         invalid = [key for key in numbers if key in record and
-                   not self.answer_in_range(key, record[key])]
+                   not self.__answer_in_range(key, record[key])]
         invalid += [key for key in ("tips", "primary_stressors")
                     if key in record and not isinstance(record[key], list)]
         return missing, invalid
@@ -507,7 +470,7 @@ class LogicManager(BaseManager):
 
     def __scorable(self, key: str, value: JSONValue) -> bool:
         number = self.__number(value)
-        if number is None or not self.answer_in_range(key, value):
+        if number is None or not self.__answer_in_range(key, value):
             return False
         return key == SLEEP_KEY or number.is_integer()
 

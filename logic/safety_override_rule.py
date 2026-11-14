@@ -23,8 +23,6 @@ class SafetyOverrideRule(BusinessRule):
         return decision.field("safety_flag") is True
 
     def apply(self, decision: Decision) -> None:
-        decision.risk_category = "High"
-        decision.soft_label = "Please reach out"
-        decision.speak_prominence = "high"
+        decision.raise_tier("High")
         decision.lead_with(self.TALK_TO_SOMEONE)
         decision.note("safety_override: reflection safety check fired")

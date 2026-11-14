@@ -12,7 +12,7 @@ from pathlib import Path
 import tempfile
 
 from ai.ai_provider import AIProvider
-from ai.model_chain import DEFAULT_MODEL_CHAIN
+from ai.gemini_provider import GeminiProvider
 from ai_manager import AIManager
 from base_manager import BaseManager
 from data_manager import DataManager
@@ -28,12 +28,15 @@ from logic.context_flag_rule import ContextFlagRule
 from logic.decision import Decision
 from logic.safety_override_rule import SafetyOverrideRule
 from logic.support_priority_rule import SupportPriorityRule
-from logic_manager import CATEGORY_LABELS, CATEGORY_PROMINENCE, LogicManager
+from logic_manager import (ANSWER_KEYS, CATEGORY_LABELS, CATEGORY_PROMINENCE,
+                           REVERSED_KEYS, SLEEP_HOURS_BELOW_ALL,
+                           SLEEP_HOUR_BANDS, SLEEP_KEY, LogicManager)
 from main import App
 from questionnaire import Questionnaire
 from records.check_in_record import CheckInRecord
 from records.pending_record import PendingRecord
 from records.record import Record
+from werkzeug.security import generate_password_hash
 from web_controller import WebController
 import survey
 
@@ -63,11 +66,12 @@ EXPECTED_19 = {
 }
 
 
-def wired_app(**kwargs) -> App:
-    """Tests attach routes with the constructors: WebController(App(...))."""
+def wired_app(**kwargs) -> tuple[App, WebController]:
+    """Tests attach routes with WebController(App(...))."""
+    test_config = kwargs.get("test_config")
     application = App(**kwargs)
-    WebController(application, application.flask)
-    return application
+    controller = WebController(application, test_config=test_config)
+    return application, controller
 
 
 def sample_answers(**overrides: object) -> JSONObject:
@@ -90,17 +94,43 @@ def sample_answers(**overrides: object) -> JSONObject:
     return base
 
 
+def _expected_scored_items(answers: JSONObject) -> dict[str, int]:
+    scored: dict[str, int] = {}
+    for key in ANSWER_KEYS:
+        raw = float(answers[key])  # type: ignore[arg-type]
+        if key == SLEEP_KEY:
+            value = SLEEP_HOURS_BELOW_ALL
+            for at_least, band_val in SLEEP_HOUR_BANDS:
+                if raw >= at_least:
+                    value = band_val
+                    break
+        elif key in REVERSED_KEYS:
+            value = int(6 - raw)
+        else:
+            value = int(raw)
+        scored[key] = value
+    return scored
+
+
+def _expected_category(score: float) -> str:
+    if score > 3.5:
+        return "High"
+    if score >= 2.5:
+        return "Moderate"
+    return "Low"
+
+
 def matching_gemini_reply(
     answers: JSONObject,
     logic: LogicManager | None = None,
     **overrides: object,
 ) -> str:
-    scorer = logic or LogicManager()
-    info = scorer.score_answers(answers)
-    score = float(info["stress_score"])  # type: ignore[arg-type]
-    cat = str(info["risk_category"])
+    del logic
+    scored_items = _expected_scored_items(answers)
+    score = round(sum(scored_items.values()) / len(scored_items), 2)
+    cat = _expected_category(score)
     payload: JSONObject = {
-        "scored_items": info["scored_items"],
+        "scored_items": scored_items,
         "stress_score": score,
         "risk_category": cat,
         "soft_label": CATEGORY_LABELS[cat],
@@ -177,6 +207,8 @@ class TestTrimmed19Classes(unittest.TestCase):
             elif isinstance(node, ast.Import):
                 top_imports.extend(alias.name for alias in node.names)
         self.assertNotIn("web_controller", top_imports)
+        self.assertNotIn("flask", top_imports)
+        self.assertNotIn("records", top_imports)
         # Routes are attached by WebController(App(...)), only under
         # if __name__ == "__main__" in this module (and in tests).
         self.assertIn('if __name__ == "__main__":', source)
@@ -215,6 +247,8 @@ class TestTrimmed19Classes(unittest.TestCase):
         ok, message = qn.validate_answer("pss_1", 9)
         self.assertFalse(ok)
         self.assertIn("1 to 5", str(message))
+        self.assertFalse(qn.validate_answer("pss_1", float("nan"))[0])
+        self.assertFalse(qn.validate_answer("pss_1", float("inf"))[0])
         self.assertEqual(qn.option_label("pss_1", 3), "Sometimes")
         with self.assertRaises(ValueError):
             qn.option_label("pss_1", 0)
@@ -291,15 +325,17 @@ class TestTrimmed19Classes(unittest.TestCase):
             self.assertEqual(len(dm.load()), 1)
 
             path.write_text("{corrupt", encoding="utf-8")
-            with self.assertRaises(OSError):
-                storage.load()
-            backups = list(Path(tmp).glob("records.corrupt-*.json"))
-            self.assertEqual(len(backups), 1)
+            for _ in range(2):
+                with self.assertRaises(OSError):
+                    storage.load()
+            self.assertEqual(list(Path(tmp).glob("records.corrupt-*.json")), [])
             # The original file is left in place after a load() failure.
             self.assertEqual(path.read_text(encoding="utf-8"), "{corrupt")
 
-            # append() backs up and starts a fresh file.
+            # append() backs up once and starts a fresh file.
             storage.append({"record_id": "fresh"})
+            self.assertEqual(
+                len(list(Path(tmp).glob("records.corrupt-*.json"))), 1)
             rows = storage.load()
             self.assertEqual(len(rows), 1)
             self.assertEqual(rows[0]["record_id"], "fresh")
@@ -325,18 +361,22 @@ class TestTrimmed19Classes(unittest.TestCase):
             ids = {str(row.get("record_id")) for row in storage.load()}
             self.assertEqual(ids, {f"r{i}" for i in range(20)})
 
-    def test_json_storage_backs_up_object_with_no_records_list(self) -> None:
+    def test_json_storage_backs_up_corrupt_variants_only_on_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "records.json"
             storage = JSONStorage(path)
-            for payload in ("{}", '{"other": 1}'):
+            for index, payload in enumerate(("{}", '{"other": 1}', '["bad"]'), 1):
                 path.write_text(payload, encoding="utf-8")
                 with self.assertRaises(OSError):
                     storage.load()
-                # The original file is left in place after a load() failure.
                 self.assertEqual(path.read_text(encoding="utf-8"), payload)
-            backups = list(Path(tmp).glob("records.corrupt-*.json"))
-            self.assertEqual(len(backups), 2)
+                self.assertEqual(
+                    len(list(Path(tmp).glob("records.corrupt-*.json"))),
+                    index - 1,
+                )
+                storage.append({"record_id": f"r{index}"})
+                self.assertEqual(
+                    len(list(Path(tmp).glob("records.corrupt-*.json"))), index)
 
     def test_save_without_consent_is_refused(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -362,11 +402,8 @@ class TestTrimmed19Classes(unittest.TestCase):
         self.assertIn("pss_2, pss_3, mspss_friends, mspss_family", instructions)
 
         answers = sample_answers()
-        info = logic.score_answers(answers)
-        # Mid-scale answers with one reversed-item pair and 6.5 hours of
-        # sleep (band 3) give a mean around 3.
-        self.assertEqual(info["risk_category"], "Moderate")
         good = json.loads(matching_gemini_reply(answers, logic))
+        self.assertEqual(good["risk_category"], "Moderate")
         self.assertIsNone(logic.verify(good, answers))
 
         # A score more than 0.01 off is rejected.
@@ -386,7 +423,7 @@ class TestTrimmed19Classes(unittest.TestCase):
         self.assertEqual(evaluated["tips"][0], "talk_to_someone")
         self.assertNotIn("feelings_text", evaluated)
 
-    def test_decision_strips_reflection_and_finalise_tips(self) -> None:
+    def test_decision_strips_reflection_encapsulates_tier_and_preserves_safety_lead(self) -> None:
         record = {
             **sample_answers(),
             "feelings_text": "I should not be visible to a rule",
@@ -398,17 +435,45 @@ class TestTrimmed19Classes(unittest.TestCase):
         decision = Decision(record, {"sleep": True, "workload": True,
                                      "finances": True, "support": True})
         self.assertIsNone(decision.field("feelings_text"))
+        # M1/m1: mutating returned list from field() must not mutate Decision.
+        returned_stressors = decision.field("primary_stressors")
+        assert isinstance(returned_stressors, list)
+        returned_stressors.append("financial_pressure")
+        self.assertEqual(decision.field("primary_stressors"), ["academic_overload"])
+
         ContextFlagRule().run(decision)
         # Flags only suggest; they must not overwrite Gemini's tips.
         self.assertEqual(decision.tips, record["tips"])
         decision.finalise_tips()
         self.assertEqual(len(decision.tips), 4)
         self.assertEqual(decision.tips[:3], record["tips"])
-        # There is no public tips setter for a rule to reach into.
-        self.assertFalse(hasattr(type(decision).tips, "fset") and
-                         type(decision).tips.fset is not None
-                         or False)
-        self.assertIsNone(inspect.getattr_static(type(decision), "tips").fset)
+        # M3: No public setters on Decision.
+        for prop in ("tips", "risk_category", "soft_label",
+                     "speak_prominence", "support_priority"):
+            self.assertIsNone(
+                inspect.getattr_static(type(decision), prop).fset,
+                f"Decision.{prop} must be read-only",
+            )
+
+        # M2: OCP proof - a later rule leading with a different tip cannot
+        # displace SafetyOverrideRule's talk_to_someone tip.
+        class LeadsWithBreaks(BusinessRule):
+            @property
+            def name(self) -> str:
+                return "breaks"
+
+            def applies(self, d: Decision) -> bool:
+                return True
+
+            def apply(self, d: Decision) -> None:
+                d.lead_with("short_breaks")
+
+        safety_answers = sample_answers(safety_flag=True)
+        reply = json.loads(matching_gemini_reply(
+            safety_answers, tips=["sleep_routine"]))
+        out = LogicManager(rules=(SafetyOverrideRule(), LeadsWithBreaks())
+                           ).evaluate({**safety_answers, **reply})
+        self.assertEqual(out["tips"][0], "talk_to_someone")
 
     def test_context_flag_and_support_priority_rules(self) -> None:
         logic = LogicManager()
@@ -416,24 +481,23 @@ class TestTrimmed19Classes(unittest.TestCase):
                                  pas_workload=5, fin_stress=5,
                                  sleep_hours_avg=5, sleep_quality=5,
                                  pss_1=5, pss_4=5, pss_2=1, pss_3=1)
-        info = logic.score_answers(answers)
-        self.assertEqual(info["risk_category"], "High")
-        flags = info["context_flags"]
-        self.assertTrue(flags["sleep"])
-        self.assertTrue(flags["workload"])
-        self.assertTrue(flags["finances"])
-        self.assertTrue(flags["support"])
         reply = json.loads(matching_gemini_reply(
             answers, logic,
             primary_stressors=["low_social_support", "academic_overload"],
         ))
         evaluated = logic.evaluate({**answers, **reply})
         self.assertTrue(evaluated["ok"])
+        self.assertEqual(evaluated["risk_category"], "High")
+        flags = evaluated["context_flags"]
+        self.assertTrue(flags["sleep"])
+        self.assertTrue(flags["workload"])
+        self.assertTrue(flags["finances"])
+        self.assertTrue(flags["support"])
         self.assertTrue(evaluated["support_priority"])
         self.assertEqual(evaluated["tips"][0], "talk_to_someone")
         self.assertIn("keep_social_contact", evaluated["tips"])
 
-    def test_ai_uses_instructions_and_retries_on_verify_failure(self) -> None:
+    def test_ai_uses_instructions_retries_and_matches_main_validation(self) -> None:
         logic = LogicManager()
         answers = sample_answers()
         bad = matching_gemini_reply(
@@ -454,7 +518,28 @@ class TestTrimmed19Classes(unittest.TestCase):
         self.assertIn("Calculate stress_score", prompt)
         self.assertNotIn("2605581", prompt)
         self.assertNotIn("feelings_text", prompt)
-        self.assertEqual(fake.calls[0][1], DEFAULT_MODEL_CHAIN[0])
+        self.assertEqual(fake.calls[0][1], GeminiProvider.MODEL_CHAIN[0])
+
+        # M4: Numeric strings like "0.62" are accepted; float scored_items rejected.
+        string_conf = matching_gemini_reply(answers, logic, confidence="0.62")
+        fake_str = FakeProvider(string_conf)
+        res_str = AIManager(
+            fake_str, questionnaire,
+            instructions=logic.instructions, verify=logic.verify,
+            retry_delay_sec=0,
+        ).analyse(answers)
+        self.assertTrue(res_str["ok"])
+
+        float_items = _expected_scored_items(answers)
+        float_scored = {k: float(v) for k, v in float_items.items()}
+        bad_float = matching_gemini_reply(answers, logic, scored_items=float_scored)
+        res_float = AIManager(
+            FakeProvider(bad_float), questionnaire,
+            instructions=logic.instructions, verify=logic.verify,
+            retry_delay_sec=0,
+        ).analyse(answers)
+        self.assertFalse(res_float["ok"])
+        self.assertEqual(res_float["error_code"], "invalid_response")
 
     def test_ai_missing_key_does_not_call_the_provider(self) -> None:
         logic = LogicManager()
@@ -478,20 +563,20 @@ class TestTrimmed19Classes(unittest.TestCase):
         evaluated = logic.evaluate({**answers, **bad})
         self.assertFalse(evaluated["ok"])
         self.assertEqual(evaluated["error"], "score_mismatch")
-        self.assertIsNone(logic.score({**answers, **bad}))
 
-    def test_job_results_are_session_bound_and_history_page_is_wired(self) -> None:
+    def test_job_results_are_session_bound_and_history_is_record_scoped(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             logic = LogicManager()
             answers = sample_answers()
+            expected_score = json.loads(matching_gemini_reply(answers, logic))["stress_score"]
             fake = FakeProvider(matching_gemini_reply(answers, logic))
-            dns_app = wired_app(
+            dns_app, web = wired_app(
                 test_config={"TESTING": True, "SECRET_KEY": "test-secret"},
                 provider=fake,
                 data_path=Path(tmp) / "records.json",
                 testing=True,
             )
-            owner = dns_app.flask.test_client()
+            owner = web.flask.test_client()
             owner.get("/")
             with owner.session_transaction() as sess:
                 csrf = sess["csrf_token"]
@@ -505,7 +590,7 @@ class TestTrimmed19Classes(unittest.TestCase):
             self.assertIn("statusUrl", response.get_json())
             dns_app.wait_for_job(job_id, timeout=5.0)
 
-            stranger = dns_app.flask.test_client()
+            stranger = web.flask.test_client()
             denied = stranger.get(f"/checkin/status/{job_id}")
             self.assertEqual(denied.status_code, 404)
 
@@ -526,19 +611,40 @@ class TestTrimmed19Classes(unittest.TestCase):
             self.assertEqual(hist.status_code, 200)
             body = hist.get_json()["history"]
             self.assertEqual(len(body["entries"]), 1)
-            self.assertEqual(body["entries"][0]["score"],
-                             logic.score_answers(answers)["stress_score"])
+            self.assertEqual(body["entries"][0]["score"], expected_score)
 
-            # A classmate's ID is refused without a matching history cookie.
-            other = owner.post(
+            # B3: A second browser has no history for 2605581 (403), and even if it
+            # submits once under 2605581 it sees ONLY its own 1 entry, never owner's.
+            stranger.get("/")
+            with stranger.session_transaction() as sess:
+                s_csrf = sess["csrf_token"]
+            blocked = stranger.post(
                 "/api/history",
-                json={"student_id": "2605582"},
-                headers={"X-CSRF-Token": csrf},
+                json={"student_id": "2605581"},
+                headers={"X-CSRF-Token": s_csrf},
             )
-            self.assertEqual(other.status_code, 403)
+            self.assertEqual(blocked.status_code, 403)
+
+            s_answers = sample_answers(pss_1=5, pss_4=5)
+            fake.reply_with(matching_gemini_reply(s_answers, logic))
+            s_post = stranger.post(
+                "/",
+                json={**s_answers, "feelings_text": ""},
+                headers={"X-CSRF-Token": s_csrf},
+            )
+            s_job = s_post.get_json()["jobId"]
+            dns_app.wait_for_job(s_job, timeout=5.0)
+            self.assertEqual(stranger.get(f"/checkin/status/{s_job}").status_code, 200)
+            s_hist = stranger.post(
+                "/api/history",
+                json={"student_id": "2605581"},
+                headers={"X-CSRF-Token": s_csrf},
+            )
+            self.assertEqual(s_hist.status_code, 200)
+            self.assertEqual(len(s_hist.get_json()["history"]["entries"]), 1)
             dns_app.close()
 
-    def test_wait_timeout_is_reported_without_raising(self) -> None:
+    def test_wait_timeout_and_per_owner_cap(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             logic = LogicManager()
             answers = sample_answers()
@@ -549,21 +655,26 @@ class TestTrimmed19Classes(unittest.TestCase):
                 return reply
 
             fake = FakeProvider(slow_reply)
-            dns_app = wired_app(
+            dns_app, web = wired_app(
                 test_config={"TESTING": True, "SECRET_KEY": "test-secret"},
                 provider=fake,
                 data_path=Path(tmp) / "records.json",
                 testing=True,
             )
-            with dns_app.flask.test_client() as client:
+            with web.flask.test_client() as client:
                 client.get("/")
                 with client.session_transaction() as sess:
-                    owner_token = sess["csrf_token"]
-                job = dns_app.submit_checkin(answers, owner_token, False)
-                status = dns_app.wait_for_job(job["job_id"], timeout=0.001)
+                    owner_id = sess["owner_id"]
+                job1 = dns_app.submit_checkin(answers, owner_id)
+                job2 = dns_app.submit_checkin(
+                    sample_answers(pss_1=4), owner_id)
+                busy = dns_app.submit_checkin(
+                    sample_answers(pss_1=5), owner_id)
+                self.assertEqual(busy["http_status"], 429)
+                status = dns_app.wait_for_job(job1["job_id"], timeout=0.001)
                 self.assertEqual(status["status"], "running")
-            # Let the worker finish so close() is prompt.
-            dns_app.wait_for_job(job["job_id"], timeout=5.0)
+            dns_app.wait_for_job(job1["job_id"], timeout=5.0)
+            dns_app.wait_for_job(job2["job_id"], timeout=5.0)
             dns_app.close()
 
     def test_pending_save_when_gemini_fails_then_upgrade_on_retry(self) -> None:
@@ -572,13 +683,13 @@ class TestTrimmed19Classes(unittest.TestCase):
             answers = sample_answers()
             good = matching_gemini_reply(answers, logic)
             fake = FakeProvider(RuntimeError("Gemini is down"))
-            dns_app = wired_app(
+            dns_app, web = wired_app(
                 test_config={"TESTING": True, "SECRET_KEY": "test-secret"},
                 provider=fake,
                 data_path=Path(tmp) / "records.json",
                 testing=True,
             )
-            client = dns_app.flask.test_client()
+            client = web.flask.test_client()
             client.get("/")
             with client.session_transaction() as sess:
                 csrf = sess["csrf_token"]
@@ -621,14 +732,19 @@ class TestTrimmed19Classes(unittest.TestCase):
             logic = LogicManager()
             answers = sample_answers()
             fake = FakeProvider(matching_gemini_reply(answers, logic))
-            application = wired_app(
+            admin_hash = generate_password_hash("TestAdminPass!")
+            application, web = wired_app(
                 testing=True,
-                test_config={"TESTING": True, "SECRET_KEY": "test-secret",
-                             "DATA_PATH": str(Path(tmp) / "records.json")},
+                test_config={
+                    "TESTING": True,
+                    "SECRET_KEY": "test-secret",
+                    "DATA_PATH": str(Path(tmp) / "records.json"),
+                    "ADMIN_PASSWORD_HASH": admin_hash,
+                },
                 provider=fake,
                 data_path=Path(tmp) / "records.json",
             )
-            client = application.flask.test_client()
+            client = web.flask.test_client()
             home = client.get("/")
             self.assertEqual(home.status_code, 200)
             self.assertIn(b"csrfToken", home.data)
@@ -652,7 +768,7 @@ class TestTrimmed19Classes(unittest.TestCase):
 
             ok = client.post(
                 "/admin/login",
-                data={"username": "admin", "password": "DoNotStress2026!",
+                data={"username": "admin", "password": "TestAdminPass!",
                       "csrf_token": csrf},
                 follow_redirects=False,
             )
@@ -681,6 +797,81 @@ class TestTrimmed19Classes(unittest.TestCase):
         ])
         self.assertEqual(from_list["direction"], "building")
         self.assertEqual(from_list["count"], 3)
+
+    def test_record_problem_guards_ai_deadline_owner_id_and_admin_hash(self) -> None:
+        # m2 / m3: Record base fields and stress_score are enforced on restore
+        missing_sid = PendingRecord({"student_id": "", "survey_version": "pss10_sleep_v1"})
+        self.assertIsNotNone(missing_sid.problem())
+        answers = sample_answers()
+        logic = LogicManager()
+        complete_row = {
+            **answers,
+            "record_id": "r1",
+            "timestamp": "2026-11-14T00:00:00Z",
+            "status": "completed",
+            "survey_version": "pss10_sleep_v1",
+            "decision_source": "logic",
+            "recommended_support": "Self-care",
+            **json.loads(matching_gemini_reply(answers, logic)),
+        }
+        del complete_row["stress_score"]
+        self.assertIsNotNone(CheckInRecord(complete_row).problem())
+
+        # m9: Overall timeout stops retries cleanly
+        fake = FakeProvider(RuntimeError("503 unavailable"))
+        ai = AIManager(
+            fake,
+            Questionnaire.from_survey(),
+            instructions=logic.instructions,
+            verify=logic.verify,
+            overall_timeout_sec=0.0,
+        )
+        res = ai.analyse(answers)
+        self.assertFalse(res["ok"])
+        self.assertEqual(res["error_code"], "timeout")
+        self.assertEqual(fake.calls, [])
+
+        # m8 & m12: Unset ADMIN_PASSWORD_HASH fails closed; admin login rotates CSRF but keeps owner_id
+        with tempfile.TemporaryDirectory() as tmp:
+            app_no_hash, web_no_hash = wired_app(
+                test_config={"TESTING": True, "SECRET_KEY": "test-secret",
+                             "ADMIN_PASSWORD_HASH": ""},
+                provider=fake,
+                data_path=Path(tmp) / "a.json",
+                testing=True,
+            )
+            c1 = web_no_hash.flask.test_client()
+            c1.get("/admin/login")
+            with c1.session_transaction() as sess:
+                csrf1 = sess["csrf_token"]
+            r_no_hash = c1.post("/admin/login", data={
+                "username": "admin", "password": "any-password", "csrf_token": csrf1,
+            })
+            self.assertEqual(r_no_hash.status_code, 401)
+            app_no_hash.close()
+
+            admin_hash = generate_password_hash("TestAdminPass!")
+            app_ok, web_ok = wired_app(
+                test_config={"TESTING": True, "SECRET_KEY": "test-secret",
+                             "ADMIN_PASSWORD_HASH": admin_hash},
+                provider=fake,
+                data_path=Path(tmp) / "b.json",
+                testing=True,
+            )
+            c2 = web_ok.flask.test_client()
+            c2.get("/")
+            with c2.session_transaction() as sess:
+                owner_before = sess["owner_id"]
+                csrf_before = sess["csrf_token"]
+            r_login = c2.post("/admin/login", data={
+                "username": "admin", "password": "TestAdminPass!",
+                "csrf_token": csrf_before,
+            })
+            self.assertEqual(r_login.status_code, 302)
+            with c2.session_transaction() as sess:
+                self.assertEqual(sess["owner_id"], owner_before)
+                self.assertNotEqual(sess["csrf_token"], csrf_before)
+            app_ok.close()
 
     def test_no_top_level_procedural_functions_outside_classes(self) -> None:
         for py_file in APP_ROOT.rglob("*.py"):

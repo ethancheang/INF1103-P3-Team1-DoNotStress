@@ -22,7 +22,7 @@ class PendingRecord(Record):
         return None
 
     def problem(self) -> str | None:
-        return None
+        return super().problem()
 
     def _mark(self, row: JSONObject) -> None:
         row["status"] = "pending"

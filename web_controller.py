@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import os
 import secrets
 import threading
 import time
@@ -32,32 +33,44 @@ class WebController:
     """Registers every route on the Flask app and answers each request.
 
     It knows the App it serves (association) and calls into it for every
-    check-in, record and page.
+    check-in, record and page. Flask lives here so App stays independent
+    of the web framework.
     """
 
     CALM_FAILURE: str = ("We could not complete your check-in right now. "
                          "Your answers are still here; please try again.")
     HISTORY_LOCKED: str = (
-        "To keep check-ins private, history is only shown for a Student ID "
-        "that has checked in on this device. Complete a check-in here "
-        "first.")
+        "To keep check-ins private, history is only shown for check-ins "
+        "completed on this device. Complete a check-in here first.")
     HISTORY_COOKIE_NAME: str = "dns_history"
     HISTORY_MAX_AGE: int = 180 * 24 * 60 * 60
-    HISTORY_MAX_IDS: int = 8
+    HISTORY_MAX_IDS: int = 24
     HISTORY_DIGEST_LENGTH: int = 32
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD_HASH: str = (
-        "scrypt:32768:8:1$zoikUrXAJEAJCQlR$83ec3b2a32cedeb5721031e22f7fed"
-        "c19ed5eea40c5995aa11d2c2ea1cc40845b393de85d68cda54706b5714293fc49"
-        "ec360a477913186f00b46be7a6c31e8c1")
     ADMIN_MAX_PASSWORD_LENGTH: int = 256
     ADMIN_SESSION_SECONDS: float = 1800
     ADMIN_MAX_ATTEMPTS: int = 5
     ADMIN_WINDOW_SECONDS: float = 300
     RESULT_TTL_SECONDS: float = 1800
 
-    def __init__(self, app: App, flask: Flask) -> None:
+    def __init__(self, app: App, flask: Flask | None = None, *,
+                 test_config: Mapping[str, object] | None = None) -> None:
         self.__app: App = app
+        if flask is None:
+            flask = Flask(__name__, root_path=str(app.ROOT))
+            secure_cookie = os.environ.get(
+                "SESSION_COOKIE_SECURE", "").strip().lower() in {
+                    "1", "true", "yes"}
+            flask.config.update(
+                SECRET_KEY=app.secret_key,
+                SESSION_COOKIE_HTTPONLY=True,
+                SESSION_COOKIE_SAMESITE="Lax",
+                SESSION_COOKIE_SECURE=secure_cookie,
+                MAX_CONTENT_LENGTH=app.MAX_CONTENT_LENGTH,
+                TESTING=app.testing,
+            )
+        if test_config:
+            flask.config.update(test_config)
         self.__flask: Flask = flask
         self.__secret: bytes = str(flask.config["SECRET_KEY"]).encode("utf-8")
         self.__results: dict[str, dict[str, object]] = {}
@@ -67,6 +80,14 @@ class WebController:
         self.__admin_lock: threading.Lock = threading.Lock()
         flask.extensions["admin_sessions"] = self.__admin_tokens
         self.__register(flask)
+
+    @property
+    def flask(self) -> Flask:
+        return self.__flask
+
+    def run(self, host: str, port: int, debug: bool) -> None:
+        """Start the Flask server."""
+        self.__flask.run(host=host, port=port, debug=debug)
 
     # --- Student pages ---------------------------------------------------
 
@@ -89,14 +110,17 @@ class WebController:
                            advisor=checked.get("advisor")), 400
         self.__clear_result()
         record = checked["record"]
-        assert isinstance(record, dict)
+        if not isinstance(record, dict):
+            raise TypeError("Validated record must be a dict.")
         job = self.__app.submit_checkin(
             record,
-            str(session.get("csrf_token", "")),
-            checked.get("safety_flag") is True,
+            self.__owner_id(),
             str(session.get("pending_fingerprint", "")),
             str(session.get("pending_record_id", "")),
         )
+        if int(job.get("http_status") or 0) == 429:
+            return jsonify(job.get("payload") or {
+                "message": "Too many check-ins are running right now."}), 429
         job_id = str(job["job_id"])
         return jsonify(status=job.get("status") or "queued", jobId=job_id,
                        statusUrl=url_for("checkin_status", job_id=job_id)
@@ -104,13 +128,18 @@ class WebController:
 
     def checkin_status(self, job_id: str) -> ResponseReturnValue:
         """Still working (202), or the check-in's final response."""
-        outcome = self.__app.job_status(
-            job_id, str(session.get("csrf_token", "")))
+        raw_wait = request.args.get("wait", default=0.0, type=float)
+        wait = min(max(raw_wait or 0.0, 0.0), 2.0)
+        owner = self.__owner_id()
+        outcome = self.__app.job_status(job_id, owner, wait=wait)
         http_status = int(outcome.get("http_status") or 500)
         if http_status == 202:
             return jsonify(outcome.get("payload") or {"status": "running",
                                                       "jobId": job_id}), 202
-        return self.__respond(outcome)
+        response = self.__respond(outcome)
+        if http_status in (200, 500, 503):
+            self.__app.forget_job(job_id, owner)
+        return response
 
     def result(self) -> ResponseReturnValue:
         """Refreshing only reads the stored result; nothing is re-saved."""
@@ -133,10 +162,11 @@ class WebController:
         return self.__render_campus("history")
 
     def lookup_history(self) -> ResponseReturnValue:
-        """A student's own scores and trend, by Student ID.
+        """This browser's own check-in scores and trend for a Student ID.
 
-        The ID must have checked in from this browser (or the viewer must
-        be a signed-in admin), so typing a classmate's ID shows nothing.
+        Non-admin browsers only see check-ins whose record_id matches a
+        signed digest in the dns_history cookie, never another browser's
+        submissions for the same Student ID.
         """
         values = (request.get_json(silent=True) if request.is_json
                   else request.form)
@@ -144,14 +174,19 @@ class WebController:
         ok, student_id = self.__app.validate_student_id(form.get("student_id"))
         if not ok:
             return jsonify(message=student_id), 400
-        cookie = request.cookies.get(self.HISTORY_COOKIE_NAME)
-        if not self.__is_admin() and not self.__history_allows(cookie, student_id):
-            return jsonify(message=self.HISTORY_LOCKED), 403
-        page = self.__app.student_history(student_id)
+        held = set(self.__history_digests(
+            request.cookies.get(self.HISTORY_COOKIE_NAME)))
+        visible = None if self.__is_admin() else (
+            lambda record_id: self.__history_digest(record_id) in held)
+        page = self.__app.student_history(student_id, visible)
         if not page.get("ok"):
             return jsonify(message="Your history could not be loaded. "
                            "Please try again."), 500
-        return jsonify(history=page.get("history"))
+        history = page.get("history") or {}
+        if (visible is not None and isinstance(history, dict)
+                and not (history.get("entries") or history.get("pending"))):
+            return jsonify(message=self.HISTORY_LOCKED), 403
+        return jsonify(history=history)
 
     # --- Admin pages -----------------------------------------------------
 
@@ -183,7 +218,7 @@ class WebController:
     def admin_logout(self) -> ResponseReturnValue:
         self.__admin_revoke(session.pop("admin_token", None))
         self.__clear_result()
-        self.__app.forget_submission(str(session.get("csrf_token", "")))
+        self.__app.forget_submission(str(session.get("owner_id", "")))
         session.clear()
         response = redirect(url_for("checkin"))
         response.delete_cookie(self.HISTORY_COOKIE_NAME)
@@ -219,6 +254,8 @@ class WebController:
 
     def check_request(self) -> ResponseReturnValue | None:
         """Expire old state, then require the CSRF token on every POST."""
+        if request.endpoint == "static":
+            return None
         self.__expire_results()
         self.__admin_expire()
         self.__app.expire_jobs()
@@ -287,16 +324,14 @@ class WebController:
                     outcome.get("fingerprint") or "")
                 session["pending_record_id"] = str(
                     outcome.get("pending_id") or "")
-            safety = outcome.get("safety_flag") is True
-            payload = dict(payload)
-            payload["safety_flag"] = safety
             response = jsonify(payload)
             response.status_code = 503
         elif http_status == 200 and outcome.get("result") is not None:
             session.pop("pending_fingerprint", None)
             session.pop("pending_record_id", None)
             result = outcome["result"]
-            assert isinstance(result, dict)
+            if not isinstance(result, dict):
+                raise TypeError("Check-in result payload must be a dict.")
             self.__clear_result()
             session["checkin_token"] = self.__put_result(result)
             response = jsonify(payload)
@@ -305,26 +340,22 @@ class WebController:
             response = jsonify(payload)
             response.status_code = http_status
         if outcome.get("saved"):
-            student_id = str(outcome.get("student_id") or "")
-            if student_id:
-                self.__grant_history(response, student_id)
+            record_id = str(outcome.get("record_id")
+                            or outcome.get("pending_id") or "")
+            if record_id:
+                self.__grant_history(response, record_id)
         return response
 
-    def __grant_history(self, response: Response, student_id: str) -> None:
+    def __grant_history(self, response: Response, record_id: str) -> None:
         held = request.cookies.get(self.HISTORY_COOKIE_NAME)
         response.set_cookie(
             self.HISTORY_COOKIE_NAME,
-            self.__history_grant(held, student_id),
+            self.__history_grant(held, record_id),
             max_age=self.HISTORY_MAX_AGE, httponly=True,
             samesite="Lax", secure=request.is_secure)
 
-    def __history_allows(self, cookie: str | None, student_id: str) -> bool:
-        wanted = self.__history_digest(student_id)
-        return any(hmac.compare_digest(wanted, held)
-                   for held in self.__history_digests(cookie))
-
-    def __history_grant(self, cookie: str | None, student_id: str) -> str:
-        wanted = self.__history_digest(student_id)
+    def __history_grant(self, cookie: str | None, record_id: str) -> str:
+        wanted = self.__history_digest(record_id)
         held = [digest for digest in self.__history_digests(cookie)
                 if digest != wanted]
         return ".".join((held + [wanted])[-self.HISTORY_MAX_IDS:])
@@ -334,13 +365,14 @@ class WebController:
         return [part for part in parts
                 if len(part) == self.HISTORY_DIGEST_LENGTH and part.isalnum()]
 
-    def __history_digest(self, student_id: str) -> str:
-        mac = hmac.new(self.__secret, student_id.strip().encode("utf-8"),
+    def __history_digest(self, record_id: str) -> str:
+        mac = hmac.new(self.__secret, record_id.strip().encode("utf-8"),
                        hashlib.sha256)
         return mac.hexdigest()[:self.HISTORY_DIGEST_LENGTH]
 
     def __render_campus(self, page: str = "home") -> str:
         csrf = self.__csrf_token()
+        self.__owner_id()
         stored = self.__current_result()
         return render_template("checkin.html", boot={
             "page": page,
@@ -362,6 +394,9 @@ class WebController:
 
     def __csrf_token(self) -> str:
         return str(session.setdefault("csrf_token", secrets.token_urlsafe(32)))
+
+    def __owner_id(self) -> str:
+        return str(session.setdefault("owner_id", secrets.token_urlsafe(16)))
 
     def __is_admin(self) -> bool:
         token = session.get("admin_token")
@@ -406,14 +441,20 @@ class WebController:
 
     def __admin_credentials_match(self, username: object,
                                   password: object) -> bool:
+        expected_hash = str(
+            self.__flask.config.get("ADMIN_PASSWORD_HASH")
+            or os.environ.get("ADMIN_PASSWORD_HASH", "")
+        ).strip()
+        if not expected_hash:
+            return False
         user = str(username or "")
         secret = str(password or "")
         if (user != self.ADMIN_USERNAME
                 or len(secret) > self.ADMIN_MAX_PASSWORD_LENGTH):
             # Still hash a dummy value so timing does not leak the username.
-            check_password_hash(self.ADMIN_PASSWORD_HASH, secret or "x")
+            check_password_hash(expected_hash, secret or "x")
             return False
-        return check_password_hash(self.ADMIN_PASSWORD_HASH, secret)
+        return check_password_hash(expected_hash, secret)
 
     def __admin_issue(self, address: str) -> str:
         token = secrets.token_urlsafe(32)

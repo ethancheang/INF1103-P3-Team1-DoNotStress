@@ -90,6 +90,7 @@ class AIManager(BaseManager):
 
     MAX_TOTAL_CALLS: int = 4
     TRIES_PER_MODEL: int = 2
+    OVERALL_TIMEOUT_SEC: float = 45.0
     REPEATABLE: tuple[str, ...] = (ERROR_TIMEOUT, ERROR_INVALID_RESPONSE)
     SOURCE: str = "gemini"
     REQUIRED_FIELDS: tuple[str, ...] = (
@@ -99,24 +100,22 @@ class AIManager(BaseManager):
     )
 
     def __init__(self, provider: AIProvider, questionnaire: Questionnaire,
-                 instructions: Callable[[], str] | None = None,
-                 verify: Callable[[JSONObject, JSONObject], str | None] | None = None,
+                 instructions: Callable[[], str],
+                 verify: Callable[[JSONObject, JSONObject], str | None],
                  *,
                  max_attempts: int = 3,
-                 retry_delay_sec: float = 0.5) -> None:
+                 retry_delay_sec: float = 0.5,
+                 overall_timeout_sec: float = OVERALL_TIMEOUT_SEC) -> None:
         super().__init__("ai_manager")
         self.__provider: AIProvider = provider
         self.__questionnaire: Questionnaire = questionnaire
-        self.__instructions: Callable[[], str] | None = instructions
-        self.__verify: Callable[[JSONObject, JSONObject], str | None] | None = verify
+        self.__instructions: Callable[[], str] = instructions
+        self.__verify: Callable[[JSONObject, JSONObject], str | None] = verify
         self.__tries_per_model: int = max(
             1, min(max_attempts, self.TRIES_PER_MODEL))
         self.__retry_delay_sec: float = max(0.0, retry_delay_sec)
+        self.__overall_timeout_sec: float = max(0.0, overall_timeout_sec)
         self.__schema: JSONObject = self.__build_schema()
-
-    @property
-    def provider(self) -> AIProvider:
-        return self.__provider
 
     @property
     def answer_keys(self) -> tuple[str, ...]:
@@ -136,9 +135,6 @@ class AIManager(BaseManager):
             "max_calls": self.MAX_TOTAL_CALLS,
         }
 
-    def response_schema(self) -> JSONObject:
-        return self.__schema
-
     def analyse(self, record: JSONObject) -> JSONObject:
         """Prompt → provider → validated fields merged into the record.
 
@@ -150,14 +146,15 @@ class AIManager(BaseManager):
         if not isinstance(record, dict):
             return {"ok": False, "error_code": ERROR_INVALID_RESPONSE,
                     "detail": "The check-in must be a dict from io_manager."}
-        result = self.call_api(self.build_prompt(record), answers=record)
+        result = self.__call_api(self.__build_prompt(record), answers=record)
         if not result.get("ok"):
             return result
         fields = result["fields"]
-        assert isinstance(fields, dict)
+        if not isinstance(fields, dict):
+            raise TypeError("AI result fields must be a dict.")
         return {"ok": True, "fields": {**record, **fields}}
 
-    def build_prompt(self, record: JSONObject) -> str:
+    def __build_prompt(self, record: JSONObject) -> str:
         """Ask Gemini to calculate stress_score from the raw answers.
 
         The JSON at the end holds only prompt_fields. Question wording and
@@ -168,7 +165,7 @@ class AIManager(BaseManager):
         payload = {key: record.get(key) for key in self.prompt_fields}
         count = len(self.answer_keys)
         labels = ", ".join(f'"{label}"' for label in SOFT_LABELS)
-        rules = self.__instructions() if self.__instructions else ""
+        rules = self.__instructions()
         lines = [
             "You are a supportive student-wellbeing assistant for "
             "DoNotStress, a local check-in used by students.",
@@ -212,15 +209,14 @@ class AIManager(BaseManager):
         ]
         return "\n".join(lines) + "\n"
 
-    def call_api(self, prompt: str,
-                 answers: JSONObject | None = None) -> JSONObject:
+    def __call_api(self, prompt: str,
+                   answers: JSONObject | None = None) -> JSONObject:
         """Try the provider's models in order until a reply is valid.
 
         A missing key stops at once. A timeout or invalid reply gets one
         more try on the same model; any other error moves to the next
-        model. At most MAX_TOTAL_CALLS calls are made. When answers are
-        given, verify() checks each schema-valid reply. Never raises and
-        never logs the API key.
+        model. At most MAX_TOTAL_CALLS calls are made, and retries stop
+        once the overall deadline passes.
         """
         if not self.__provider.is_ready():
             detail = "GEMINI_API_KEY is not set; cannot call Gemini."
@@ -230,14 +226,17 @@ class AIManager(BaseManager):
         failures: list[tuple[str, str]] = []
         calls = 0
         last_try = 1
+        deadline = time.monotonic() + self.__overall_timeout_sec
         for model in self.__provider.models:
-            if calls == self.MAX_TOTAL_CALLS:
+            if calls == self.MAX_TOTAL_CALLS or time.monotonic() >= deadline:
                 break
             for attempt in range(1, self.__tries_per_model + 1):
-                if calls == self.MAX_TOTAL_CALLS:
+                if calls == self.MAX_TOTAL_CALLS or time.monotonic() >= deadline:
                     break
                 if attempt > 1:
-                    self.__pause(attempt - 1)
+                    self.__pause(attempt - 1, deadline)
+                    if time.monotonic() >= deadline:
+                        break
                 calls += 1
                 last_try = attempt
                 result = self.__attempt(prompt, model, answers, attempt)
@@ -254,7 +253,7 @@ class AIManager(BaseManager):
                                 failures[-1][0] if failures else "unknown")
         return self.__final_failure(failures, last_try)
 
-    def parse_response(self, raw: object) -> JSONObject | None:
+    def __parse_response(self, raw: object) -> JSONObject | None:
         """The JSON object inside a raw reply, even inside code fences."""
         if isinstance(raw, dict):
             return raw
@@ -269,7 +268,7 @@ class AIManager(BaseManager):
             return None
         return data if isinstance(data, dict) else None
 
-    def validate_response(self, payload: object) -> tuple[bool, JSONValue]:
+    def __validate_response(self, payload: object) -> tuple[bool, JSONValue]:
         """Check required keys, types, ranges and allow-lists.
 
         Extra keys are dropped. Returns (True, fields) or (False, message).
@@ -295,7 +294,7 @@ class AIManager(BaseManager):
             fields[field] = value
         return True, fields
 
-    def classify_error(self, error: BaseException | str | None) -> str:
+    def __classify_error(self, error: BaseException | str | None) -> str:
         """One error code. Unknown errors map to "unavailable"."""
         kind = type(error).__name__ if isinstance(error, BaseException) else ""
         text = f"{kind} {error or ''}".strip().lower()
@@ -326,7 +325,7 @@ class AIManager(BaseManager):
             detail = (f"Gemini API failure {label}: "
                       f"{self.__provider.redact(str(error))}")
             self.logger.warning(detail)
-            return {"ok": False, "error_code": self.classify_error(error),
+            return {"ok": False, "error_code": self.__classify_error(error),
                     "detail": detail}
         ok, checked = self.__check_reply(raw, answers)
         if ok and isinstance(checked, dict):
@@ -339,11 +338,11 @@ class AIManager(BaseManager):
 
     def __check_reply(self, raw: str,
                       answers: JSONObject | None) -> tuple[bool, JSONValue]:
-        parsed = self.parse_response(raw)
-        ok, fields = self.validate_response(raw if parsed is None else parsed)
+        parsed = self.__parse_response(raw)
+        ok, fields = self.__validate_response(raw if parsed is None else parsed)
         if not ok or not isinstance(fields, dict):
             return False, fields
-        if self.__verify is None or answers is None:
+        if answers is None:
             return True, fields
         try:
             problem = self.__verify(fields, answers)
@@ -354,8 +353,8 @@ class AIManager(BaseManager):
     def __final_failure(self, failures: list[tuple[str, str]],
                         last_try: int) -> JSONObject:
         if not failures:
-            return {"ok": False, "error_code": ERROR_UNAVAILABLE,
-                    "detail": "No model was tried."}
+            return {"ok": False, "error_code": ERROR_TIMEOUT,
+                    "detail": "AI check-in timed out before completing."}
         code, detail = failures[-1]
         if all(item_code == ERROR_RATE_LIMITED for item_code, _ in failures):
             return {"ok": False, "error_code": ERROR_RATE_LIMITED,
@@ -365,8 +364,12 @@ class AIManager(BaseManager):
                     "detail": detail}
         return {"ok": False, "error_code": code, "detail": detail}
 
-    def __pause(self, retry: int) -> None:
-        time.sleep(self.__retry_delay_sec * 2 ** (retry - 1))
+    def __pause(self, retry: int, deadline: float | None = None) -> None:
+        delay = self.__retry_delay_sec * 2 ** (retry - 1)
+        if deadline is not None:
+            delay = min(delay, max(0.0, deadline - time.monotonic()))
+        if delay > 0:
+            time.sleep(delay)
 
     def __build_schema(self) -> JSONObject:
         names: list[JSONValue] = list(self.REQUIRED_FIELDS)
@@ -459,22 +462,24 @@ class AIManager(BaseManager):
         cleaned: dict[str, int] = {}
         for key in self.answer_keys:
             item = value[key]
-            if isinstance(item, bool) or not isinstance(item, (int, float)):
+            if (isinstance(item, bool) or not isinstance(item, int)
+                    or not 1 <= item <= 5):
                 return False, f"scored_items.{key} must be an integer 1 to 5."
-            number = float(item)
-            if not number.is_integer() or not (1 <= number <= 5):
-                return False, f"scored_items.{key} must be an integer 1 to 5."
-            cleaned[key] = int(number)
+            cleaned[key] = item
         return True, cleaned
 
     def __validate_range(self, field: str, value: JSONValue,
                          minimum: float, maximum: float
                          ) -> tuple[bool, JSONValue]:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False, f"{field} must be a number between {minimum} and {maximum}."
-        number = float(value)
-        if not math.isfinite(number) or not (minimum <= number <= maximum):
-            return False, f"{field} must be a number between {minimum} and {maximum}."
+        message = f"{field} must be a number between {minimum} and {maximum}."
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            return False, message
+        try:
+            number = float(value)
+        except (ValueError, OverflowError):
+            return False, message
+        if not math.isfinite(number) or not minimum <= number <= maximum:
+            return False, message
         return True, number
 
     def __validate_choice(self, field: str, value: JSONValue,

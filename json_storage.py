@@ -43,22 +43,22 @@ class JSONStorage:
     def load(self) -> list[JSONObject]:
         """Every stored row. Raises OSError when the file cannot be used."""
         with self.__lock:
-            rows, problem = self.__read()
+            rows, problem = self.__read(backup_corrupt=False)
         if problem:
             raise OSError(problem)
         return rows
 
     def append(self, row: JSONObject) -> None:
-        """Add one row. Raises OSError when it cannot be written."""
+        """Add one row. A corrupt file is backed up once before starting fresh."""
         with self.__lock:
-            rows, _ = self.__read()
+            rows, _ = self.__read(backup_corrupt=True)
             rows.append(row)
             self.__write(rows)
 
     def replace(self, record_id: str, row: JSONObject) -> None:
         """Replace the row with this record_id, or append when none has it."""
         with self.__lock:
-            rows, _ = self.__read()
+            rows, _ = self.__read(backup_corrupt=True)
             for index, existing in enumerate(rows):
                 if str(existing.get("record_id") or "").strip() == record_id:
                     rows[index] = row
@@ -67,11 +67,12 @@ class JSONStorage:
                 rows.append(row)
             self.__write(rows)
 
-    def __read(self) -> tuple[list[JSONObject], str | None]:
-        """The rows, plus a note when a corrupt file had to be set aside.
+    def __read(self, *, backup_corrupt: bool) -> tuple[list[JSONObject], str | None]:
+        """The rows, plus a note when the file is corrupt.
 
-        Raises OSError when the file cannot be read, or is corrupt
-        and cannot be backed up, so nothing ever overwrites it.
+        When backup_corrupt is True, a corrupt file is copied to
+        records.corrupt-<time>.json before any write can overwrite it.
+        Raises OSError when the file cannot be read or the backup fails.
         """
         if not self.__path.exists():
             return [], None
@@ -84,17 +85,21 @@ class JSONStorage:
         try:
             payload = json.loads(text)
         except json.JSONDecodeError as error:
-            return [], self.__back_up(f"Corrupted JSON in data file: {error}")
+            problem = f"Corrupted JSON in data file: {error}"
+            return [], self.__back_up(problem) if backup_corrupt else problem
         if payload is None:
             return [], None
         if isinstance(payload, dict):
-            # {} or {"other": 1} has no records list: back it up like any
-            # other corrupt file, so the next save cannot silently drop it.
+            # {} or {"other": 1} has no records list: treat it as corrupt
+            # so a write backs it up rather than silently dropping it.
             payload = payload.get("records")
         if not isinstance(payload, list):
-            return [], self.__back_up(
-                "Corrupted data file: expected a list of records.")
-        return [row for row in payload if isinstance(row, dict)], None
+            problem = "Corrupted data file: expected a list of records."
+            return [], self.__back_up(problem) if backup_corrupt else problem
+        if any(not isinstance(row, dict) for row in payload):
+            problem = "Corrupted data file: every record must be an object."
+            return [], self.__back_up(problem) if backup_corrupt else problem
+        return list(payload), None
 
     def __back_up(self, problem: str) -> str:
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")

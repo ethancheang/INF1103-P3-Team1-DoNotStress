@@ -11,6 +11,7 @@ Run locally with `python main.py`.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import logging
@@ -19,11 +20,11 @@ import secrets
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
-from flask import Flask
 
 from ai.ai_provider import AIProvider
 from ai.gemini_provider import GeminiProvider
@@ -34,8 +35,6 @@ from io_manager import IOManager
 from json_types import JSONObject
 from logic_manager import LogicManager
 from questionnaire import Questionnaire
-from records.check_in_record import CheckInRecord
-from records.pending_record import PendingRecord
 
 load_dotenv()
 
@@ -56,6 +55,7 @@ class App:
     MAX_CONTENT_LENGTH: int = 64 * 1024
     JOB_TTL_SECONDS: float = 1800
     WORKERS: int = 4
+    MAX_RUNNING_PER_OWNER: int = 2
 
     def __init__(self, provider: AIProvider | None = None,
                  data_path: Path | str | None = None,
@@ -64,21 +64,21 @@ class App:
                  ai_retry_delay_sec: float | None = None,
                  test_config: dict[str, object] | None = None) -> None:
         self.__logger: logging.Logger = logging.getLogger("main")
-        self.__flask: Flask = Flask(__name__, root_path=str(self.ROOT))
-        self.__flask.config.update(
-            SECRET_KEY=(secret_key or os.environ.get("FLASK_SECRET_KEY")
-                        or secrets.token_hex(32)),
-            SESSION_COOKIE_HTTPONLY=True,
-            SESSION_COOKIE_SAMESITE="Lax",
-            MAX_CONTENT_LENGTH=self.MAX_CONTENT_LENGTH,
-            TESTING=testing,
-            DATA_PATH=(str(data_path) if data_path is not None else
-                       os.environ.get("DONOTSTRESS_DATA_PATH") or None),
+        cfg = test_config or {}
+        if cfg.get("TESTING"):
+            testing = True
+        self.__testing: bool = bool(testing)
+        self.__secret_key: str = str(
+            secret_key
+            or cfg.get("SECRET_KEY")
+            or os.environ.get("FLASK_SECRET_KEY")
+            or secrets.token_hex(32)
         )
-        if test_config:
-            self.__flask.config.update(test_config)
-            if test_config.get("TESTING"):
-                testing = True
+        configured = (
+            str(data_path) if data_path is not None
+            else str(cfg.get("DATA_PATH") or os.environ.get("DONOTSTRESS_DATA_PATH") or "")
+        )
+        path = Path(configured) if configured else self.DEFAULT_DATA_PATH
 
         questionnaire = Questionnaire.from_survey()
         self.__questionnaire = questionnaire
@@ -93,8 +93,6 @@ class App:
             max_attempts=ai_max_attempts,
             retry_delay_sec=delay,
         )
-        configured = self.__flask.config.get("DATA_PATH")
-        path = Path(str(configured)) if configured else self.DEFAULT_DATA_PATH
         self.__data: DataManager = DataManager(path)
 
         self.__save_lock: threading.Lock = threading.Lock()
@@ -104,7 +102,6 @@ class App:
         self.__executor: ThreadPoolExecutor = ThreadPoolExecutor(
             max_workers=self.WORKERS, thread_name_prefix="checkin")
         self.__executor_stopped: bool = False
-        self.__flask.extensions["dns_app"] = self
 
     @staticmethod
     def make_provider() -> AIProvider:
@@ -112,8 +109,12 @@ class App:
         return GeminiProvider()
 
     @property
-    def flask(self) -> Flask:
-        return self.__flask
+    def secret_key(self) -> str:
+        return self.__secret_key
+
+    @property
+    def testing(self) -> bool:
+        return self.__testing
 
     def health(self) -> JSONObject:
         """Every manager's health summary. Never includes secrets."""
@@ -133,8 +134,8 @@ class App:
     def validate_form(self, form) -> JSONObject:
         """Validate a submitted form. Never reaches into I/O from the web."""
         values = form if isinstance(form, dict) or hasattr(form, "get") else {}
-        safety = self.__io.safety_fired(values.get("feelings_text", "")
-                                        if hasattr(values, "get") else "")
+        raw_text = values.get("feelings_text", "") if values else ""
+        safety = self.__io.safety_fired(raw_text)
         ok, payload = self.__io.validate_student_form(values)
         if not ok:
             advisor = self.__io.advisor_panel("high") if safety else None
@@ -146,9 +147,6 @@ class App:
     def validate_record_filters(self, tier: str,
                                 cohort_year: str) -> str | None:
         return self.__io.validate_record_filters(tier, cohort_year)
-
-    def display_result(self, record: JSONObject) -> JSONObject:
-        return self.__io.display_result(record)
 
     def process_checkin(self, record: JSONObject) -> JSONObject:
         """Gemini's analysis, then Logic's rules. AI must succeed first.
@@ -169,14 +167,13 @@ class App:
         return {"ok": True, "fields": evaluated}
 
     def submit_checkin(self, record: JSONObject, owner: str,
-                       safety_flag: bool,
                        pending_fingerprint: str = "",
                        pending_record_id: str = "") -> JSONObject:
         """Start run_checkin on a worker thread and return at once.
 
         The same session sending the same answers again while a job runs
-        gets that job back instead of a second Gemini call. The job dict
-        holds a threading.Event so wait_for_job can block on it.
+        gets that job back instead of a second Gemini call. Limits
+        concurrent active jobs per owner and holds a threading.Event per job.
         """
         fingerprint = self.__fingerprint(record)
         with self.__jobs_lock:
@@ -184,6 +181,19 @@ class App:
                 if (job.get("owner") == owner and job.get("key") == fingerprint
                         and not job.get("done")):
                     return {"status": "queued", "job_id": str(job["id"])}
+            running = sum(
+                1 for job in self.__jobs.values()
+                if job.get("owner") == owner and not job.get("done")
+            )
+            if running >= self.MAX_RUNNING_PER_OWNER:
+                return {
+                    "status": "busy",
+                    "http_status": 429,
+                    "payload": {
+                        "message": ("Too many check-ins are running right "
+                                    "now. Please wait a moment and try again."),
+                    },
+                }
             if self.__executor_stopped:
                 raise RuntimeError("Cannot submit check-in after App.close().")
             job_id = uuid.uuid4().hex
@@ -192,7 +202,6 @@ class App:
                 "id": job_id,
                 "owner": owner,
                 "key": fingerprint,
-                "safety_flag": safety_flag,
                 "event": event,
                 "created": time.monotonic(),
                 "done": False,
@@ -206,15 +215,26 @@ class App:
                                    owner, pending_fingerprint, pending_record_id)
         return {"status": "queued", "job_id": job_id}
 
-    def job_status(self, job_id: str, owner: str) -> JSONObject:
+    def job_status(self, job_id: str, owner: str,
+                   wait: float = 0.0) -> JSONObject:
         """The job, only for the session that submitted it.
 
-        The payload is already shaped for the browser: WebController
-        never builds a record or reaches into I/O.
+        When wait > 0 and the job is still running, blocks briefly on
+        the job's threading.Event before checking status again.
         """
         with self.__jobs_lock:
             job = self.__jobs.get(job_id)
         if job is None or not owner or job.get("owner") != owner:
+            return {"status": "not_found", "http_status": 404,
+                    "payload": {"message": ("This check-in has expired. "
+                                            "Please start a new check-in.")}}
+        if wait > 0 and not job.get("done"):
+            event = job.get("event")
+            if isinstance(event, threading.Event):
+                event.wait(min(float(wait), 2.0))
+        with self.__jobs_lock:
+            job = self.__jobs.get(job_id)
+        if job is None:
             return {"status": "not_found", "http_status": 404,
                     "payload": {"message": ("This check-in has expired. "
                                             "Please start a new check-in.")}}
@@ -229,7 +249,14 @@ class App:
                     "payload": {"message": (
                         "We could not complete your check-in right now. "
                         "Your answers are still here; please try again.")}}
-        return outcome
+        return copy.deepcopy(outcome)
+
+    def forget_job(self, job_id: str, owner: str) -> None:
+        """Remove a finished job once its final response has been delivered."""
+        with self.__jobs_lock:
+            job = self.__jobs.get(job_id)
+            if job is not None and job.get("owner") == owner and job.get("done"):
+                self.__jobs.pop(job_id, None)
 
     def wait_for_job(self, job_id: str, timeout: float = 5.0) -> JSONObject:
         """Block until a job ends. Reports running if the timeout expires."""
@@ -266,12 +293,12 @@ class App:
                 self.__submissions.pop(key, None)
 
     def close(self) -> None:
-        """Finish any running check-ins and stop the worker threads."""
+        """Cancel queued check-ins, wait for active workers, and stop threads."""
         with self.__jobs_lock:
             if self.__executor_stopped:
                 return
             self.__executor_stopped = True
-        self.__executor.shutdown(wait=True)
+        self.__executor.shutdown(wait=True, cancel_futures=True)
 
     def admin_records(self, tier: str, cohort_year: str,
                       id_contains: str) -> JSONObject:
@@ -293,16 +320,18 @@ class App:
                 "matching": len(rows),
                 "cohorts": list(self.__data.cohorts(records))}
 
-    def student_history(self, student_id: str) -> JSONObject:
-        """One student's own history page, already shaped for the browser.
+    def student_history(self, student_id: str,
+                        visible: Callable[[str], bool] | None = None
+                        ) -> JSONObject:
+        """One student's history page, already shaped for the browser.
 
-        The file is loaded in full and filtered in memory; only this
-        student's rows are returned. Returns {"ok": True, "history": ...}
+        When visible is supplied, only matching records are included in
+        entries, pending counts, and trends. Returns {"ok": True, ...}
         or {"ok": False, "error": "storage"}.
         """
         try:
             history = self.__data.history_for(
-                student_id, self.__questionnaire.version)
+                student_id, self.__questionnaire.version, visible)
         except OSError:
             return {"ok": False, "error": "storage"}
         trend = self.__logic.trend(history)
@@ -358,13 +387,10 @@ class App:
                     "result": None,
                 }
             fields = analysis["fields"]
-            assert isinstance(fields, dict)
-            finished = CheckInRecord(fields)
-            if pending_id:
-                saved = self.__data.replace_pending_record(
-                    pending_id, finished, opt_in=True)
-            else:
-                saved = self.__data.save(finished, opt_in=True)
+            if not isinstance(fields, dict):
+                raise TypeError("Check-in analysis fields must be a dict.")
+            saved = self.__data.save_checkin(
+                fields, opt_in=True, replace_id=pending_id)
             if not saved.get("ok"):
                 return {
                     "status": "save_failed",
@@ -386,6 +412,7 @@ class App:
                 "http_status": 200,
                 "payload": {"ok": True, "result": page},
                 "student_id": student_id,
+                "record_id": record_id,
                 "saved": True,
                 "pending_id": None,
                 "fingerprint": fingerprint,
@@ -425,8 +452,7 @@ class App:
                     event.set()
 
     def __save_pending(self, record: JSONObject) -> str:
-        pending = PendingRecord({**record, "record_id": uuid.uuid4().hex})
-        saved = self.__data.save(pending, opt_in=True)
+        saved = self.__data.save_pending(record, opt_in=True)
         if not saved.get("ok"):
             self.__logger.warning("Pending check-in could not be saved")
             return ""
@@ -468,9 +494,11 @@ class App:
 if __name__ == "__main__":
     from web_controller import WebController
     application = App()
-    WebController(application, application.flask)
-    application.flask.run(
-        host=os.environ.get("HOST", "127.0.0.1"),
-        port=int(os.environ.get("PORT", "5000")),
-        debug=os.environ.get("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"},
-    )
+    try:
+        WebController(application).run(
+            host=os.environ.get("HOST", "127.0.0.1"),
+            port=int(os.environ.get("PORT", "5000")),
+            debug=os.environ.get("FLASK_DEBUG", "0").lower() in {"1", "true", "yes"},
+        )
+    finally:
+        application.close()

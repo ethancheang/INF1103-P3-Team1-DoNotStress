@@ -6,10 +6,14 @@ import threading
 from collections.abc import Callable
 
 from ai.ai_provider import AIProvider
-from ai.model_chain import DEFAULT_MODEL_CHAIN
 from json_types import JSONObject
 
 type FakeReply = str | Exception | Callable[[str, str], str]
+DEFAULT_MODELS: tuple[str, ...] = (
+    "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-3.5-flash-lite",
+)
 
 
 class FakeProvider(AIProvider):
@@ -22,7 +26,7 @@ class FakeProvider(AIProvider):
     """
 
     def __init__(self, *replies: FakeReply,
-                 models: tuple[str, ...] = DEFAULT_MODEL_CHAIN,
+                 models: tuple[str, ...] = DEFAULT_MODELS,
                  ready: bool = True) -> None:
         super().__init__()
         self.__replies: list[FakeReply] = list(replies) or ["{}"]

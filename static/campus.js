@@ -313,14 +313,15 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
   // The server analyses the check-in on a worker thread; poll until it ends.
   async function waitForResult(url, showProgress) {
     const started=Date.now();
-    let delay=500;
+    let delay=250;
+    const pollUrl=url+(url.includes('?')?'&':'?')+'wait=1.5';
     while(Date.now()-started<180000) {
       await pause(delay);
-      const response=await fetch(url,{cache:'no-store'});
+      const response=await fetch(pollUrl,{cache:'no-store'});
       const data=await response.json();
       if(response.status!==202)return {response,data};
       showProgress(progressText(data.status, Date.now()-started));
-      delay=Math.min(delay+250,2000);
+      delay=Math.min(delay+150,1000);
     }
     return null;
   }

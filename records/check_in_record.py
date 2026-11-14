@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 from json_types import JSONObject, JSONValue
 from records.record import Record
 
@@ -18,7 +20,7 @@ class CheckInRecord(Record):
     BLOCKED_SOURCES: frozenset[str] = frozenset(
         {"logic_fallback", "fallback", "logic_only", "logic"})
     REQUIRED_AI_FIELDS: tuple[str, ...] = (
-        "risk_score", "risk_category", "primary_stressors",
+        "stress_score", "risk_score", "risk_category", "primary_stressors",
         "recommended_support", "confidence", "reasoning",
     )
     CATEGORIES: tuple[str, ...] = ("Low", "Moderate", "High")
@@ -43,6 +45,12 @@ class CheckInRecord(Record):
         return str(self.get("soft_label") or "")
 
     def problem(self) -> str | None:
+        return super().problem() or self.__ai_problem()
+
+    def _mark(self, row: JSONObject) -> None:
+        row.pop("status", None)
+
+    def __ai_problem(self) -> str | None:
         source = str(self.get("source") or "").strip().lower()
         if source in self.BLOCKED_SOURCES:
             return ("Save refused: record is not AI-processed "
@@ -57,12 +65,12 @@ class CheckInRecord(Record):
             return f"Save refused: AI fields missing: {', '.join(missing)}."
         return self.__field_problem()
 
-    def _mark(self, row: JSONObject) -> None:
-        row.pop("status", None)
-
     def __field_problem(self) -> str | None:
+        if not self.__in_range(self.get("stress_score"), 1.0, 5.0):
+            return ("Save refused: stress_score must be a number between "
+                    "1.0 and 5.0.")
         for field in ("risk_score", "confidence"):
-            if not self.__is_probability(self.get(field)):
+            if not self.__in_range(self.get(field), 0.0, 1.0):
                 return (f"Save refused: {field} must be a float between "
                         "0.0 and 1.0.")
         if self.risk_category not in self.CATEGORIES:
@@ -77,7 +85,8 @@ class CheckInRecord(Record):
                 return f"Save refused: {field} must be a string."
         return None
 
-    def __is_probability(self, value: JSONValue) -> bool:
+    def __in_range(self, value: JSONValue, low: float, high: float) -> bool:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return False
-        return 0.0 <= value <= 1.0
+        number = float(value)
+        return math.isfinite(number) and low <= number <= high

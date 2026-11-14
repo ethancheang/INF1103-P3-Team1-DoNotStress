@@ -30,7 +30,7 @@ class SupportPriorityRule(BusinessRule):
                 and self.STRESSOR in stressors)
 
     def apply(self, decision: Decision) -> None:
-        decision.support_priority = True
+        decision.mark_support_priority()
         decision.lead_with(self.TALK_TO_SOMEONE)
         decision.suggest(self.KEEP_SOCIAL_CONTACT)
         decision.note("support_priority: High tier with low social support")

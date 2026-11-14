@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 
 from json_types import JSONObject, JSONValue
@@ -49,12 +50,16 @@ class Record(ABC):
     def score(self) -> float | None:
         """The verified stress score, or None while no score exists."""
 
-    @abstractmethod
     def problem(self) -> str | None:
-        """Why this record may not be saved, or None when it may."""
+        """Checks every record must pass; subclasses call super() first."""
+        if not self.student_id:
+            return "Save refused: student_id is missing."
+        if not self.survey_version:
+            return "Save refused: survey_version is missing."
+        return None
 
     def get(self, key: str) -> JSONValue:
-        return self.__data.get(key)
+        return copy.deepcopy(self.__data.get(key))
 
     def belongs_to(self, student_id: str) -> bool:
         """True only for an exact Student ID match."""
@@ -63,7 +68,7 @@ class Record(ABC):
 
     def to_row(self) -> JSONObject:
         """The row to store, with this record type's status fields set."""
-        row = dict(self.__data)
+        row = copy.deepcopy(self.__data)
         self._mark(row)
         return row
 

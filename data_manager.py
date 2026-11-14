@@ -91,6 +91,21 @@ class DataManager(BaseManager):
         return self.__write(
             row, lambda: self.__storage.replace(clean_id, row))
 
+    def save_checkin(self, fields: JSONObject, *, opt_in: bool = True,
+                     replace_id: str = "") -> JSONObject:
+        """Build and save a finished CheckInRecord (replacing pending if set)."""
+        record = CheckInRecord(fields)
+        clean_id = replace_id.strip()
+        if clean_id:
+            return self.replace_pending_record(clean_id, record, opt_in=opt_in)
+        return self.save(record, opt_in=opt_in)
+
+    def save_pending(self, fields: JSONObject, *,
+                     opt_in: bool = True) -> JSONObject:
+        """Build and save a PendingRecord with a fresh record_id."""
+        pending = PendingRecord({**fields, "record_id": uuid.uuid4().hex})
+        return self.save(pending, opt_in=opt_in)
+
     def load(self) -> list[Record]:
         """Every saved record. [] when nothing has been saved yet.
 
@@ -99,19 +114,17 @@ class DataManager(BaseManager):
         """
         return [self.__to_record(row) for row in self.__storage.load()]
 
-    def query(self, wanted: Callable[[Record], bool]) -> list[Record]:
-        """The saved records for which wanted(record) is True."""
-        return [record for record in self.load() if wanted(record)]
-
     def history_for(self, student_id: str,
-                    survey_version: str | None = None) -> JSONObject:
+                    survey_version: str | None = None,
+                    visible: Callable[[str], bool] | None = None) -> JSONObject:
         """One student's check-ins, oldest first, as a dict.
 
         The whole file is loaded and then filtered in memory. Only an
-        exact Student ID match is returned. Finished check-ins are listed
-        with their scores; pending ones are only counted. When
-        survey_version is given, other questionnaire versions are
-        skipped. Raises OSError when the store cannot be read.
+        exact Student ID match (and matching visible predicate, when
+        given) is returned. Finished check-ins are listed with their
+        scores; pending ones are only counted. When survey_version is
+        given, other questionnaire versions are skipped. Raises OSError
+        when the store cannot be read.
         """
         wanted = student_id.strip()
         finished: list[Record] = []
@@ -121,6 +134,8 @@ class DataManager(BaseManager):
                 continue
             if (survey_version is not None
                     and record.get("survey_version") != survey_version):
+                continue
+            if visible is not None and not visible(record.record_id):
                 continue
             if record.status == "pending":
                 pending += 1

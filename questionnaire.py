@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import math
 import re
+
+import survey
 from json_types import JSONObject
 
 
@@ -38,7 +40,6 @@ class Questionnaire:
         Callers own the instance they get. There is no module-level
         questionnaire singleton.
         """
-        import survey
         return cls(
             survey.VERSION,
             list(survey.QUESTIONS),
@@ -88,10 +89,12 @@ class Questionnaire:
         minimum = int(item["min"])  # type: ignore[arg-type]
         maximum = int(item["max"])  # type: ignore[arg-type]
         step = float(item["step"])  # type: ignore[arg-type]
-        in_range = minimum <= value <= maximum
+        if not math.isfinite(value) or not (minimum <= value <= maximum):
+            return False, (f"Choose {minimum} to {maximum} "
+                           f"in steps of {step:g}.")
         steps = value / step
         on_step = abs(steps - round(steps)) <= 1e-9
-        if not math.isfinite(value) or not in_range or not on_step:
+        if not on_step:
             return False, (f"Choose {minimum} to {maximum} "
                            f"in steps of {step:g}.")
         return True, int(round(value)) if float(step).is_integer() else value
