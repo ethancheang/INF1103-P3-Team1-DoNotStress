@@ -90,7 +90,7 @@ Support contacts are always available, including without an AI result, in the pa
 
 Before submission, the review step says that answers are used to share a few suggestions, while the student ID stays private and anything written in the reflection box is not stored. The server checks reflection text then discards it; only the boolean safety flag remains in a result. Numeric answers are sent for suggestions; the ID and reflection are not. Request bodies must not be logged by a deployment proxy. After a successful check-in the result is shown at `/result`. Session cookies contain only opaque identifiers and a CSRF token, not answers. The in-memory result expires after 30 minutes; the saved file is separate. `/garden` redirects to the home page.
 
-Every completed check-in is saved automatically to `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) through `data_manager`. Reflection text is never stored. A finished AI result is written with `save_record`. If Gemini cannot complete the check-in, the answers are still saved as a pending record and the student is asked to try again; no result page is shown. Refreshing `/result` does not write a second copy.
+Every completed check-in is saved automatically to `data/student_records.json` (or the file named by `DONOTSTRESS_DATA_PATH`) through `DataManager` (in `data_manager.py`), which owns a `JSONStorage` (in `json_storage.py`). `JSONStorage` is the only code that writes the file: it locks each write, writes to a temporary file and then replaces the old one, and backs up a corrupt file before anything overwrites it. Reflection text is never stored. A finished AI result is saved as a `CheckInRecord` with `DataManager.save`. If Gemini cannot complete the check-in, the answers are still saved as a pending record and the student is asked to try again; no result page is shown. Refreshing `/result` does not write a second copy.
 
 This is a single-process local app. A production deployment needs a shared server-side session/record store, authentication and access controls appropriate to student records, and a production server.
 
@@ -108,7 +108,7 @@ This is a single-process local app. A production deployment needs a shared serve
 | --- | --- |
 | `ai_manager.py` | `build_prompt`, `call_api`, `parse_response`, `validate_response` |
 | `logic_manager.py` | `LogicManager.evaluate`, `LogicManager.score`, `LogicManager.route` |
-| `data_manager.py` | `save`, `load`, `query(filter_fn)` |
+| `data_manager.py` | `DataManager.save`, `DataManager.load`, `DataManager.query(filter_fn)` |
 | `io_manager.py` | `display_record`, `display_list`, `display_result` |
 
 ## Tests

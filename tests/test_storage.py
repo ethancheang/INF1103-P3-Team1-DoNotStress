@@ -1,4 +1,4 @@
-"""JSONStorage on its own, plus the dict a save returns."""
+"""JSONStorage on its own, plus the dict DataManager.save() returns."""
 import json
 import tempfile
 import unittest
@@ -6,22 +6,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 from plain_tests import capture_logs, case, function_suite
-import data_manager
+from data_manager import DataManager
 from json_storage import JSONStorage
+from records.pending_record import PendingRecord
 
 
 def test_save_reports_the_stored_row_or_the_error():
     """A save returns a dict: the stored row, or the reason nothing was stored."""
     with tempfile.TemporaryDirectory() as temp:
-        path = str(Path(temp) / "records.json")
-        saved = data_manager.save_pending_record(
-            {"record_id": "abc123", "student_id": "2600001"}, path, opt_in=True)
-        assert saved["ok"] and saved["error"] is None
-        assert saved["record"]["record_id"] == "abc123"
-        assert saved["record"]["student_id"] == "2600001"
-        refused = data_manager.save_pending_record(
-            {"student_id": "2600001"}, path, opt_in=False)
-        assert not refused["ok"] and refused["record"] is None
+        data = DataManager(Path(temp) / "records.json")
+        saved = data.save(PendingRecord(
+            {"record_id": "abc123", "student_id": "2600001"}), opt_in=True)
+        assert saved["ok"] and "error" not in saved
+        assert saved["record_id"] == "abc123"
+        assert saved["row"]["student_id"] == "2600001"
+        refused = data.save(PendingRecord({"student_id": "2600001"}),
+                            opt_in=False)
+        assert not refused["ok"] and "row" not in refused
         assert "opt-in" in refused["error"]
 
 

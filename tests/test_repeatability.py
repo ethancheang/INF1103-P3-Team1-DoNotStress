@@ -13,7 +13,8 @@ import unittest
 from pathlib import Path
 
 import ai_manager
-import data_manager
+from data_manager import DataManager
+from records.check_in_record import CheckInRecord
 from logic_manager import LogicManager
 import main
 from plain_tests import function_suite
@@ -81,12 +82,13 @@ def test_scoring_and_prompt_are_deterministic():
 
 def test_saved_records_load_the_same_every_time():
     with tempfile.TemporaryDirectory() as temp_dir:
-        path = str(Path(temp_dir) / "records.json")
-        assert data_manager.save(_check_in(), path, opt_in=True)["ok"]
-        before = Path(path).read_text(encoding="utf-8")
-        first = data_manager.load(path)
+        path = Path(temp_dir) / "records.json"
+        data = DataManager(path)
+        assert data.save(CheckInRecord(_check_in()), opt_in=True)["ok"]
+        before = path.read_text(encoding="utf-8")
+        first = [record.to_row() for record in data.load()]
         assert len(first) == 1
-        assert data_manager.load(path) == first
+        assert [record.to_row() for record in data.load()] == first
         # Loading never rewrites the file.
         assert Path(path).read_text(encoding="utf-8") == before
 

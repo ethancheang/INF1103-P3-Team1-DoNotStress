@@ -18,7 +18,8 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import ai_manager
-import data_manager
+from data_manager import DataManager
+from records.check_in_record import CheckInRecord
 import logic_manager as lm
 from logic_manager import LogicManager
 from plain_tests import case, function_suite
@@ -495,7 +496,8 @@ def test_risk_score_and_recommended_support_come_from_logic():
 
     # The data layer still accepts the finished record.
     with tempfile.TemporaryDirectory() as temp_dir:
-        saved = data_manager.save_record(result, str(Path(temp_dir) / "records.json"), opt_in=True)
+        data = DataManager(Path(temp_dir) / "records.json")
+        saved = data.save(CheckInRecord(result), opt_in=True)
         assert saved["ok"], saved["error"]
 
 

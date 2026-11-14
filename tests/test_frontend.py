@@ -260,7 +260,7 @@ def test_new_and_expired_result():
 
 def test_save_failure_is_retryable():
     with campus_app() as ctx:
-        with patch('main.data_manager.save_record', return_value={'ok':False}):
+        with patch('data_manager.DataManager.save', return_value={'ok':False}):
             assert post_checkin(ctx).status_code == 500
         assert not ctx.path.exists()
         assert post_checkin(ctx).status_code == 200

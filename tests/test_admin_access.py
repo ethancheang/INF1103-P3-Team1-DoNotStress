@@ -62,7 +62,7 @@ def test_student_is_default_and_navigation_hides_records():
 
 def test_direct_page_redirects_and_api_never_reads_records():
     with admin_app() as ctx:
-        with patch('main.data_manager.load_all_records') as load:
+        with patch('data_manager.DataManager.load') as load:
             response = ctx.client.get('/api/records?student_id=26&role=admin')
             assert response.status_code == 401
             assert 'records' not in response.json
@@ -101,7 +101,7 @@ def test_admin_sees_records_and_new_client_stays_student():
         assert 'Sign out' in text
         assert 'data-nav="records"' in text
         assert 'DoNotStress2026!' not in text
-        with patch('main.data_manager.load_all_records',return_value={'ok':True,'records':[]}):
+        with patch('data_manager.DataManager.load',return_value=[]):
             assert ctx.client.get('/api/records').status_code == 200
         assert ctx.app.test_client().get('/api/records').status_code == 401
 
@@ -118,7 +118,7 @@ def test_admin_keeps_records_from_home_without_signing_in_again():
         records=ctx.client.get('/records')
         assert records.status_code == 200
         assert 'data-nav="records"' in records.get_data(as_text=True)
-        with patch('main.data_manager.load_all_records',return_value={'ok':True,'records':[]}):
+        with patch('data_manager.DataManager.load',return_value=[]):
             assert ctx.client.get('/api/records').status_code == 200
 
 
