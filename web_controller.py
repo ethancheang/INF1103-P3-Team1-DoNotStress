@@ -8,13 +8,16 @@ are private methods and fields on this controller.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
+import math
 import os
 import secrets
 import threading
 import time
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import TYPE_CHECKING
 
 from flask import (Flask, Response, jsonify, redirect, render_template,
@@ -37,11 +40,6 @@ class WebController:
     of the web framework.
     """
 
-    CALM_FAILURE: str = ("We could not complete your check-in right now. "
-                         "Your answers are still here; please try again.")
-    HISTORY_LOCKED: str = (
-        "To keep check-ins private, history is only shown for check-ins "
-        "completed on this device. Complete a check-in here first.")
     HISTORY_COOKIE_NAME: str = "dns_history"
     HISTORY_MAX_AGE: int = 180 * 24 * 60 * 60
     HISTORY_MAX_IDS: int = 24
@@ -52,6 +50,16 @@ class WebController:
     ADMIN_MAX_ATTEMPTS: int = 5
     ADMIN_WINDOW_SECONDS: float = 300
     RESULT_TTL_SECONDS: float = 1800
+    STATUS_CODES: Mapping[str, int] = MappingProxyType({
+        "completed": 200,
+        "queued": 202,
+        "running": 202,
+        "not_found": 404,
+        "busy": 429,
+        "failed": 500,
+        "save_failed": 500,
+        "pending": 503,
+    })
 
     def __init__(self, app: App, flask: Flask | None = None, *,
                  test_config: Mapping[str, object] | None = None) -> None:
@@ -78,7 +86,6 @@ class WebController:
         self.__admin_tokens: dict[str, float] = {}
         self.__admin_attempts: dict[str, list[float]] = {}
         self.__admin_lock: threading.Lock = threading.Lock()
-        flask.extensions["admin_sessions"] = self.__admin_tokens
         self.__register(flask)
 
     @property
@@ -118,9 +125,9 @@ class WebController:
             str(session.get("pending_fingerprint", "")),
             str(session.get("pending_record_id", "")),
         )
-        if int(job.get("http_status") or 0) == 429:
+        if job.get("status") == "busy":
             return jsonify(job.get("payload") or {
-                "message": "Too many check-ins are running right now."}), 429
+                "message": self.__app.status_message("busy")}), 429
         job_id = str(job["job_id"])
         return jsonify(status=job.get("status") or "queued", jobId=job_id,
                        statusUrl=url_for("checkin_status", job_id=job_id)
@@ -129,17 +136,17 @@ class WebController:
     def checkin_status(self, job_id: str) -> ResponseReturnValue:
         """Still working (202), or the check-in's final response."""
         raw_wait = request.args.get("wait", default=0.0, type=float)
-        wait = min(max(raw_wait or 0.0, 0.0), 2.0)
+        wait = (
+            min(max(raw_wait, 0.0), 2.0)
+            if raw_wait is not None and math.isfinite(raw_wait)
+            else 0.0
+        )
         owner = self.__owner_id()
         outcome = self.__app.job_status(job_id, owner, wait=wait)
-        http_status = int(outcome.get("http_status") or 500)
-        if http_status == 202:
+        if self.__http_status(outcome) == 202:
             return jsonify(outcome.get("payload") or {"status": "running",
                                                       "jobId": job_id}), 202
-        response = self.__respond(outcome)
-        if http_status in (200, 500, 503):
-            self.__app.forget_job(job_id, owner)
-        return response
+        return self.__respond(outcome)
 
     def result(self) -> ResponseReturnValue:
         """Refreshing only reads the stored result; nothing is re-saved."""
@@ -185,8 +192,15 @@ class WebController:
         history = page.get("history") or {}
         if (visible is not None and isinstance(history, dict)
                 and not (history.get("entries") or history.get("pending"))):
-            return jsonify(message=self.HISTORY_LOCKED), 403
+            return jsonify(
+                message=self.__app.status_message("history_locked")), 403
         return jsonify(history=history)
+
+    def forget_history(self) -> ResponseReturnValue:
+        """Drop this browser's history access, e.g. on a shared computer."""
+        response = jsonify(ok=True)
+        response.delete_cookie(self.HISTORY_COOKIE_NAME)
+        return response
 
     # --- Admin pages -----------------------------------------------------
 
@@ -303,17 +317,23 @@ class WebController:
             ("/history", "history_page", self.history_page, ("GET",)),
             ("/api/history", "lookup_history", self.lookup_history,
              ("POST",)),
+            ("/api/history/forget", "forget_history", self.forget_history,
+             ("POST",)),
             ("/health", "health", self.health, ("GET",)),
         )
         for rule, endpoint, view, methods in routes:
             flask.add_url_rule(rule, endpoint, view, methods=list(methods))
 
+    def __http_status(self, outcome: JSONObject) -> int:
+        status = str(outcome.get("status") or "")
+        return int(self.STATUS_CODES.get(status, 500))
+
     def __respond(self, outcome: JSONObject) -> Response:
         """Turn a pipeline outcome into the session update and response."""
-        http_status = int(outcome.get("http_status") or 500)
+        http_status = self.__http_status(outcome)
         payload = outcome.get("payload")
         if not isinstance(payload, dict):
-            payload = {"message": self.CALM_FAILURE}
+            payload = {"message": self.__app.status_message("calm_failure")}
         if outcome.get("status") == "save_failed":
             response = jsonify(payload)
             response.status_code = 500
@@ -390,6 +410,7 @@ class WebController:
             "recordsUrl": url_for("saved_records"),
             "historyPageUrl": url_for("history_page"),
             "historyUrl": url_for("lookup_history"),
+            "forgetHistoryUrl": url_for("forget_history"),
         })
 
     def __csrf_token(self) -> str:
@@ -409,7 +430,7 @@ class WebController:
         token = secrets.token_urlsafe(32)
         with self.__results_lock:
             self.__results[token] = {
-                "record": result, "created": time.monotonic()}
+                "record": copy.deepcopy(result), "created": time.monotonic()}
         return token
 
     def __current_result(self) -> JSONObject | None:
@@ -418,10 +439,8 @@ class WebController:
             return None
         with self.__results_lock:
             entry = self.__results.get(str(token))
-        if not entry:
-            return None
-        record = entry.get("record")
-        return record if isinstance(record, dict) else None
+            record = entry.get("record") if entry else None
+            return copy.deepcopy(record) if isinstance(record, dict) else None
 
     def __clear_result(self) -> None:
         token = session.pop("checkin_token", None)
@@ -452,7 +471,7 @@ class WebController:
         if (user != self.ADMIN_USERNAME
                 or len(secret) > self.ADMIN_MAX_PASSWORD_LENGTH):
             # Still hash a dummy value so timing does not leak the username.
-            check_password_hash(expected_hash, secret or "x")
+            check_password_hash(expected_hash, "x")
             return False
         return check_password_hash(expected_hash, secret)
 

@@ -238,7 +238,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       <p>Enter the Student ID you use to check in to see your own past scores, how your latest check-in compares with the one before, and which way things are heading.</p>
       <form id="ds-history-form" class="ds-field" novalidate><label class="ds-label" for="history_id">Student ID</label>
       <div class="ds-history-row"><input class="ds-input" id="history_id" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="e.g. 2605581" value="${escape(historyState.student_id)}"><button class="ds-primary" type="submit">Show my history</button></div>
-      <div class="ds-help">To keep check-ins private, you can only see a Student ID that has checked in on this device.</div></form>
+      <div class="ds-help">To keep check-ins private, you can only see a Student ID that has checked in on this device. <button class="ds-link" type="button" data-action="forget-device">Forget this device</button></div></form>
       <p class="ds-error" role="alert" id="ds-history-error"></p>
       <div id="ds-history-body" aria-live="polite"></div></section>`;
     if(historyState.data)drawHistory();
@@ -394,6 +394,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       case 'back':if(step===0)page='home';else step--;break;
       case 'next':if(!valid())return;if(step<reviewStep)step++;else{button.disabled=true;await submit();return;}break;
       case 'new':location.assign(boot.homeUrl);return;
+      case 'forget-device':{const {response}=await post(boot.forgetHistoryUrl,{});if(response.ok){historyState.student_id='';historyState.data=null;history();}return;}
       case 'see-history':historyState.student_id=answers.student_id.trim();historyState.data=null;historyState.autoload=Boolean(historyState.student_id);page='history';break;
       default:return;
     }

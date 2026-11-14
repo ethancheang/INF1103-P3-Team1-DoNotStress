@@ -214,8 +214,4 @@ SECTIONS = [
             },
 ]
 
-QUESTION_MAP = {str(item["key"]): dict(item) for item in QUESTIONS}
-REVERSED_KEYS = frozenset(
-    str(item["key"]) for item in QUESTIONS if item.get("reverse") is True
-)
 

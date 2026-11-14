@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -36,10 +37,6 @@ class JSONStorage:
         self.__logger: logging.Logger = logging.getLogger(
             "data_manager.storage")
 
-    @property
-    def location(self) -> str:
-        return str(self.__path)
-
     def load(self) -> list[JSONObject]:
         """Every stored row. Raises OSError when the file cannot be used."""
         with self.__lock:
@@ -55,17 +52,33 @@ class JSONStorage:
             rows.append(row)
             self.__write(rows)
 
-    def replace(self, record_id: str, row: JSONObject) -> None:
-        """Replace the row with this record_id, or append when none has it."""
+    def replace(self, record_id: str, row: JSONObject, *,
+                only_if: Callable[[JSONObject], bool] | None = None,
+                preserve: tuple[str, ...] = ()) -> JSONObject | None:
+        """Replace the row with this record_id, or append when none has it.
+
+        Returns a copy of the row as stored. When only_if is supplied and
+        the matching row fails it, the file is left untouched and None is
+        returned so the caller can append a fresh record instead. Fields
+        named in preserve keep their non-empty stored values. The row
+        passed in is never modified.
+        """
         with self.__lock:
             rows, _ = self.__read(backup_corrupt=True)
+            stored = dict(row)
             for index, existing in enumerate(rows):
                 if str(existing.get("record_id") or "").strip() == record_id:
-                    rows[index] = row
+                    if only_if is not None and not only_if(existing):
+                        return None
+                    for field in preserve:
+                        if existing.get(field):
+                            stored[field] = existing[field]
+                    rows[index] = stored
                     break
             else:
-                rows.append(row)
+                rows.append(stored)
             self.__write(rows)
+            return dict(stored)
 
     def __read(self, *, backup_corrupt: bool) -> tuple[list[JSONObject], str | None]:
         """The rows, plus a note when the file is corrupt.

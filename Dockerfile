@@ -25,9 +25,9 @@ USER appuser
 
 EXPOSE 5000
 
-# Verify the Flask web server responds on port 5000
+# Verify the Flask web server responds on /health
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-    CMD ["python", "-c", "import urllib.request as r; r.build_opener(r.ProxyHandler({})).open('http://127.0.0.1:5000/', timeout=4)"]
+    CMD ["python", "-c", "import urllib.request as r; r.build_opener(r.ProxyHandler({})).open('http://127.0.0.1:5000/health', timeout=4)"]
 
 # Start the application via the single OOP entry point (reads HOST=0.0.0.0 and PORT=5000)
 CMD ["python", "main.py"]

@@ -32,9 +32,9 @@ class CheckInRecord(Record):
     @property
     def score(self) -> float | None:
         value = self.get("stress_score")
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if not self.__in_range(value, 1.0, 5.0):
             return None
-        return float(value)
+        return float(value)  # type: ignore[arg-type]
 
     @property
     def risk_category(self) -> str:

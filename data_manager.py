@@ -19,9 +19,10 @@ No terminal I/O (print / input), no AI calls, no business-tier rules.
 from __future__ import annotations
 
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
+from types import MappingProxyType
 
 from base_manager import BaseManager
 from json_storage import JSONStorage
@@ -36,11 +37,11 @@ class DataManager(BaseManager):
 
     DEFAULT_PATH: Path = (Path(__file__).resolve().parent / "data"
                           / "student_records.json")
-    TIER_TO_CATEGORY: dict[str, str] = {
+    TIER_TO_CATEGORY: Mapping[str, str] = MappingProxyType({
         "You're doing ok": "Low",
         "Worth a check-in": "Moderate",
         "Please reach out": "High",
-    }
+    })
     CONSENT_REQUIRED: str = ("Save refused: student opt-in required "
                              "(pass opt_in=True).")
 
@@ -49,11 +50,6 @@ class DataManager(BaseManager):
         resolved = (Path(path) if path is not None and str(path).strip()
                     else self.DEFAULT_PATH)
         self.__storage: JSONStorage = JSONStorage(resolved)
-
-    @property
-    def location(self) -> str:
-        """The records file this manager reads and writes."""
-        return self.__storage.location
 
     def describe(self) -> JSONObject:
         """The storage type only; its path stays out of health checks."""
@@ -77,19 +73,15 @@ class DataManager(BaseManager):
                                *, opt_in: bool) -> JSONObject:
         """Upgrade a pending row to its finished result, keeping its id.
 
-        When no row has that id yet, the finished record is appended.
+        When no row has that id yet, the finished record is appended. If
+        the stored row for record_id is already evaluated (for instance
+        a stale session replay after restart or job TTL expiry), a new
+        record_id is assigned and appended instead of overwriting it.
         """
         clean_id = record_id.strip()
         if not clean_id:
             return {"ok": False, "error": "record_id is required"}
-        if opt_in is not True:
-            return {"ok": False, "error": self.CONSENT_REQUIRED}
-        problem = record.problem()
-        if problem:
-            return {"ok": False, "error": problem}
-        row = self.__stamped(record, clean_id)
-        return self.__write(
-            row, lambda: self.__storage.replace(clean_id, row))
+        return self.__replace_if_pending(clean_id, record, opt_in=opt_in)
 
     def save_checkin(self, fields: JSONObject, *, opt_in: bool = True,
                      replace_id: str = "") -> JSONObject:
@@ -101,10 +93,42 @@ class DataManager(BaseManager):
         return self.save(record, opt_in=opt_in)
 
     def save_pending(self, fields: JSONObject, *,
-                     opt_in: bool = True) -> JSONObject:
-        """Build and save a PendingRecord with a fresh record_id."""
+                     opt_in: bool = True,
+                     replace_id: str = "") -> JSONObject:
+        """Build and save a PendingRecord (updating an existing pending row if set)."""
+        clean_id = replace_id.strip()
+        if clean_id:
+            pending = PendingRecord({**fields, "record_id": clean_id})
+            return self.__replace_if_pending(clean_id, pending, opt_in=opt_in)
         pending = PendingRecord({**fields, "record_id": uuid.uuid4().hex})
         return self.save(pending, opt_in=opt_in)
+
+    def __replace_if_pending(self, clean_id: str, record: Record, *,
+                             opt_in: bool) -> JSONObject:
+        """Replace clean_id only if pending on disk; otherwise append a fresh row.
+
+        saved_at keeps the first attempt's time, also when a pending row is
+        upgraded to a finished check-in. It records when the student
+        answered, which is the date history and trends should show.
+        """
+        if opt_in is not True:
+            return {"ok": False, "error": self.CONSENT_REQUIRED}
+        problem = record.problem()
+        if problem:
+            return {"ok": False, "error": problem}
+        row = self.__stamped(record, clean_id)
+        try:
+            stored = self.__storage.replace(
+                clean_id, row, only_if=self.__is_pending,
+                preserve=("saved_at",))
+        except OSError as error:
+            self.logger.warning("Saving a record failed: %s", error)
+            return {"ok": False, "error": str(error)}
+        if stored is not None:
+            return {"ok": True, "record_id": clean_id, "row": stored}
+        fresh_row = self.__stamped(record, uuid.uuid4().hex)
+        return self.__write(
+            fresh_row, lambda: self.__storage.append(fresh_row))
 
     def load(self) -> list[Record]:
         """Every saved record. [] when nothing has been saved yet.

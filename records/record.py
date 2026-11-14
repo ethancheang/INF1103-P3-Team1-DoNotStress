@@ -20,7 +20,7 @@ class Record(ABC):
 
     def __init__(self, data: JSONObject) -> None:
         self.__data: JSONObject = {
-            key: value for key, value in data.items()
+            key: copy.deepcopy(value) for key, value in data.items()
             if key not in self.PRIVATE_FIELDS}
 
     @property

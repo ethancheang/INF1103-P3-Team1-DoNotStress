@@ -101,7 +101,7 @@ class Questionnaire:
 
     def option_label(self, key: str, value: int) -> str:
         """The word label for a choice answer, e.g. 3 -> "Sometimes"."""
-        item = self.__by_key[key]
+        item = self.question(key)
         options = item.get("options") or ()
         minimum = int(item["min"])  # type: ignore[arg-type]
         index = int(value) - minimum

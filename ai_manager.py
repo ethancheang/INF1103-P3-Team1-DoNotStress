@@ -209,8 +209,7 @@ class AIManager(BaseManager):
         ]
         return "\n".join(lines) + "\n"
 
-    def __call_api(self, prompt: str,
-                   answers: JSONObject | None = None) -> JSONObject:
+    def __call_api(self, prompt: str, answers: JSONObject) -> JSONObject:
         """Try the provider's models in order until a reply is valid.
 
         A missing key stops at once. A timeout or invalid reply gets one
@@ -316,7 +315,7 @@ class AIManager(BaseManager):
             return ERROR_RETRIES_EXHAUSTED
         return ERROR_UNAVAILABLE
 
-    def __attempt(self, prompt: str, model: str, answers: JSONObject | None,
+    def __attempt(self, prompt: str, model: str, answers: JSONObject,
                   attempt: int) -> JSONObject:
         label = f"(attempt {attempt}/{self.__tries_per_model}) model={model}"
         try:
@@ -337,13 +336,11 @@ class AIManager(BaseManager):
                 "detail": detail}
 
     def __check_reply(self, raw: str,
-                      answers: JSONObject | None) -> tuple[bool, JSONValue]:
+                      answers: JSONObject) -> tuple[bool, JSONValue]:
         parsed = self.__parse_response(raw)
         ok, fields = self.__validate_response(raw if parsed is None else parsed)
         if not ok or not isinstance(fields, dict):
             return False, fields
-        if answers is None:
-            return True, fields
         try:
             problem = self.__verify(fields, answers)
         except Exception as error:

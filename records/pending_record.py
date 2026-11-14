@@ -21,9 +21,6 @@ class PendingRecord(Record):
     def score(self) -> float | None:
         return None
 
-    def problem(self) -> str | None:
-        return super().problem()
-
     def _mark(self, row: JSONObject) -> None:
         row["status"] = "pending"
         row["ai_ok"] = False

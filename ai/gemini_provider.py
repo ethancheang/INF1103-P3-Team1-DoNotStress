@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import threading
 
 from google import genai
 
@@ -24,16 +25,19 @@ class GeminiProvider(AIProvider):
         "gemini-3.5-flash-lite",
     )
     TEMPERATURE: float = 0.0
-    TIMEOUT_SEC: float = 30.0
+    TIMEOUT_SEC: float = 20.0
 
     def __init__(self, api_key: str | None = None,
                  preferred_model: str | None = None) -> None:
         super().__init__()
         if api_key is None:
             api_key = os.environ.get("GEMINI_API_KEY", "")
+        if preferred_model is None:
+            preferred_model = os.environ.get("GEMINI_MODEL")
         self.__api_key: str = api_key.strip()
         self.__models: tuple[str, ...] = self.__model_order(preferred_model)
-        self.__client: object | None = None
+        self.__client: genai.Client | None = None
+        self.__client_lock: threading.Lock = threading.Lock()
 
     def __model_order(self, preferred: str | None = None) -> tuple[str, ...]:
         """The preferred model first, then the rest of MODEL_CHAIN, no repeats."""
@@ -83,13 +87,14 @@ class GeminiProvider(AIProvider):
             return text.replace(self.__api_key, "[redacted]")
         return text
 
-    def __get_client(self):
-        if self.__client is None:
-            self.__client = genai.Client(
-                api_key=self.__api_key,
-                http_options={
-                    "timeout": int(self.TIMEOUT_SEC * 1000),
-                    "retry_options": {"attempts": 1},
-                },
-            )
-        return self.__client
+    def __get_client(self) -> genai.Client:
+        with self.__client_lock:
+            if self.__client is None:
+                self.__client = genai.Client(
+                    api_key=self.__api_key,
+                    http_options={
+                        "timeout": int(self.TIMEOUT_SEC * 1000),
+                        "retry_options": {"attempts": 1},
+                    },
+                )
+            return self.__client

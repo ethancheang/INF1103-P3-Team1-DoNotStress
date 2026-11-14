@@ -15,16 +15,15 @@ import copy
 import hashlib
 import json
 import logging
+import math
 import os
 import secrets
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-
-from dotenv import load_dotenv
 
 from ai.ai_provider import AIProvider
 from ai.gemini_provider import GeminiProvider
@@ -35,8 +34,6 @@ from io_manager import IOManager
 from json_types import JSONObject
 from logic_manager import LogicManager
 from questionnaire import Questionnaire
-
-load_dotenv()
 
 
 class App:
@@ -54,8 +51,10 @@ class App:
     DEFAULT_DATA_PATH: Path = ROOT / "data" / "student_records.json"
     MAX_CONTENT_LENGTH: int = 64 * 1024
     JOB_TTL_SECONDS: float = 1800
+    DELIVERED_TTL_SECONDS: float = 60.0
     WORKERS: int = 4
     MAX_RUNNING_PER_OWNER: int = 2
+    MAX_ACTIVE_JOBS: int = 16
 
     def __init__(self, provider: AIProvider | None = None,
                  data_path: Path | str | None = None,
@@ -68,12 +67,19 @@ class App:
         if cfg.get("TESTING"):
             testing = True
         self.__testing: bool = bool(testing)
-        self.__secret_key: str = str(
+        configured_secret = str(
             secret_key
             or cfg.get("SECRET_KEY")
             or os.environ.get("FLASK_SECRET_KEY")
-            or secrets.token_hex(32)
+            or ""
         )
+        if not configured_secret:
+            if not self.__testing:
+                self.__logger.warning(
+                    "FLASK_SECRET_KEY is not set; using an ephemeral secret key."
+                )
+            configured_secret = secrets.token_hex(32)
+        self.__secret_key: str = configured_secret
         configured = (
             str(data_path) if data_path is not None
             else str(cfg.get("DATA_PATH") or os.environ.get("DONOTSTRESS_DATA_PATH") or "")
@@ -83,7 +89,10 @@ class App:
         questionnaire = Questionnaire.from_survey()
         self.__questionnaire = questionnaire
         self.__io: IOManager = IOManager(questionnaire)
-        self.__logic: LogicManager = LogicManager()
+        self.__logic: LogicManager = LogicManager(
+            answer_keys=questionnaire.keys(),
+            reversed_keys=questionnaire.reversed_keys(),
+        )
         delay = (0.0 if testing else 0.5) if ai_retry_delay_sec is None else ai_retry_delay_sec
         self.__ai: AIManager = AIManager(
             provider if provider is not None else self.make_provider(),
@@ -118,12 +127,15 @@ class App:
 
     def health(self) -> JSONObject:
         """Every manager's health summary. Never includes secrets."""
+        managers: tuple[BaseManager, ...] = (
+            self.__io, self.__ai, self.__logic, self.__data
+        )
         return {"status": "ok",
-                "managers": [manager.health() for manager in self.managers]}
+                "managers": [manager.health() for manager in managers]}
 
-    @property
-    def managers(self) -> list[BaseManager]:
-        return [self.__io, self.__ai, self.__logic, self.__data]
+    def status_message(self, key: str) -> str:
+        """Student-facing status wording owned by IOManager."""
+        return self.__io.status_message(key)
 
     def page_config(self) -> JSONObject:
         return self.__io.page_config()
@@ -131,9 +143,10 @@ class App:
     def validate_student_id(self, raw: object) -> tuple[bool, str]:
         return self.__io.validate_student_id(raw)
 
-    def validate_form(self, form) -> JSONObject:
+    def validate_form(self, form: Mapping[str, object]) -> JSONObject:
         """Validate a submitted form. Never reaches into I/O from the web."""
-        values = form if isinstance(form, dict) or hasattr(form, "get") else {}
+        values: Mapping[str, object] = (
+            form if isinstance(form, Mapping) else {})
         raw_text = values.get("feelings_text", "") if values else ""
         safety = self.__io.safety_fired(raw_text)
         ok, payload = self.__io.validate_student_form(values)
@@ -181,18 +194,18 @@ class App:
                 if (job.get("owner") == owner and job.get("key") == fingerprint
                         and not job.get("done")):
                     return {"status": "queued", "job_id": str(job["id"])}
+            active = sum(
+                1 for job in self.__jobs.values() if not job.get("done")
+            )
             running = sum(
                 1 for job in self.__jobs.values()
                 if job.get("owner") == owner and not job.get("done")
             )
-            if running >= self.MAX_RUNNING_PER_OWNER:
+            if (running >= self.MAX_RUNNING_PER_OWNER
+                    or active >= self.MAX_ACTIVE_JOBS):
                 return {
                     "status": "busy",
-                    "http_status": 429,
-                    "payload": {
-                        "message": ("Too many check-ins are running right "
-                                    "now. Please wait a moment and try again."),
-                    },
+                    "payload": {"message": self.__io.status_message("busy")},
                 }
             if self.__executor_stopped:
                 raise RuntimeError("Cannot submit check-in after App.close().")
@@ -222,33 +235,38 @@ class App:
         When wait > 0 and the job is still running, blocks briefly on
         the job's threading.Event before checking status again.
         """
+        timeout = (
+            min(float(wait), 2.0)
+            if isinstance(wait, (int, float))
+            and not isinstance(wait, bool)
+            and math.isfinite(float(wait))
+            and float(wait) > 0.0
+            else 0.0
+        )
         with self.__jobs_lock:
             job = self.__jobs.get(job_id)
-        if job is None or not owner or job.get("owner") != owner:
-            return {"status": "not_found", "http_status": 404,
-                    "payload": {"message": ("This check-in has expired. "
-                                            "Please start a new check-in.")}}
-        if wait > 0 and not job.get("done"):
+            if job is None or not owner or job.get("owner") != owner:
+                return {"status": "not_found",
+                        "payload": {"message": self.__io.status_message("expired")}}
+            done = bool(job.get("done"))
             event = job.get("event")
-            if isinstance(event, threading.Event):
-                event.wait(min(float(wait), 2.0))
+        if timeout > 0.0 and not done and isinstance(event, threading.Event):
+            event.wait(timeout)
         with self.__jobs_lock:
             job = self.__jobs.get(job_id)
-        if job is None:
-            return {"status": "not_found", "http_status": 404,
-                    "payload": {"message": ("This check-in has expired. "
-                                            "Please start a new check-in.")}}
-        if not job.get("done"):
-            return {"status": str(job.get("status") or "running"),
-                    "http_status": 202,
-                    "payload": {"status": job.get("status") or "running",
-                                "jobId": job_id}}
-        outcome = job.get("outcome")
+            if job is None or job.get("owner") != owner:
+                return {"status": "not_found",
+                        "payload": {"message": self.__io.status_message("expired")}}
+            if not job.get("done"):
+                status = str(job.get("status") or "running")
+                return {"status": status,
+                        "payload": {"status": status,
+                                    "jobId": job_id}}
+            job["delivered_at"] = job.get("delivered_at") or time.monotonic()
+            outcome = job.get("outcome")
         if not isinstance(outcome, dict):
-            return {"status": "failed", "http_status": 500,
-                    "payload": {"message": (
-                        "We could not complete your check-in right now. "
-                        "Your answers are still here; please try again.")}}
+            return {"status": "failed",
+                    "payload": {"message": self.__io.status_message("calm_failure")}}
         return copy.deepcopy(outcome)
 
     def forget_job(self, job_id: str, owner: str) -> None:
@@ -259,31 +277,64 @@ class App:
                 self.__jobs.pop(job_id, None)
 
     def wait_for_job(self, job_id: str, timeout: float = 5.0) -> JSONObject:
-        """Block until a job ends. Reports running if the timeout expires."""
+        """Block until a job ends. Reports running if the timeout expires.
+
+        For tests and scripts that need the outcome synchronously; the web
+        flow polls job_status() instead.
+        """
+        wait = (
+            max(0.0, float(timeout))
+            if isinstance(timeout, (int, float))
+            and not isinstance(timeout, bool)
+            and math.isfinite(float(timeout))
+            else 0.0
+        )
         with self.__jobs_lock:
             job = self.__jobs.get(job_id)
-        if job is None:
-            return {"status": "not_found"}
-        event = job.get("event")
+            if job is None:
+                return {"status": "not_found"}
+            event = job.get("event")
+            owner = str(job.get("owner") or "")
         if isinstance(event, threading.Event):
-            finished = event.wait(timeout)
+            finished = event.wait(wait)
             if not finished:
                 return {"status": "running", "job_id": job_id}
-        return self.job_status(job_id, str(job.get("owner") or ""))
+        return self.job_status(job_id, owner)
 
     def expire_jobs(self) -> None:
-        """Forget finished jobs and submission keys older than JOB_TTL_SECONDS."""
-        cutoff = time.monotonic() - self.JOB_TTL_SECONDS
+        """Forget finished jobs and submission keys past their TTL."""
+        now = time.monotonic()
+        cutoff = now - self.JOB_TTL_SECONDS
+        delivered_cutoff = now - self.DELIVERED_TTL_SECONDS
         with self.__jobs_lock:
             self.__jobs = {
                 job_id: job for job_id, job in self.__jobs.items()
-                if not job.get("done") or float(job.get("created") or 0) > cutoff
+                if self.__keep_job(job, cutoff, delivered_cutoff)
             }
         with self.__save_lock:
             self.__submissions = {
                 key: entry for key, entry in self.__submissions.items()
-                if float(entry.get("created") or 0) > cutoff
+                if self.__entry_fresh(entry.get("created"), cutoff)
             }
+
+    @staticmethod
+    def __entry_fresh(timestamp: object, cutoff: float) -> bool:
+        if isinstance(timestamp, (int, float)) and not isinstance(
+                timestamp, bool):
+            return float(timestamp) > cutoff
+        return False
+
+    @classmethod
+    def __keep_job(cls, job: dict[str, object], cutoff: float,
+                   delivered_cutoff: float) -> bool:
+        if not job.get("done"):
+            return True
+        if not cls.__entry_fresh(job.get("created"), cutoff):
+            return False
+        delivered = job.get("delivered_at")
+        if delivered is None:
+            return True
+        return cls.__entry_fresh(delivered, delivered_cutoff)
 
     def forget_submission(self, owner: str) -> None:
         with self.__save_lock:
@@ -291,6 +342,13 @@ class App:
                        if entry.get("owner") == owner]
             for key in to_drop:
                 self.__submissions.pop(key, None)
+        with self.__jobs_lock:
+            done_jobs = [
+                job_id for job_id, job in self.__jobs.items()
+                if job.get("owner") == owner and job.get("done")
+            ]
+        for job_id in done_jobs:
+            self.forget_job(job_id, owner)
 
     def close(self) -> None:
         """Cancel queued check-ins, wait for active workers, and stop threads."""
@@ -362,19 +420,16 @@ class App:
                 fingerprint, owner, pending_fingerprint, pending_record_id)
             if not analysis.get("ok"):
                 safety = record.get("safety_flag") is True
-                record_id = pending_id or self.__save_pending(record)
+                record_id = self.__save_pending(record, replace_id=pending_id)
                 if record_id:
-                    self.__remember(owner, fingerprint, record_id)
+                    self.__remember(owner, fingerprint, record_id, pending=True)
                 code = str(analysis.get("error_code") or "unavailable")
                 error_page = self.__io.display_error(code)
                 advisor = error_page.get("speak_to_advisor")
                 return {
                     "status": "pending",
-                    "http_status": 503,
                     "payload": {
-                        "message": ("We could not complete your check-in "
-                                    "right now. Your answers are still "
-                                    "here; please try again."),
+                        "message": self.__io.status_message("calm_failure"),
                         "error_code": code,
                         "advisor": advisor,
                         "safety_flag": safety,
@@ -394,10 +449,9 @@ class App:
             if not saved.get("ok"):
                 return {
                     "status": "save_failed",
-                    "http_status": 500,
-                    "payload": {"message": (
-                        "We could not save your check-in just now. Your "
-                        "answers are still here; please try again.")},
+                    "payload": {
+                        "message": self.__io.status_message("save_failed"),
+                    },
                     "student_id": student_id,
                     "saved": False,
                     "pending_id": None,
@@ -405,12 +459,11 @@ class App:
                     "result": None,
                 }
             record_id = str(saved.get("record_id") or "")
-            self.__remember(owner, fingerprint, record_id)
+            self.__remember(owner, fingerprint, record_id, pending=False)
             page = self.__io.display_result(fields)
             return {
                 "status": "completed",
-                "http_status": 200,
-                "payload": {"ok": True, "result": page},
+                "payload": {"ok": True, "result": copy.deepcopy(page)},
                 "student_id": student_id,
                 "record_id": record_id,
                 "saved": True,
@@ -433,10 +486,7 @@ class App:
                                   type(error).__name__)
             outcome = {
                 "status": "failed",
-                "http_status": 500,
-                "payload": {"message": (
-                    "We could not complete your check-in right now. "
-                    "Your answers are still here; please try again.")},
+                "payload": {"message": self.__io.status_message("calm_failure")},
                 "student_id": str(record.get("student_id") or ""),
                 "saved": False,
                 "result": None,
@@ -451,8 +501,10 @@ class App:
                 if isinstance(event, threading.Event):
                     event.set()
 
-    def __save_pending(self, record: JSONObject) -> str:
-        saved = self.__data.save_pending(record, opt_in=True)
+    def __save_pending(self, record: JSONObject,
+                       replace_id: str = "") -> str:
+        saved = self.__data.save_pending(
+            record, opt_in=True, replace_id=replace_id)
         if not saved.get("ok"):
             self.__logger.warning("Pending check-in could not be saved")
             return ""
@@ -470,18 +522,21 @@ class App:
     def __match_pending(self, fingerprint: str, owner: str,
                         pending_fingerprint: str,
                         pending_record_id: str) -> str:
+        entry = self.__submissions.get(f"{owner}:{fingerprint}")
+        if entry is not None:
+            if entry.get("pending") is True:
+                return str(entry.get("record_id") or "")
+            return ""
         if pending_fingerprint == fingerprint and pending_record_id:
             return pending_record_id
-        entry = self.__submissions.get(f"{owner}:{fingerprint}")
-        if entry:
-            return str(entry.get("record_id") or "")
         return ""
 
     def __remember(self, owner: str, fingerprint: str,
-                   record_id: str) -> None:
+                   record_id: str, *, pending: bool = True) -> None:
         self.__submissions[f"{owner}:{fingerprint}"] = {
             "owner": owner,
             "record_id": record_id,
+            "pending": pending,
             "created": time.monotonic(),
         }
 
@@ -492,7 +547,10 @@ class App:
 
 
 if __name__ == "__main__":
+    from dotenv import load_dotenv
     from web_controller import WebController
+
+    load_dotenv()
     application = App()
     try:
         WebController(application).run(

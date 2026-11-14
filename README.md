@@ -124,7 +124,12 @@ commit password hashes in source control.
 
 - `GEMINI_API_KEY`: live provider credential. Never commit it.
 - `ADMIN_PASSWORD_HASH`: Werkzeug password hash for admin login at `/admin/login`.
-- `FLASK_SECRET_KEY`: stable Flask session signing secret for deployment.
+- `FLASK_SECRET_KEY`: stable Flask session signing secret. If it is unset the
+  app still starts, with a random key and a logged warning. Every restart then
+  signs everyone out and resets each device's history access, because the
+  history cookie is signed with this key. Set it for any real deployment.
+- `GEMINI_MODEL`: optional model to try first. If it fails, the app falls back
+  through its built-in model chain.
 - `SESSION_COOKIE_SECURE`: set to `1` behind HTTPS.
 - `DONOTSTRESS_DATA_PATH`: optional JSON storage path.
 - `HOST`: Flask bind address, default `127.0.0.1`. Use `0.0.0.0` in Docker.

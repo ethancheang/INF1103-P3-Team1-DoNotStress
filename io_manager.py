@@ -11,6 +11,7 @@ for crisis language and then discarded; only the safety flag remains.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping, Sequence
 
 from base_manager import BaseManager
@@ -177,6 +178,18 @@ STATUS_LABELS: dict[str, str] = {
 RISK_CLASSES: dict[str, str] = {
     "Low": "low", "Moderate": "moderate", "High": "high",
 }
+STATUS_MESSAGES: dict[str, str] = {
+    "busy": ("Too many check-ins are running right now. Please wait a "
+             "moment and try again."),
+    "expired": "This check-in has expired. Please start a new check-in.",
+    "calm_failure": ("We could not complete your check-in right now. "
+                     "Your answers are still here; please try again."),
+    "save_failed": ("We could not save your check-in just now. Your "
+                    "answers are still here; please try again."),
+    "history_locked": (
+        "To keep check-ins private, history is only shown for check-ins "
+        "completed on this device. Complete a check-in here first."),
+}
 
 
 class IOManager(BaseManager):
@@ -311,11 +324,11 @@ class IOManager(BaseManager):
                     continue
                 category = str(raw.get("risk_category") or "")
                 label = str(raw.get("soft_label") or "")
-                score = raw.get("stress_score")
-                if isinstance(score, bool) or not isinstance(score, (int, float)):
-                    score_value: JSONValue = None
-                else:
-                    score_value = float(score)
+                score = self.__number(raw.get("stress_score"))
+                score_value: JSONValue = (
+                    score if score is not None and 1.0 <= score <= 5.0
+                    else None
+                )
                 entries.append({
                     "saved_at": str(raw.get("saved_at") or ""),
                     "score": score_value,
@@ -323,7 +336,8 @@ class IOManager(BaseManager):
                     "risk": RISK_CLASSES.get(category, "unknown"),
                     "status": str(raw.get("status") or "evaluated"),
                 })
-                latest_category = category
+                if category in RISK_CLASSES:
+                    latest_category = category
         high = latest_category == "High"
         direction = str(trend.get("direction") or "") if isinstance(trend, dict) else ""
         needs_support = high or direction == "building"
@@ -332,7 +346,9 @@ class IOManager(BaseManager):
         pending = 0
         student_id = ""
         if isinstance(history, dict):
-            pending = int(history.get("pending_count") or 0)
+            raw_pending = history.get("pending_count")
+            if isinstance(raw_pending, int) and not isinstance(raw_pending, bool):
+                pending = max(0, raw_pending)
             student_id = str(history.get("student_id") or "")
         return {
             "student_id": student_id,
@@ -413,15 +429,23 @@ class IOManager(BaseManager):
         """The questionnaire as the browser needs it."""
         return self.__questionnaire.public_config()
 
+    def status_message(self, key: str) -> str:
+        """Student-facing status message for async jobs and history access."""
+        return STATUS_MESSAGES.get(key, STATUS_MESSAGES["calm_failure"])
+
     def __trend_summary(self, trend: JSONObject) -> JSONObject:
         comparison = str(trend.get("comparison") or "none")
         direction = str(trend.get("direction") or "not_enough")
         change = trend.get("change")
         amount = ""
-        if isinstance(change, bool):
+        if isinstance(change, bool) or not isinstance(change, (int, float)):
             change = None
-        elif isinstance(change, (int, float)):
-            amount = f"{abs(float(change)):.2f}"
+        else:
+            numeric_change = float(change)
+            if math.isfinite(numeric_change):
+                amount = f"{abs(numeric_change):.2f}"
+            else:
+                change = None
         headline = COMPARISON_COPY.get(comparison, COMPARISON_COPY["none"])
         detail = DIRECTION_COPY.get(direction, DIRECTION_COPY["not_enough"])
         return {
@@ -465,7 +489,8 @@ class IOManager(BaseManager):
     def __number(self, value: JSONValue) -> float | None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None
-        return float(value)
+        number = float(value)
+        return number if math.isfinite(number) else None
 
     def __strings(self, value: JSONValue) -> list[str]:
         if not isinstance(value, list):

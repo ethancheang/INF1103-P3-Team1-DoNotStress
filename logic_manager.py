@@ -13,13 +13,14 @@ No terminal I/O, no Gemini calls, no file I/O, no student-facing copy.
 
 from __future__ import annotations
 
+import copy
 import math
 
 from base_manager import BaseManager
 from json_types import JSONObject, JSONValue
 from logic.business_rule import BusinessRule
 from logic.context_flag_rule import ContextFlagRule
-from logic.decision import Decision
+from logic.decision import TIERS, Decision
 from logic.safety_override_rule import SafetyOverrideRule
 from logic.support_priority_rule import SupportPriorityRule
 
@@ -52,7 +53,9 @@ CATEGORY_LABELS: dict[str, str] = {
     "High": "Please reach out",
 }
 CATEGORY_PROMINENCE: dict[str, str] = {
-    "Low": "low", "Moderate": "medium", "High": "high",
+    "Low": "low",
+    "Moderate": "medium",
+    "High": "high",
 }
 RECOMMENDED_SUPPORT: dict[str, str] = {
     "Low": "Continue healthy habits and routine self-care check-ins.",
@@ -106,8 +109,12 @@ class LogicManager(BaseManager):
         "primary_stressors", "tips", "reasoning", "confidence",
     )
 
-    def __init__(self, rules: tuple[BusinessRule, ...] | None = None) -> None:
+    def __init__(self, rules: tuple[BusinessRule, ...] | None = None, *,
+                 answer_keys: tuple[str, ...] = ANSWER_KEYS,
+                 reversed_keys: tuple[str, ...] = REVERSED_KEYS) -> None:
         super().__init__("logic_manager")
+        if not answer_keys:
+            raise ValueError("answer_keys must not be empty.")
         if rules is None:
             rules = (
                 SafetyOverrideRule(),
@@ -115,6 +122,8 @@ class LogicManager(BaseManager):
                 ContextFlagRule(),
             )
         self.__rules: tuple[BusinessRule, ...] = tuple(rules)
+        self.__answer_keys: tuple[str, ...] = tuple(answer_keys)
+        self.__reversed_keys: tuple[str, ...] = tuple(reversed_keys)
 
     @property
     def rules(self) -> tuple[BusinessRule, ...]:
@@ -128,7 +137,7 @@ class LogicManager(BaseManager):
         return {
             "rule_version": self.RULE_VERSION,
             "scale": f"{SCALE_MIN}-{SCALE_MAX}",
-            "answer_count": len(ANSWER_KEYS),
+            "answer_count": len(self.__answer_keys),
             "tolerance": TOLERANCE,
             "rules": list(self.rule_names),
         }
@@ -139,7 +148,7 @@ class LogicManager(BaseManager):
         App injects this into AIManager so the same rules appear in the
         prompt and in verify().
         """
-        reversed_keys = ", ".join(REVERSED_KEYS)
+        reversed_keys = ", ".join(self.__reversed_keys)
         sleep_bands = ", ".join(
             f"{hours:g} or more{' hours' if index == 0 else ''} -> {value}"
             for index, (hours, value) in enumerate(SLEEP_HOUR_BANDS))
@@ -154,7 +163,7 @@ class LogicManager(BaseManager):
             f"{sleep_bands}, otherwise {SLEEP_HOURS_BELOW_ALL}.\n"
             f"- Every other answer is already on the {scale} scale. Use "
             "the number as answered.\n"
-            f"stress_score is the mean of those {len(ANSWER_KEYS)} "
+            f"stress_score is the mean of those {len(self.__answer_keys)} "
             "converted values, rounded to 2 decimal places. Higher stress "
             "is worse.\n"
             "Then set the tier from that stress_score:\n"
@@ -180,7 +189,7 @@ class LogicManager(BaseManager):
         """
         if not isinstance(ai_fields, dict) or not isinstance(answers, dict):
             return "verify needs the AI fields and the answers as dicts."
-        unusable = [key for key in ANSWER_KEYS
+        unusable = [key for key in self.__answer_keys
                     if not self.__scorable(key, answers.get(key))]
         if unusable:
             return (f"Cannot convert {', '.join(unusable)} onto the 1-5 "
@@ -188,19 +197,15 @@ class LogicManager(BaseManager):
         gemini_score = self.__number(ai_fields.get("stress_score"))
         if gemini_score is None:
             return "stress_score must be a number."
-        expected = self.__category_for(gemini_score)
-        if ai_fields.get("risk_category") != expected:
-            return (f"risk_category must be {expected} for stress_score "
-                    f"{gemini_score}.")
-        if ai_fields.get("soft_label") != CATEGORY_LABELS[expected]:
-            return "soft_label must match risk_category."
-        if ai_fields.get("speak_prominence") != CATEGORY_PROMINENCE[expected]:
-            return "speak_prominence must match risk_category."
+        tier_problems = self.__tier_problems(ai_fields, gemini_score)
+        if tier_problems:
+            return tier_problems[0][1]
         if ai_fields.get("scored_items") != self.__scored_items(answers):
             return "scored_items does not match the converted answers."
         logic_score = self.__mean_stress_score(answers)
         if not self.__within_tolerance(gemini_score, logic_score):
-            return ("stress_score must match the mean of the 11 converted "
+            return (f"stress_score must match the mean of the "
+                    f"{len(self.__answer_keys)} converted "
                     f"answers (expected {logic_score}).")
         return None
 
@@ -217,7 +222,7 @@ class LogicManager(BaseManager):
         """
         if not isinstance(record, dict):
             return self.__error_result(
-                {}, list(self.REQUIRED_AI_FIELDS + ANSWER_KEYS), ["record"])
+                {}, list(self.REQUIRED_AI_FIELDS + self.__answer_keys), ["record"])
         missing, invalid = self.__field_problems(record)
         if missing or invalid:
             return self.__error_result(record, missing, invalid)
@@ -229,6 +234,12 @@ class LogicManager(BaseManager):
         logic_score = float(card["stress_score"])  # type: ignore[arg-type]
         if not self.__within_tolerance(gemini_score, logic_score):
             return self.__mismatch_result(record, gemini_score, logic_score)
+
+        tier_invalid = [
+            field for field, _ in self.__tier_problems(record, gemini_score)
+        ]
+        if tier_invalid:
+            return self.__error_result(record, [], tier_invalid)
 
         flags = card["context_flags"]
         decision = Decision(record, flags)  # type: ignore[arg-type]
@@ -265,13 +276,13 @@ class LogicManager(BaseManager):
         This never imports a history type from Data.
         """
         scores: list[float] = []
-        raw_rows: list[ object ] | None = None
+        raw_rows: list[object] | None = None
         if isinstance(history, dict):
             raw_scores = history.get("scores")
             if isinstance(raw_scores, list):
                 for item in raw_scores:
                     number = self.__number(item)
-                    if number is not None:
+                    if number is not None and SCALE_MIN <= number <= SCALE_MAX:
                         scores.append(round(number, 2))
             if not scores and isinstance(history.get("records"), list):
                 raw_rows = history.get("records")  # type: ignore[assignment]
@@ -285,7 +296,7 @@ class LogicManager(BaseManager):
                         or str(row.get("status") or "").lower() == "pending"):
                     continue
                 number = self.__number(row.get("stress_score"))
-                if number is not None:
+                if number is not None and SCALE_MIN <= number <= SCALE_MAX:
                     scores.append(round(number, 2))
         if not scores:
             return {
@@ -313,7 +324,7 @@ class LogicManager(BaseManager):
         """Sleep hours converted; positively worded items as 6 - answer."""
         if key == SLEEP_KEY:
             return self.__sleep_hours_stress(answer)
-        if key in REVERSED_KEYS:
+        if key in self.__reversed_keys:
             return (SCALE_MIN + SCALE_MAX) - answer
         return answer
 
@@ -326,7 +337,7 @@ class LogicManager(BaseManager):
     def __scored_items(self, answers: JSONObject) -> dict[str, int]:
         """The answers on the 1-5 stress scale: what Gemini must return."""
         return {key: int(self.__scored_value(key, self.__require_number(answers, key)))
-                for key in ANSWER_KEYS}
+                for key in self.__answer_keys}
 
     def __mean_stress_score(self, answers: JSONObject) -> float:
         items = self.__scored_items(answers)
@@ -392,15 +403,61 @@ class LogicManager(BaseManager):
             return SLEEP_HOURS_MIN <= number <= SLEEP_HOURS_MAX
         return SCALE_MIN <= number <= SCALE_MAX
 
+    def __tier_problems(self, fields: JSONObject,
+                        score: float) -> list[tuple[str, str]]:
+        """Tier fields that disagree with the tier of the given score.
+
+        Callers pass Gemini's own stress_score on purpose: Gemini's result
+        is the result and Logic only audits it. The score is separately
+        required to be within TOLERANCE of the formula. Every item is an
+        integer, so each mean is k/11 and no score within 0.01 of the
+        formula can sit on the other side of a tier boundary.
+        """
+        expected = self.__category_for(score)
+        checks = (
+            ("risk_category", expected,
+             f"risk_category must be {expected} for stress_score {score}."),
+            ("soft_label", CATEGORY_LABELS[expected],
+             "soft_label must match risk_category."),
+            ("speak_prominence", CATEGORY_PROMINENCE[expected],
+             "speak_prominence must match risk_category."),
+        )
+        return [
+            (field, message)
+            for field, want, message in checks
+            if fields.get(field) != want
+        ]
+
     def __field_problems(self, record: JSONObject
                          ) -> tuple[list[str], list[str]]:
-        needed = self.REQUIRED_AI_FIELDS + ANSWER_KEYS
+        needed = self.REQUIRED_AI_FIELDS + self.__answer_keys
         missing = [key for key in needed if key not in record]
-        numbers = ("stress_score",) + ANSWER_KEYS
+        numbers = ("stress_score",) + self.__answer_keys
         invalid = [key for key in numbers if key in record and
                    not self.__answer_in_range(key, record[key])]
         invalid += [key for key in ("tips", "primary_stressors")
                     if key in record and not isinstance(record[key], list)]
+        if "confidence" in record:
+            conf = (None if isinstance(record["confidence"], bool)
+                    else self.__number(record["confidence"]))
+            if conf is None or not (0.0 <= conf <= 1.0):
+                invalid.append("confidence")
+        if ("risk_category" in record and (
+                not isinstance(record["risk_category"], str)
+                or record["risk_category"] not in TIERS)):
+            invalid.append("risk_category")
+        if ("soft_label" in record and (
+                not isinstance(record["soft_label"], str)
+                or record["soft_label"] not in CATEGORY_LABELS.values())):
+            invalid.append("soft_label")
+        if ("speak_prominence" in record and (
+                not isinstance(record["speak_prominence"], str)
+                or record["speak_prominence"] not in CATEGORY_PROMINENCE.values())):
+            invalid.append("speak_prominence")
+        if ("reasoning" in record and (
+                not isinstance(record["reasoning"], str)
+                or not record["reasoning"].strip())):
+            invalid.append("reasoning")
         return missing, invalid
 
     def __error_result(self, record: JSONObject, missing: list[str],
@@ -431,7 +488,7 @@ class LogicManager(BaseManager):
         return result
 
     def __without_reflection(self, record: JSONObject) -> JSONObject:
-        return {key: value for key, value in record.items()
+        return {key: copy.deepcopy(value) for key, value in record.items()
                 if key not in ("feelings_text", "reflection")}
 
     def __compare(self, latest: float, previous: float) -> str:

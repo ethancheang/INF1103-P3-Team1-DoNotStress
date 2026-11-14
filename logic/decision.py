@@ -30,7 +30,7 @@ class Decision:
     def __init__(self, record: JSONObject,
                  context_flags: dict[str, bool]) -> None:
         self.__record: JSONObject = {
-            key: value for key, value in record.items()
+            key: copy.deepcopy(value) for key, value in record.items()
             if key not in PRIVATE_FIELDS}
         self.__context_flags: dict[str, bool] = dict(context_flags)
         self.__risk_category: str = str(record.get("risk_category", ""))
@@ -128,10 +128,10 @@ class Decision:
         never pushed out by the cap.
         """
         ordered: list[str] = []
-        for tip_id in self.__lead_tips + self.__gemini_tips:
+        for tip_id in self.lead_tips + self.gemini_tips:
             if tip_id not in ordered:
                 ordered.append(tip_id)
-        for tip_id in self.__extra_tips:
+        for tip_id in self.extra_tips:
             if len(ordered) >= max_tips:
                 break
             if tip_id not in ordered:
