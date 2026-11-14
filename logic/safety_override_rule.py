@@ -11,6 +11,10 @@ class SafetyOverrideRule(BusinessRule):
 
     "Talk to someone" leads the tips. The stress score is never changed,
     and the reflection text itself is never seen here.
+
+    "High", "Please reach out" and "high" must match the High tier in
+    logic_manager. This file does not import logic_manager (that import
+    would be circular).
     """
 
     TALK_TO_SOMEONE: str = "talk_to_someone"

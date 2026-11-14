@@ -274,6 +274,29 @@ def test_output_contract():
     assert "feelings_text" not in result
 
 
+def test_reflection_never_leaves_logic():
+    record = _enriched()
+    record["feelings_text"] = "private feelings"
+    record["reflection"] = "private reflection"
+    result = LOGIC.evaluate(record)
+    assert "feelings_text" not in result
+    assert "reflection" not in result
+    assert record["reflection"] == "private reflection"
+
+    mismatch = _with_gemini_score(dict(record), 4.9)
+    mismatch_result = LOGIC.evaluate(mismatch)
+    assert not mismatch_result["ok"]
+    assert "reflection" not in mismatch_result
+    assert "feelings_text" not in mismatch_result
+
+    broken = dict(record)
+    del broken["tips"]
+    error = LOGIC.evaluate(broken)
+    assert not error["ok"]
+    assert "reflection" not in error
+    assert "feelings_text" not in error
+
+
 def test_input_is_not_mutated():
     record = _enriched()
     snapshot = json.dumps(record, sort_keys=True)
@@ -574,6 +597,40 @@ def test_rules_can_be_swapped_without_changing_evaluate():
     assert "workload_chunks" not in no_rules.evaluate(record)["tips"]
     flags_only = LogicManager(rules=(ContextFlagRule(),))
     assert "workload_chunks" in flags_only.evaluate(record)["tips"]
+    high = {"risk_category": "High",
+            "primary_stressors": ["low_social_support"]}
+    assert LOGIC.needs_support_priority(high)
+    assert flags_only.needs_support_priority(high) is False
+
+
+def test_needs_support_priority_asks_the_composed_rule_not_a_new_one():
+    """The composed instance is asked. A fresh SupportPriorityRule() is not."""
+    from logic.decision import Decision
+    from logic.support_priority_rule import SupportPriorityRule
+
+    class Always(SupportPriorityRule):
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def applies(self, decision: Decision) -> bool:
+            self.calls += 1
+            return True
+
+    class Never(SupportPriorityRule):
+        def applies(self, decision: Decision) -> bool:
+            return False
+
+    moderate = {"risk_category": "Moderate", "primary_stressors": []}
+    assert SupportPriorityRule().applies(Decision(moderate, {})) is False
+
+    always = Always()
+    manager = LogicManager(rules=(always,))
+    assert manager.needs_support_priority(moderate) is True
+    assert always.calls == 1
+
+    never = Never()
+    assert LogicManager(rules=(never, always)).needs_support_priority(moderate) is False
+    assert always.calls == 1
 
 
 def load_tests(loader, tests, pattern):

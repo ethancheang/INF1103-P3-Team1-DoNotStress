@@ -192,8 +192,8 @@ class LogicManager(BaseManager):
     """Audits Gemini's score, runs the business rules, and reads trends.
 
     The three policy rules are created here and belong to this manager
-    (composition). Pass a different tuple of rules to change the policy
-    without editing evaluate().
+    (composition). Pass a different tuple of rules to change evaluate()
+    and needs_support_priority() without editing those methods.
     """
 
     def __init__(self, rules: tuple[BusinessRule, ...] | None = None) -> None:
@@ -202,7 +202,6 @@ class LogicManager(BaseManager):
             rules = (SafetyOverrideRule(), SupportPriorityRule(),
                      ContextFlagRule())
         self.__rules: tuple[BusinessRule, ...] = tuple(rules)
-        self.__support_rule: SupportPriorityRule = SupportPriorityRule()
 
     @property
     def rules(self) -> tuple[BusinessRule, ...]:
@@ -238,7 +237,9 @@ class LogicManager(BaseManager):
           factor_insights     the four factor cards for the result page
           risk_score          (stress_score - 1) / 4, kept for compatibility
           recommended_support short internal note for the final tier
-        feelings_text is removed.
+        feelings_text and reflection are removed. verify() is what rejects
+        a non-integer Likert answer; evaluate() only checks that numbers
+        are in range, because verify() has already run in the AI retry.
 
         On missing or unusable fields, returns an error dict:
           {"ok": False, "error": "ai_fields_required", "missing": [...],
@@ -261,8 +262,7 @@ class LogicManager(BaseManager):
             rule.run(decision)
         decision.finalise_tips()
 
-        enriched = dict(record)
-        enriched.pop("feelings_text", None)
+        enriched = self.__copy_without_private(record)
         enriched.update({
             "ok": True,
             "error": None,
@@ -471,13 +471,29 @@ class LogicManager(BaseManager):
         }
 
     def needs_support_priority(self, record: dict[str, Any]) -> bool:
-        """True when Gemini rated the check-in High AND named low social support.
+        """True when the composed SupportPriorityRule applies to this record.
 
-        Asks SupportPriorityRule, so the condition is written only once.
+        Uses the SupportPriorityRule inside self.__rules, so a different
+        rules tuple changes this check as well as evaluate(). Returns
+        False when that rule was not composed.
         """
         if not isinstance(record, dict):
             return False
-        return self.__support_rule.applies(Decision(record, {}))
+        rule = self.__composed_support_rule()
+        if rule is None:
+            return False
+        return rule.applies(Decision(record, {}))
+
+    def __composed_support_rule(self) -> SupportPriorityRule | None:
+        """The first SupportPriorityRule in self.__rules, or None.
+
+        Never builds a new SupportPriorityRule. evaluate() runs the rules
+        in this same order, so this is the support rule that policy uses.
+        """
+        for rule in self.__rules:
+            if isinstance(rule, SupportPriorityRule):
+                return rule
+        return None
 
     # --- Trend --------------------------------------------------------------
 
@@ -612,8 +628,7 @@ class LogicManager(BaseManager):
         Pass through the original fields without adding soft outcomes.
         Callers must treat ok=False as a hard stop, not a fallback engine.
         """
-        result = dict(record) if isinstance(record, dict) else {}
-        result.pop("feelings_text", None)
+        result = self.__copy_without_private(record)
         result["ok"] = False
         result["error"] = ERROR_AI_FIELDS_REQUIRED
         result["missing"] = list(missing)
@@ -634,8 +649,7 @@ class LogicManager(BaseManager):
         Gemini's score disagrees with the answers. No outcome is produced; the
         caller treats this like any other AI failure.
         """
-        result = dict(record)
-        result.pop("feelings_text", None)
+        result = self.__copy_without_private(record)
         result.update({
             "ok": False,
             "error": ERROR_SCORE_MISMATCH,
@@ -647,6 +661,15 @@ class LogicManager(BaseManager):
             ),
         })
         return result
+
+    def __copy_without_private(self, record: dict[str, Any]) -> dict[str, Any]:
+        """A shallow copy with feelings_text and reflection removed."""
+        if not isinstance(record, dict):
+            return {}
+        hidden = Decision.PRIVATE_FIELDS
+        return {
+            key: value for key, value in record.items() if key not in hidden
+        }
 
     def __field_problems(self, record: dict[str, Any]) -> tuple[list[str], list[str]]:
         """

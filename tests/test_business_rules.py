@@ -40,6 +40,13 @@ def test_a_decision_starts_as_exactly_what_gemini_said():
     assert decision.tips == ["short_breaks", "rest_a_little_more"]
 
 
+def test_decision_never_exposes_the_reflection():
+    decision = _decision(feelings_text="private", reflection="also private")
+    assert decision.field("feelings_text") is None
+    assert decision.field("reflection") is None
+    assert decision.field("risk_category") == "Moderate"
+
+
 def test_safety_override_only_fires_on_a_true_flag():
     assert not SafetyOverrideRule().applies(_decision(safety_flag="yes"))
     decision = _decision(safety_flag=True)

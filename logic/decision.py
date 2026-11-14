@@ -8,17 +8,21 @@ from json_types import JSONObject, JSONValue
 class Decision:
     """Gemini's tier and tips, adjusted rule by rule.
 
-    It starts as exactly what Gemini returned. Rules may raise the tier,
-    lead with a tip, suggest extra tips and add notes. They cannot
-    overwrite the tip list directly: finalise_tips() builds it once the
-    rules have run.
+    It starts as exactly what Gemini returned, with the reflection
+    already removed. Rules may raise the tier, lead with a tip, suggest
+    extra tips and add notes. They cannot overwrite the tip list
+    directly: finalise_tips() builds it once the rules have run.
     """
 
     MAX_TIPS: int = 4
+    # Same private fields Record strips. A rule must never read the reflection.
+    PRIVATE_FIELDS: tuple[str, ...] = ("feelings_text", "reflection")
 
     def __init__(self, record: JSONObject,
                  context_flags: dict[str, bool]) -> None:
-        self.__record: JSONObject = record
+        self.__record: JSONObject = {
+            key: value for key, value in record.items()
+            if key not in self.PRIVATE_FIELDS}
         self.__context_flags: dict[str, bool] = dict(context_flags)
         self.__risk_category: str = str(record.get("risk_category", ""))
         self.__soft_label: str = str(record.get("soft_label", ""))
@@ -32,7 +36,7 @@ class Decision:
         self.__support_priority: bool = False
 
     def field(self, name: str) -> JSONValue:
-        """A field of the AI-enriched check-in, exactly as Gemini sent it."""
+        """A field of the AI-enriched check-in. The reflection is never here."""
         return self.__record.get(name)
 
     @property
