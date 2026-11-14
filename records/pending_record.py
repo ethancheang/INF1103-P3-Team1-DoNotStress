@@ -1,4 +1,4 @@
-"""A check-in whose answers were kept while the AI step could not finish."""
+"""Answers saved for follow-up after a Gemini failure or mismatch."""
 
 from __future__ import annotations
 

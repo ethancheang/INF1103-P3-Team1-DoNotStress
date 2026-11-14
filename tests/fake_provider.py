@@ -1,4 +1,4 @@
-"""A scripted stand-in for Gemini. Lives in tests/ so the app never ships it."""
+"""A scripted stand-in for Gemini, used only by the automated tests."""
 
 from __future__ import annotations
 
@@ -6,11 +6,10 @@ import threading
 from collections.abc import Callable
 
 from ai.ai_provider import AIProvider
+from ai.model_chain import DEFAULT_MODEL_CHAIN
 from json_types import JSONObject
 
 type FakeReply = str | Exception | Callable[[str, str], str]
-
-DEFAULT_MODELS: tuple[str, ...] = ("fake-model",)
 
 
 class FakeProvider(AIProvider):
@@ -19,10 +18,11 @@ class FakeProvider(AIProvider):
     A reply is raw text, an exception to raise, or a function of
     (prompt, model_name) that returns raw text. Replies are used in order
     and the last one repeats. The running app never selects this class.
+    It does not import GeminiProvider.
     """
 
     def __init__(self, *replies: FakeReply,
-                 models: tuple[str, ...] = DEFAULT_MODELS,
+                 models: tuple[str, ...] = DEFAULT_MODEL_CHAIN,
                  ready: bool = True) -> None:
         super().__init__()
         self.__replies: list[FakeReply] = list(replies) or ["{}"]

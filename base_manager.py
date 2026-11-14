@@ -1,9 +1,4 @@
-"""DoNotStress — shared parent of the four managers.
-
-AIManager, LogicManager, DataManager and IOManager each inherit a name, a
-logger and a health summary from BaseManager. Their domain behaviour stays
-in the subclasses; this class deliberately holds nothing else.
-"""
+"""Shared parent of the four managers (IO, AI, Logic, Data)."""
 
 from __future__ import annotations
 

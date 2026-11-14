@@ -1,4 +1,4 @@
-"""A check-in that Gemini analysed and Logic accepted."""
+"""A finished check-in with a verified score, tier and tips."""
 
 from __future__ import annotations
 

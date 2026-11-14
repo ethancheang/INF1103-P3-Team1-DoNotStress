@@ -1,4 +1,4 @@
-"""The shared shape of every saved check-in."""
+"""The shared shape of every saved check-in row."""
 
 from __future__ import annotations
 

@@ -293,3 +293,26 @@ body{margin:0;padding:0;min-height:100vh;background:light-dark(#f7f8f2,#19221e);
 #dns-campus .ds-foot-contacts{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;align-items:center;gap:.55rem;max-width:40rem}
 #dns-campus .ds-foot-contacts li,#dns-campus .ds-foot-crisis,#dns-campus .ds-foot-note{margin:0;color:var(--ds-sub);font-size:clamp(.78rem,2vw,.9rem);line-height:1.55}
 #dns-campus .ds-foot-crisis,#dns-campus .ds-foot-note{max-width:42rem}
+
+/* Student stress history: trend card, line chart and past check-ins. */
+#dns-campus .ds-history{max-width:52rem}
+#dns-campus .ds-history-row{display:flex;gap:.75rem;flex-wrap:wrap;align-items:stretch}
+#dns-campus .ds-history-row .ds-input{flex:1 1 12rem;width:auto}
+#dns-campus .ds-trend{padding:22px;border-radius:20px;background:var(--ds-lilac);margin:20px 0}
+#dns-campus .ds-trend[data-direction=easing]{background:light-dark(#e5f1e7,#294434)}
+#dns-campus .ds-trend[data-direction=building]{background:light-dark(#fbe3de,#4e302e)}
+#dns-campus .ds-trend strong{display:block;font-size:20px;line-height:1.35;margin:8px 0 6px}
+#dns-campus .ds-trend p{margin:0 0 6px}
+#dns-campus .ds-trend-score{font-variant-numeric:tabular-nums}
+#dns-campus .ds-history-chart{margin:20px 0;padding:14px;border:1px solid var(--ds-line);border-radius:18px;background:var(--ds-panel)}
+#dns-campus .ds-history-chart svg{display:block;width:100%;height:auto}
+#dns-campus .ds-history-chart figcaption{font-size:12px;color:var(--ds-sub);margin-top:8px}
+#dns-campus .ds-band-low{fill:light-dark(#e5f1e7,#294434)}
+#dns-campus .ds-band-moderate{fill:light-dark(#fff0ce,#493e28)}
+#dns-campus .ds-band-high{fill:light-dark(#fbe3de,#4e302e)}
+#dns-campus .ds-line{fill:none;stroke:var(--ds-accent);stroke-width:3;stroke-linejoin:round}
+#dns-campus .ds-dot{fill:var(--ds-panel);stroke:var(--ds-accent);stroke-width:3}
+#dns-campus .ds-tick{font-size:12px;fill:var(--ds-sub)}
+#dns-campus .ds-history-list{list-style:none;margin:0 0 16px;padding:0;display:flex;flex-direction:column;gap:8px}
+#dns-campus .ds-history-list li{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px 16px;border:1px solid var(--ds-line);border-radius:14px;padding:12px 16px;background:var(--ds-panel)}
+#dns-campus .ds-history-score{font-variant-numeric:tabular-nums;font-weight:650}

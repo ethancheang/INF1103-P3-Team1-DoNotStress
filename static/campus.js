@@ -5,6 +5,7 @@
   let page = boot.page || 'home', step = 0;
   let assessment = boot.result || null, busy = false, submitting = false;
   const recordFilters = {student_id:'', tier:'', cohort_year:''};
+  const historyState = {student_id:'', data:null, autoload:false};
   const tiers = ["You're doing ok", 'Worth a check-in', 'Please reach out'];
   let recordsRequest = 0, searchTimer;
   const survey = boot.survey;
@@ -106,7 +107,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       <h3>${escape(assessment.tips.heading)}</h3><p>A few ideas that might help.</p>
       <ul class="ds-suggestions">${assessment.tips.items.map(tip=>`<li>${escape(tip.text)}</li>`).join('')}</ul>
       <p class="ds-save-note">Your answers are saved so SIT wellbeing staff can follow up if needed. Anything you wrote in the reflection box is not stored.</p>
-      <button class="ds-link" data-action="new">Back to homepage</button></section>
+      <div class="ds-actions"><button class="ds-secondary" data-action="see-history">See how this compares with past check-ins</button><button class="ds-link" data-action="new">Back to homepage</button></div></section>
       <aside><div class="ds-mini ds-companion">${plant()}<span class="ds-pill">Check-in complete</span><h3>You made space for you.</h3>
       <p>Taking a moment to check in is a good step. Come back whenever you need to.</p></div>
       ${supportPanel(assessment.advisor)}</aside></div>`;
@@ -114,6 +115,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
   function pathFor(next) {
     if(next==='result')return boot.resultUrl;
     if(next==='records')return boot.recordsPageUrl;
+    if(next==='history')return boot.historyPageUrl;
     return boot.homeUrl;
   }
   function remember(next) {
@@ -132,7 +134,7 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       if(button.dataset.nav===(page==='result'?'checkin':page))button.setAttribute('aria-current','page');
       else button.removeAttribute('aria-current');
     });
-    ({home,checkin,result,records}[page] || home)();
+    ({home,checkin,result,records,history}[page] || home)();
   }
   function riskClass(value) {
     return {Low:'low',Moderate:'moderate',High:'high'}[value] || 'unknown';
@@ -231,6 +233,56 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
 
     }catch(error){if(page==='records'&&requestId===recordsRequest){status.textContent='Could not load saved records. Use Refresh records to try again.';main.querySelector('#ds-record-rows').innerHTML='';}}
   }
+  function history() {
+    main.innerHTML=`<section class="ds-history"><span class="ds-pill">My stress history</span><h2 tabindex="-1" id="ds-history-heading">How have things been moving?</h2>
+      <p>Enter the Student ID you use to check in to see your own past scores, how your latest check-in compares with the one before, and which way things are heading.</p>
+      <form id="ds-history-form" class="ds-field" novalidate><label class="ds-label" for="history_id">Student ID</label>
+      <div class="ds-history-row"><input class="ds-input" id="history_id" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="e.g. 2605581" value="${escape(historyState.student_id)}"><button class="ds-primary" type="submit">Show my history</button></div>
+      <div class="ds-help">To keep check-ins private, you can only see a Student ID that has checked in on this device.</div></form>
+      <p class="ds-error" role="alert" id="ds-history-error"></p>
+      <div id="ds-history-body" aria-live="polite"></div></section>`;
+    if(historyState.data)drawHistory();
+    else if(historyState.autoload){historyState.autoload=false;loadHistory();}
+  }
+  async function loadHistory() {
+    const id=(main.querySelector('#history_id')?.value||'').trim();
+    const status=main.querySelector('#ds-history-error');
+    historyState.student_id=id;historyState.data=null;
+    main.querySelector('#ds-history-body').innerHTML='';
+    if(!/^2[0-9]{6}$/.test(id)){status.textContent='Enter a 7-digit student ID starting with 2.';return;}
+    status.textContent='Loading your history…';
+    try {
+      const {response,data}=await post(boot.historyUrl,{student_id:id});
+      if(page!=='history'||historyState.student_id!==id)return;
+      if(!response.ok){status.textContent=data.message||'Your history could not be loaded. Please try again.';return;}
+      status.textContent='';historyState.data=data.history;drawHistory();
+    } catch(error){if(page==='history')status.textContent='Could not connect. Please try again.';}
+  }
+  function historyChart(entries) {
+    const points=entries.filter(entry=>typeof entry.score==='number').slice(-12);
+    if(points.length<2)return '';
+    const width=600, height=220, pad=34;
+    const x=index=>pad+index*(width-2*pad)/(points.length-1);
+    const y=score=>pad+(5-score)*(height-2*pad)/4;
+    const band=(from,to,risk)=>`<rect class="ds-band ds-band-${risk}" x="${pad}" width="${width-2*pad}" y="${y(to)}" height="${y(from)-y(to)}"></rect>`;
+    const ticks=[1,2,3,4,5].map(value=>`<text class="ds-tick" x="${pad-10}" y="${y(value)+4}" text-anchor="end">${value}</text>`).join('');
+    const line=points.map((point,index)=>`${x(index).toFixed(1)},${y(point.score).toFixed(1)}`).join(' ');
+    const dots=points.map((point,index)=>`<circle class="ds-dot" cx="${x(index).toFixed(1)}" cy="${y(point.score).toFixed(1)}" r="5"><title>${escape(savedDate(point.saved_at))}: ${escape(point.score)} out of 5</title></circle>`).join('');
+    return `<figure class="ds-history-chart"><svg viewBox="0 0 ${width} ${height}" role="img" aria-label="Line chart of your last ${points.length} stress scores, from 1 (less stress) to 5 (more stress)">${band(1,2.5,'low')}${band(2.5,3.5,'moderate')}${band(3.5,5,'high')}${ticks}<polyline class="ds-line" points="${line}"></polyline>${dots}</svg>
+      <figcaption>Lower is calmer. Bands: You're doing ok (below 2.5), Worth a check-in (2.5 to 3.5), Please reach out (above 3.5).</figcaption></figure>`;
+  }
+  function drawHistory() {
+    const info=historyState.data, body=main.querySelector('#ds-history-body');
+    if(!info||!body)return;
+    const trend=info.trend, entries=info.entries||[];
+    const latest=typeof trend.latest==='number'?`<p class="ds-trend-score">Latest score <b>${escape(trend.latest)}</b> / 5${typeof trend.previous==='number'?` · previous ${escape(trend.previous)} / 5`:''}</p>`:'';
+    const pending=info.pending?`<p class="ds-help">${info.pending===1?'1 check-in is':`${escape(info.pending)} check-ins are`} still waiting for analysis and not shown yet.</p>`:'';
+    const list=entries.length?`<h3>Your check-ins</h3><ul class="ds-history-list">${entries.slice().reverse().map(entry=>`<li><span class="ds-date">${escape(savedDate(entry.saved_at))}</span><span class="ds-history-score">${escape(entry.score)} / 5</span><span class="ds-risk ds-risk-${escape(entry.risk)}">${escape(entry.tier||'—')}</span></li>`).join('')}</ul>`:'';
+    body.innerHTML=`<div class="ds-trend" data-direction="${escape(trend.direction)}"><div class="ds-kicker">Since last time</div><strong>${escape(trend.headline)}</strong><p>${escape(trend.detail)}</p>${latest}</div>
+      ${historyChart(entries)}${list}${pending}
+      <p class="ds-record-note">A wellbeing guide, not a diagnosis. Scores run from 1 (less stress) to 5 (more stress). All times are in Singapore time (SGT).</p>
+      ${info.advisor?supportPanel(info.advisor):''}`;
+  }
   function valid() {
     let message='', focus;
     if(step===0&&!/^2[0-9]{6}$/.test(answers.student_id.trim())){message='Enter a 7-digit student ID starting with 2.';focus=main.querySelector('#student_id');}
@@ -252,6 +304,26 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
     const response=await fetch(url,{method:'POST',headers:{'Content-Type':'application/json','X-CSRF-Token':boot.csrfToken},body:JSON.stringify(body)});
     const data=await response.json();return {response,data};
   }
+  const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
+  function progressText(status, elapsed) {
+    if(status==='queued')return 'Your check-in is next in line. This usually takes a few seconds…';
+    if(elapsed>12000)return 'Still working on it. The AI can take a little longer when it is busy, so please keep this page open…';
+    return 'Taking a moment to understand your check-in…';
+  }
+  // The server analyses the check-in on a worker thread; poll until it ends.
+  async function waitForResult(url, showProgress) {
+    const started=Date.now();
+    let delay=500;
+    while(Date.now()-started<180000) {
+      await pause(delay);
+      const response=await fetch(url,{cache:'no-store'});
+      const data=await response.json();
+      if(response.status!==202)return {response,data};
+      showProgress(progressText(data.status, Date.now()-started));
+      delay=Math.min(delay+250,2000);
+    }
+    return null;
+  }
   async function submit() {
     // Set before any await so a second click cannot start another request.
     if(submitting)return;
@@ -265,7 +337,10 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       const support=main.querySelector('#ds-failure-support');
       if(support)support.innerHTML='';
       assessment=null;
-      const {response,data}=await post(boot.submitUrl,{...answers,student_id:answers.student_id.trim(),feelings_text:answers.feelings_text.trim()});
+      const sent=await post(boot.submitUrl,{...answers,student_id:answers.student_id.trim(),feelings_text:answers.feelings_text.trim()});
+      const finished=sent.response.status===202?await waitForResult(sent.data.statusUrl,showError):sent;
+      if(!finished){showError('We are still working on your check-in. Your answers are safe; please check again in a minute.');return;}
+      const {response,data}=finished;
       if(!response.ok) {
         if(data.errors){const key=Object.keys(data.errors)[0];step=key==='student_id'?0:key==='feelings_text'?5:Math.max(0,survey.sections.findIndex(section=>section.keys.includes(key)));render();}
         const calm=data.message||'We could not complete your check-in right now. Your answers are still here; please try again.';
@@ -293,6 +368,11 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       if(id==='feelings_text')main.querySelector('#ds-safety').innerHTML=reflectionSafety()?safetyPrompt():'';
     }
   });
+  root.addEventListener('submit',event=>{
+    if(event.target.id!=='ds-history-form')return;
+    event.preventDefault();
+    if(!busy)loadHistory();
+  });
   root.addEventListener('change',event=>{
     if(questions[event.target.name]&&event.target.type==='radio')answers[event.target.name]=+event.target.value;
     if(event.target.id==='ds-record-tier'){recordFilters.tier=event.target.value;loadRecords();}
@@ -313,15 +393,18 @@ function home(){main.innerHTML=`<div class="ds-hero"><section><span class="ds-pi
       case 'back':if(step===0)page='home';else step--;break;
       case 'next':if(!valid())return;if(step<reviewStep)step++;else{button.disabled=true;await submit();return;}break;
       case 'new':location.assign(boot.homeUrl);return;
+      case 'see-history':historyState.student_id=answers.student_id.trim();historyState.data=null;historyState.autoload=Boolean(historyState.student_id);page='history';break;
       default:return;
     }
     remember(page);
     render();
     if(page==='checkin')main.querySelector('#ds-step-heading')?.focus();
+    if(page==='history')main.querySelector('#ds-history-heading')?.focus();
   });
   // Clear sensitive table rows before a page can enter the back/forward cache.
   window.addEventListener('pagehide',()=>{
     if(page==='records'){recordsRequest++;main.querySelector('#ds-record-rows').innerHTML='';}
+    if(page==='history'){historyState.data=null;const body=main.querySelector('#ds-history-body');if(body)body.innerHTML='';}
   });
   window.addEventListener('pageshow',event=>{
     if(event.persisted&&boot.isAdmin)location.reload();

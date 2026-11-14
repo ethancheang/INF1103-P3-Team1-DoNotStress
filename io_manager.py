@@ -1,568 +1,514 @@
-"""Student input validation and presentation for the evidence-v3 (1-5) survey.
+"""DoNotStress — I/O Layer (io_manager).
 
-Question wording, scales and scoring definitions live in survey.py.
-Student ID: seven ASCII digits beginning with 2. Reflection is ephemeral.
+IOManager validates what students type into the web form and turns
+records into the plain data each page shows. All wording and page shapes
+live here and in the templates; no other layer writes student-facing
+copy.
+
+Student ID: seven ASCII digits beginning with 2. The reflection is checked
+for crisis language and then discarded; only the safety flag remains.
 """
-from typing import Any
 
-import survey
+from __future__ import annotations
 
-FORM_FIELDS = {key:key for key in ['student_id', *survey.QUESTION_MAP, 'feelings_text']}
-FORM_PROMPTS = {'student_id':'Student ID', 'feelings_text':'Anything on your mind about school or life lately?',
-                **{q['key']:q['prompt'] for q in survey.QUESTIONS}}
-RECORD_FIELD_ORDER = tuple(FORM_FIELDS)
-REQUIRED_FORM_FIELDS = ('student_id', *(q['key'] for q in survey.QUESTIONS if not q.get('optional')))
-STUDENT_ID_EXAMPLE = '2605581'
+from collections.abc import Mapping, Sequence
+
+from base_manager import BaseManager
+from json_types import JSONObject, JSONValue
+from questionnaire import Questionnaire
 
 # ---------------------------------------------------------------------------
-# Soft labels, tips allow-list, advisor contacts (hardcoded — never invent)
+# Student-facing wording. These are data tables, not classes.
 # ---------------------------------------------------------------------------
 
-SOFT_LABELS = (
-    "You're doing ok",
-    "Worth a check-in",
-    "Please reach out",
-)
-
-SOFT_LABEL_COPY = {
+SOFT_LABEL_COPY: dict[str, dict[str, str]] = {
     "You're doing ok": {
-        "label": "You're doing ok",
         "heading": "You're doing ok",
         "body": "Your check-in looks steady. Keep looking after yourself.",
         "tone": "reassuring",
     },
     "Worth a check-in": {
-        "label": "Worth a check-in",
         "heading": "Worth a check-in",
-        "body": (
-            "Some things look a bit heavier right now. "
-            "A conversation could help."
-        ),
+        "body": ("Some things look a bit heavier right now. A "
+                 "conversation could help."),
         "tone": "supportive",
     },
     "Please reach out": {
-        "label": "Please reach out",
         "heading": "Please reach out",
-        "body": (
-            "Please reach out for support. "
-            "You do not have to handle this on your own."
-        ),
+        "body": ("Please reach out for support. You do not have to "
+                 "handle this on your own."),
         "tone": "urgent",
     },
 }
-
-# Tip IDs that templates / other layers may pass into format_tips.
-# Copy is student-facing. Do not add phone numbers or extra emails here.
-TIPS_ALLOWLIST = {
-    "sleep_routine": (
-        "Try to keep a regular sleep schedule, including on weekends."
-    ),
-    "rest_a_little_more": (
-        "If you can, give yourself a bit more rest — even 30 extra minutes "
-        "can help."
-    ),
-    "short_breaks": (
-        "Take short, planned breaks between study blocks instead of pushing "
-        "through without a pause."
-    ),
-    "workload_chunks": (
-        "Break larger assignments into smaller tasks and spread them across "
-        "the week."
-    ),
-    "money_worries": (
-        "If money is on your mind, campus support can help you find the "
-        "right next step."
-    ),
-    "talk_to_someone": (
-        "Reach out to a friend, classmate, or family member — you do not "
-        "have to handle this alone."
-    ),
-    "keep_social_contact": (
-        "Stay in touch with people who help you feel supported, even with "
-        "a short check-in."
-    ),
-    "feelings_check_in": (
-        "Name how you have been feeling and give yourself permission to "
-        "ask for help if school feels heavy."
-    ),
+TIPS: dict[str, str] = {
+    "sleep_routine": ("Try to keep a regular sleep schedule, including "
+                      "on weekends."),
+    "rest_a_little_more": ("If you can, give yourself a bit more rest — "
+                           "even 30 extra minutes can help."),
+    "short_breaks": ("Take short, planned breaks between study blocks "
+                     "instead of pushing through without a pause."),
+    "workload_chunks": ("Break larger assignments into smaller tasks "
+                        "and spread them across the week."),
+    "money_worries": ("If money is on your mind, campus support can "
+                      "help you find the right next step."),
+    "talk_to_someone": ("Reach out to a friend, classmate, or family "
+                        "member — you do not have to handle this "
+                        "alone."),
+    "keep_social_contact": ("Stay in touch with people who help you "
+                            "feel supported, even with a short "
+                            "check-in."),
+    "feelings_check_in": ("Name how you have been feeling and give "
+                          "yourself permission to ask for help if "
+                          "school feels heavy."),
 }
-
-SPEAK_PROMINENCE = ("low", "medium", "high")
-
-# Real contacts only. Model / callers must never invent others.
-ADVISOR_EMAIL = "SITCounselling@SingaporeTech.edu.sg"
-ADVISOR_HELPLINE = "6592 2030"
-ADVISOR_MAILTO = "mailto:SITCounselling@SingaporeTech.edu.sg"
-SOS_HELPLINE = "1767"
-MINDLINE_HELPLINE = "1771"
-
-ADVISOR_CONTACTS = {
-    "email": ADVISOR_EMAIL,
-    "helpline": ADVISOR_HELPLINE,
-    "sos": SOS_HELPLINE,
-    "mindline": MINDLINE_HELPLINE,
-    "mailto": ADVISOR_MAILTO,
-}
-
-SPEAK_PANEL_COPY = {
+ADVISOR_EMAIL: str = "SITCounselling@SingaporeTech.edu.sg"
+ADVISOR_HELPLINE: str = "6592 2030"
+ADVISOR_MAILTO: str = "mailto:SITCounselling@SingaporeTech.edu.sg"
+SOS_HELPLINE: str = "1767"
+MINDLINE_HELPLINE: str = "1771"
+SPEAK_PANEL_COPY: dict[str, dict[str, str]] = {
     "low": {
         "heading": "Support is available",
-        "body": (
-            "If you would like to talk, you can contact SIT Counselling."
-        ),
+        "body": ("If you would like to talk, you can contact SIT "
+                 "Counselling."),
         "cta": "Optional: get in touch",
     },
     "medium": {
         "heading": "Consider speaking with someone",
-        "body": (
-            "It may help to talk with SIT Counselling about how you have "
-            "been feeling."
-        ),
+        "body": ("It may help to talk with SIT Counselling about how "
+                 "you have been feeling."),
         "cta": "Reach out when you are ready",
     },
     "high": {
         "heading": "Please reach out",
-        "body": (
-            "Please contact SIT Counselling. You do not have to handle "
-            "this on your own."
-        ),
+        "body": ("Please contact SIT Counselling. You do not have to "
+                 "handle this on your own."),
         "cta": "Contact support now",
     },
 }
-
-# Gemini is mandatory for every check-in result. These formatters exist so
-# Flask can show a hard-stop error page — not a logic-only / tips happy path.
-AI_UNAVAILABLE_HEADING = "We couldn't complete your check-in"
-AI_UNAVAILABLE_BODY = (
-    "This check-in needs Gemini AI before we can show a result. "
-    "AI is required for every record, so we cannot finish your check-in "
-    "right now. Please try again later."
-)
-AI_UNAVAILABLE_ACTION_LABEL = "Try again"
-AI_UNAVAILABLE_TONE = "urgent"
-AI_REQUIRED_HINT = (
-    "Operators/dev: Gemini AI is required for every check-in. Confirm "
-    "GEMINI_API_KEY is set in the environment. Do not share or display the key."
-)
-
-AI_RATE_LIMITED_BODY = (
-    "Our check-in assistant is busy right now. "
-    "Your answers have been saved and will be reviewed soon."
-)
-
-AI_ERROR_CODES = (
-    "missing_api_key",
-    "timeout",
-    "invalid_response",
-    "retries_exhausted",
-    "rate_limited",
-    "unavailable",
-)
-
-AI_ERROR_HINTS = {
+AI_ERROR_HEADING: str = "We couldn't complete your check-in"
+AI_ERROR_BODY: str = (
+    "This check-in needs Gemini AI before we can show a result. AI is "
+    "required for every record, so we cannot finish your check-in "
+    "right now. Please try again later.")
+AI_RATE_LIMITED_BODY: str = (
+    "Our check-in assistant is busy right now. Your answers have been "
+    "saved and will be reviewed soon.")
+AI_ERROR_HINTS: dict[str, str] = {
     "missing_api_key": (
-        "Operators/dev: GEMINI_API_KEY is not set. Add it to the environment "
-        "and restart the app. Never paste the key into the page or into "
-        "student-facing copy."
-    ),
+        "Operators/dev: GEMINI_API_KEY is not set. Add it to the "
+        "environment and restart the app. Never paste the key into the "
+        "page or into student-facing copy."),
     "timeout": (
-        "Operators/dev: the Gemini request timed out. Confirm GEMINI_API_KEY "
-        "is set and the service is reachable, then try again. Do not share "
-        "the key."
-    ),
+        "Operators/dev: the Gemini request timed out. Confirm "
+        "GEMINI_API_KEY is set and the service is reachable, then try "
+        "again. Do not share the key."),
     "invalid_response": (
-        "Operators/dev: Gemini returned a response that could not be used. "
-        "Confirm GEMINI_API_KEY is set and check server logs. Do not expose "
-        "the key."
-    ),
+        "Operators/dev: Gemini returned a response that could not be "
+        "used. Confirm GEMINI_API_KEY is set and check server logs. Do "
+        "not expose the key."),
     "retries_exhausted": (
-        "Operators/dev: Gemini failed after retries. Confirm GEMINI_API_KEY "
-        "is set and the service is reachable. Do not expose the key."
-    ),
+        "Operators/dev: Gemini failed after retries. Confirm "
+        "GEMINI_API_KEY is set and the service is reachable. Do not "
+        "expose the key."),
     "rate_limited": (
-        "Operators/dev: every Gemini model was rate-limited. "
-        "The check-in is saved as pending. Do not share the API key."
-    ),
-    "unavailable": AI_REQUIRED_HINT,
+        "Operators/dev: every Gemini model was rate-limited. The "
+        "check-in is saved as pending. Do not share the API key."),
+    "unavailable": (
+        "Operators/dev: Gemini AI is required for every check-in. "
+        "Confirm GEMINI_API_KEY is set in the environment. Do not "
+        "share or display the key."),
+}
+COMPARISON_COPY: dict[str, str] = {
+    "none": ("No finished check-ins yet. Your history starts with "
+             "your next check-in."),
+    "first": ("This is your first finished check-in. Check in again "
+              "later to see how things change."),
+    "lower": "Your latest score is {change} points lower than last time.",
+    "similar": "Your latest score is about the same as last time.",
+    "higher": "Your latest score is {change} points higher than last time.",
+}
+DIRECTION_COPY: dict[str, str] = {
+    "not_enough": ("After three check-ins, this page shows which way "
+                   "things are heading."),
+    "easing": ("Across your recent check-ins, stress looks like it "
+               "is easing."),
+    "steady": ("Across your recent check-ins, stress has stayed "
+               "fairly steady."),
+    "building": ("Across your recent check-ins, stress looks like it "
+                 "is building. Talking to someone can help."),
+}
+FACTOR_COPY: tuple[tuple[str, str, str], ...] = (
+    ("sleep", "Rest & recovery",
+     "Sleep and stress affect each other. When sleep is short or "
+     "restless, everyday tasks can feel harder, and stress can make it "
+     "harder to sleep well."),
+    ("workload", "Study demands",
+     "A heavy workload can leave less time to rest and recharge. "
+     "Feeling behind or overloaded is one of the most common sources "
+     "of student stress."),
+    ("finances", "Money pressures",
+     "Financial worries can add to the pressure of studying. Concerns "
+     "about money often weigh on focus and sleep."),
+    ("support", "Support & connection",
+     "Having people to turn to can make stressful times easier to "
+     "handle. Strong support from friends or family helps protect "
+     "against stress."),
+)
+FACTOR_FIELDS: tuple[str, ...] = (
+    "sleep_hours_avg", "sleep_quality", "pas_workload", "fin_stress",
+    "support_mean",
+)
+ADMIN_COLUMNS: tuple[str, ...] = (
+    "student_id", "stress_score", "risk_category", "soft_label",
+    "pss_1", "pss_2", "pss_3", "pss_4", "sleep_hours_avg",
+    "sleep_quality", "pas_workload", "pas_catchup", "fin_stress",
+    "mspss_friends", "mspss_family", "saved_at", "survey_version",
+)
+CATEGORY_LABELS: dict[str, str] = {
+    "Low": "You're doing ok",
+    "Moderate": "Worth a check-in",
+    "High": "Please reach out",
+}
+STATUS_LABELS: dict[str, str] = {
+    "evaluated": "Evaluated",
+    "pending": "Pending",
+}
+RISK_CLASSES: dict[str, str] = {
+    "Low": "low", "Moderate": "moderate", "High": "high",
 }
 
 
-# ---------------------------------------------------------------------------
-# Internal helpers (pure)
-# ---------------------------------------------------------------------------
+class IOManager(BaseManager):
+    """Collects and validates input; renders results, lists and errors.
 
-def _as_text(raw) -> str:
-    """Normalize raw input to a stripped string. None becomes empty."""
-    if raw is None:
-        return ""
-    return str(raw).strip()
-
-
-def _looks_like_int(text: str) -> bool:
-    """True when text is a base-10 integer (optional leading + or -)."""
-    if not text:
-        return False
-    if text[0] in "+-":
-        return len(text) > 1 and text[1:].isdigit()
-    return text.isdigit()
-
-def _form_get(form_dict, key: str):
-    """Read one key from a Flask request.form-like mapping."""
-    if form_dict is None:
-        return ""
-    getter = getattr(form_dict, "get", None)
-    if getter is None:
-        return ""
-    value = getter(key)
-    if value is None:
-        return ""
-    return value
-
-
-def _looks_like_secret(text: str) -> bool:
-    """True when operator text might contain a key or token — do not show it."""
-    if not text:
-        return False
-    compact = "".join(text.split())
-    lowered = compact.lower()
-    if "gemini_api_key=" in lowered or "api_key=" in lowered:
-        return True
-    if "bearer" in lowered and len(compact) > 20:
-        return True
-    # Long token-like strings (Google API keys are typically 39+ chars).
-    if len(compact) >= 32 and compact.isalnum():
-        return True
-    return False
-
-
-def _sanitize_operator_detail(raw) -> str | None:
-    """Keep a short operator note; drop anything that looks like a secret."""
-    text = _as_text(raw)
-    if not text:
-        return None
-    if _looks_like_secret(text):
-        return None
-    if len(text) > 200:
-        text = text[:200].rstrip() + "…"
-    return text
-
-
-# ---------------------------------------------------------------------------
-# Normalize helpers (Flask request.form strings)
-# ---------------------------------------------------------------------------
-
-def normalize_form_value(raw) -> str:
-    """Strip a single form value. None becomes ''."""
-    return _as_text(raw)
-
-
-# ---------------------------------------------------------------------------
-# Validators — validate_X(raw) -> (ok, value_or_error)
-# ---------------------------------------------------------------------------
-
-def validate_student_id(raw) -> tuple[bool, str]:
-    """Require exactly seven ASCII digits, beginning with 2."""
-    text = _as_text(raw)
-    if len(text) != 7 or not text.isascii() or not text.isdigit() or not text.startswith("2"):
-        return False, "Student ID must be exactly 7 digits and start with 2 (e.g. 2605581)."
-    return True, text
-
-def validate_feelings_text(raw):
-    if raw is not None and not isinstance(raw, str):
-        return False, 'Please enter text or leave this blank.'
-    text = _as_text(raw)
-    if len(text) > 2000:
-        return False, 'Please keep your reflection within 2,000 characters.'
-    return True, text
-
-
-def validate_student_form(form_dict):
-    record, errors = {}, {}
-    ok, value = validate_student_id(_form_get(form_dict, 'student_id'))
-    (record if ok else errors)['student_id'] = value
-    for q in survey.QUESTIONS:
-        ok, value = survey.validate_question(_form_get(form_dict, q['key']), q)
-        (record if ok else errors)[q['key']] = value
-    ok, text = validate_feelings_text(_form_get(form_dict, 'feelings_text'))
-    if not ok:
-        errors['feelings_text'] = text
-    if errors:
-        return False, errors
-    # Reflection is checked locally on the server, then discarded. Never sent
-    # to Gemini or retained in pending/saved records.
-    record['safety_flag'] = survey.safety_check(text)
-    record['survey_version'] = survey.VERSION
-    return True, record
-
-# ---------------------------------------------------------------------------
-# Formatters for web templates — strings / plain dicts of copy; no print
-# ---------------------------------------------------------------------------
-
-def format_soft_label(soft_label) -> dict:
-    """Return template copy for a soft label.
-
-    soft_label must be one of SOFT_LABELS:
-      "You're doing ok" | "Worth a check-in" | "Please reach out"
+    The questionnaire is passed in and shared (aggregation). Wording
+    tables above are module-level data; private methods turn them into
+    the page shapes the browser needs.
     """
-    text = _as_text(soft_label)
-    copy = SOFT_LABEL_COPY.get(text)
-    if copy is None:
-        allowed = ", ".join(f'"{label}"' for label in SOFT_LABELS)
+
+    STUDENT_ID_EXAMPLE: str = "2605581"
+    REFLECTION_LIMIT: int = 2000
+
+    def __init__(self, questionnaire: Questionnaire) -> None:
+        super().__init__("io_manager")
+        self.__questionnaire: Questionnaire = questionnaire
+
+    def describe(self) -> JSONObject:
+        return {"questionnaire": self.__questionnaire.version,
+                "questions": len(self.__questionnaire.questions)}
+
+    # --- Input -----------------------------------------------------------
+
+    def validate_student_id(self, raw: object) -> tuple[bool, str]:
+        """(True, the ID) or (False, a message). Seven digits from 2."""
+        text = str(raw if raw is not None else "").strip()
+        if (len(text) != 7 or not text.isascii() or not text.isdigit()
+                or not text.startswith("2")):
+            return False, ("Student ID must be exactly 7 digits and start "
+                           f"with 2 (e.g. {self.STUDENT_ID_EXAMPLE}).")
+        return True, text
+
+    def validate_feelings_text(self, raw: object) -> tuple[bool, str]:
+        """(True, the stripped reflection) or (False, a message)."""
+        if raw is not None and not isinstance(raw, str):
+            return False, "Please enter text or leave this blank."
+        text = (raw or "").strip()
+        if len(text) > self.REFLECTION_LIMIT:
+            return False, ("Please keep your reflection within 2,000 "
+                           "characters.")
+        return True, text
+
+    def validate_student_form(self, form: Mapping[str, object]
+                              ) -> tuple[bool, JSONObject]:
+        """(True, the check-in) or (False, a message for each bad field).
+
+        The check-in never keeps the reflection, and never trusts a score,
+        tier or flag sent by the browser.
+        """
+        record: JSONObject = {}
+        errors: JSONObject = {}
+        ok, student_id = self.validate_student_id(form.get("student_id"))
+        (record if ok else errors)["student_id"] = student_id
+        for question in self.__questionnaire.questions:
+            key = str(question["key"])
+            ok, answer = self.__questionnaire.validate_answer(
+                key, form.get(key))
+            (record if ok else errors)[key] = answer
+        ok, reflection = self.validate_feelings_text(
+            form.get("feelings_text"))
+        if not ok:
+            errors["feelings_text"] = reflection
+        if errors:
+            return False, errors
+        record["safety_flag"] = self.__questionnaire.safety_fired(reflection)
+        record["survey_version"] = self.__questionnaire.version
+        return True, record
+
+    def validate_record_filters(self, tier: str,
+                                cohort_year: str) -> str | None:
+        """A message for an unknown admin filter, or None when both are ok."""
+        if tier and tier not in SOFT_LABEL_COPY:
+            return ("Choose a tier: You're doing ok, Worth a check-in, or "
+                    "Please reach out.")
+        if cohort_year and (len(cohort_year) not in (2, 4)
+                            or not cohort_year.isascii()
+                            or not cohort_year.isdigit()):
+            return "Choose a valid cohort year."
+        return None
+
+    def safety_fired(self, text: object) -> bool:
+        """The reflection safety check, for an immediate support prompt."""
+        return self.__questionnaire.safety_fired(text)
+
+    # --- Output ----------------------------------------------------------
+
+    def display_record(self, record: JSONObject) -> JSONObject:
+        """The answers of one check-in as labelled values."""
+        fields: list[JSONObject] = []
+        student_id = str(record.get("student_id") or "").strip()
+        if student_id:
+            fields.append({"key": "student_id", "label": "Student ID",
+                           "value": student_id})
+        for question in self.__questionnaire.questions:
+            key = str(question["key"])
+            value = record.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            shown = f"{value:g}"
+            options = question.get("options") or []
+            step = float(question.get("step") or 1)
+            if options:
+                shown = (f"{shown} · "
+                         f"{self.__questionnaire.option_label(key, int(value))}")
+            elif step < 1:
+                shown = f"{value:.1f}"
+            fields.append({"key": key, "label": question["prompt"],
+                           "value": shown})
+        return {"heading": "Your check-in", "fields": fields,
+                "empty": not fields}
+
+    def display_list(self, records: Sequence[JSONObject]) -> list[JSONObject]:
+        """Admin table rows, newest first. Free text is never included."""
+        newest = sorted(records, key=lambda row: str(row.get("saved_at") or ""),
+                        reverse=True)
+        rows: list[JSONObject] = []
+        for record in newest:
+            row: JSONObject = {key: record.get(key) for key in ADMIN_COLUMNS}
+            if not row["soft_label"]:
+                row["soft_label"] = CATEGORY_LABELS.get(
+                    str(record.get("risk_category") or ""))
+            status = str(record.get("status") or "evaluated")
+            row["status"] = STATUS_LABELS.get(status, status)
+            rows.append(row)
+        return rows
+
+    def display_result(self, record: JSONObject) -> JSONObject:
+        """The student's result page for a finished check-in."""
+        advisor = self.advisor_panel(str(record.get("speak_prominence") or ""))
+        advisor.pop("cta", None)
         return {
-            "label": "",
-            "heading": "",
-            "body": "",
-            "tone": "",
-            "error": f"Unknown soft label. Use one of: {allowed}.",
+            "soft": self.format_soft_label(str(record.get("soft_label") or "")),
+            "tips": self.format_tips(record.get("tips")),
+            "advisor": advisor,
+            "insights": {
+                "risk_category": str(record.get("risk_category") or "Unknown"),
+                "explanation": str(record.get("reasoning") or "").split(
+                    " Logic adjusted:")[0],
+                "stressors": self.__strings(record.get("primary_stressors")),
+                "factors": self.__factor_cards(record),
+                "safety_flag": record.get("safety_flag") is True,
+            },
         }
-    return {
-        "label": copy["label"],
-        "heading": copy["heading"],
-        "body": copy["body"],
-        "tone": copy["tone"],
-        "error": None,
-    }
 
+    def display_history(self, history: JSONObject,
+                        trend: JSONObject) -> JSONObject:
+        """A student's own history page: scores, trend and support.
 
-def format_tips(tips) -> dict:
-    """Return template copy for an allow-listed tip list.
+        Support is highlighted when stress is building or the latest
+        check-in was High. Answers and reasoning are never included.
+        """
+        records = history.get("records") if isinstance(history, dict) else []
+        entries: list[JSONObject] = []
+        latest_category = ""
+        if isinstance(records, list):
+            for raw in records:
+                if not isinstance(raw, dict):
+                    continue
+                category = str(raw.get("risk_category") or "")
+                label = str(raw.get("soft_label") or "")
+                score = raw.get("stress_score")
+                if isinstance(score, bool) or not isinstance(score, (int, float)):
+                    score_value: JSONValue = None
+                else:
+                    score_value = float(score)
+                entries.append({
+                    "saved_at": str(raw.get("saved_at") or ""),
+                    "score": score_value,
+                    "tier": label or CATEGORY_LABELS.get(category, ""),
+                    "risk": RISK_CLASSES.get(category, "unknown"),
+                    "status": str(raw.get("status") or "evaluated"),
+                })
+                latest_category = category
+        high = latest_category == "High"
+        direction = str(trend.get("direction") or "") if isinstance(trend, dict) else ""
+        needs_support = high or direction == "building"
+        advisor = (self.advisor_panel("high" if high else "medium")
+                   if needs_support else None)
+        pending = 0
+        student_id = ""
+        if isinstance(history, dict):
+            pending = int(history.get("pending_count") or 0)
+            student_id = str(history.get("student_id") or "")
+        return {
+            "student_id": student_id,
+            "entries": entries,
+            "pending": pending,
+            "trend": self.__trend_summary(trend if isinstance(trend, dict) else {}),
+            "advisor": advisor,
+        }
 
-    `tips` is a list of tip IDs (preferred) or exact allow-list strings.
-    Unknown tips are dropped — this formatter never invents copy.
-    Duplicates keep the first occurrence only.
-    """
-    items = []
-    seen = set()
-    if tips is None:
-        tips = []
-    for raw in tips:
-        text = _as_text(raw)
-        if not text or text in seen:
-            continue
-        tip_id = None
-        tip_text = None
-        if text in TIPS_ALLOWLIST:
-            tip_id = text
-            tip_text = TIPS_ALLOWLIST[text]
-        else:
-            for known_id, known_text in TIPS_ALLOWLIST.items():
-                if text == known_text:
-                    tip_id = known_id
-                    tip_text = known_text
-                    break
-        if tip_id is None:
-            continue
-        seen.add(tip_id)
-        seen.add(tip_text)
-        items.append({"id": tip_id, "text": tip_text})
-    return {
-        "heading": "Suggestions for you",
-        "items": items,
-        "texts": [item["text"] for item in items],
-    }
+    def display_error(self, code: str,
+                      detail: str | None = None) -> JSONObject:
+        """The page shown when the AI step could not finish."""
+        known = code.strip().lower()
+        error = None
+        if known not in AI_ERROR_HINTS:
+            if known:
+                error = ("Unknown AI error_code. Use one of: "
+                         f"{', '.join(AI_ERROR_HINTS)}.")
+            known = "unavailable"
+        body = (AI_RATE_LIMITED_BODY if known == "rate_limited"
+                else AI_ERROR_BODY)
+        hint = AI_ERROR_HINTS[known]
+        reason = self.__operator_detail(detail)
+        if reason:
+            hint = f"{hint} Detail: {reason}."
+        return {
+            "heading": AI_ERROR_HEADING,
+            "body": body,
+            "hint": hint,
+            "action_label": "Try again",
+            "tone": "urgent",
+            "ai_required": True,
+            "error_code": known,
+            "reason": reason,
+            "speak_to_advisor": self.advisor_panel("high"),
+            "error": error,
+        }
 
+    def format_soft_label(self, label: object) -> JSONObject:
+        text = str(label or "").strip()
+        copy = SOFT_LABEL_COPY.get(text)
+        if copy is None:
+            allowed = ", ".join(f'"{name}"' for name in SOFT_LABEL_COPY)
+            return {"label": "", "heading": "", "body": "", "tone": "",
+                    "error": f"Unknown soft label. Use one of: {allowed}."}
+        return {"label": text, **copy, "error": None}
 
-def format_speak_to_advisor_panel(speak_prominence) -> dict:
-    """Return the Speak-to-Advisor panel copy and hardcoded contacts.
+    def format_tips(self, tip_ids: object) -> JSONObject:
+        items: list[JSONValue] = []
+        seen: set[str] = set()
+        raw_list = tip_ids if isinstance(tip_ids, list) else []
+        for raw in raw_list:
+            tip_id = str(raw).strip()
+            if tip_id in TIPS and tip_id not in seen:
+                seen.add(tip_id)
+                items.append({"id": tip_id, "text": TIPS[tip_id]})
+        return {"heading": "Suggestions for you", "items": items}
 
-    speak_prominence is "low" | "medium" | "high" and changes tone only.
-    Contacts are always the same real values — never invented:
-      email    SITCounselling@SingaporeTech.edu.sg
-      helpline 6592 2030 (SIT Counselling 24-hour helpline)
-      sos      1767
-      mindline 1771
-      mailto   mailto:SITCounselling@SingaporeTech.edu.sg
-
-    Unknown prominence still includes those contacts and uses medium copy.
-    """
-    prominence = _as_text(speak_prominence).lower()
-    copy = SPEAK_PANEL_COPY.get(prominence)
-    error = None
-    if copy is None:
-        prominence = "medium"
-        copy = SPEAK_PANEL_COPY["medium"]
-        allowed = ", ".join(SPEAK_PROMINENCE)
-        error = f"Unknown speak_prominence. Use one of: {allowed}."
-    return {
-        "prominence": prominence,
-        "heading": copy["heading"],
-        "body": copy["body"],
-        "cta": copy["cta"],
-        "email": ADVISOR_EMAIL,
-        "helpline": ADVISOR_HELPLINE,
-        "sos": SOS_HELPLINE,
-        "mindline": MINDLINE_HELPLINE,
-        "mailto": ADVISOR_MAILTO,
-        "contacts": dict(ADVISOR_CONTACTS),
-        "error": error,
-    }
-
-
-def _ai_failure_copy(error_code, detail=None) -> dict:
-    """Shared payload for AI-required failure pages (no soft-label happy path)."""
-    code = _as_text(error_code).lower()
-    unknown = False
-    if code not in AI_ERROR_CODES:
-        unknown = bool(code)
-        code = "unavailable"
-    if not code:
-        code = "unavailable"
-
-    body = AI_RATE_LIMITED_BODY if code == "rate_limited" else AI_UNAVAILABLE_BODY
-    hint = AI_ERROR_HINTS[code]
-    reason = _sanitize_operator_detail(detail)
-    if reason:
-        hint = f"{hint} Detail: {reason}."
-
-    panel = format_speak_to_advisor_panel("high")
-    error = None
-    if unknown:
-        allowed = ", ".join(AI_ERROR_CODES)
-        error = f"Unknown AI error_code. Use one of: {allowed}."
-
-    return {
-        "heading": AI_UNAVAILABLE_HEADING,
-        "body": body,
-        "message": body,
-        "hint": hint,
-        "action_label": AI_UNAVAILABLE_ACTION_LABEL,
-        "tone": AI_UNAVAILABLE_TONE,
-        "ai_required": True,
-        "error_code": code,
-        "reason": reason,
-        "speak_to_advisor": panel,
-        "email": ADVISOR_EMAIL,
-        "helpline": ADVISOR_HELPLINE,
-        "mailto": ADVISOR_MAILTO,
-        "contacts": {
+    def advisor_panel(self, prominence: str) -> JSONObject:
+        """The "talk to someone" panel. Prominence only changes the tone."""
+        level = prominence.strip().lower()
+        error = None
+        if level not in SPEAK_PANEL_COPY:
+            level = "medium"
+            error = "Unknown speak_prominence. Use one of: low, medium, high."
+        return {
+            "prominence": level,
+            **SPEAK_PANEL_COPY[level],
             "email": ADVISOR_EMAIL,
             "helpline": ADVISOR_HELPLINE,
+            "sos": SOS_HELPLINE,
+            "mindline": MINDLINE_HELPLINE,
             "mailto": ADVISOR_MAILTO,
-        },
-        "error": error,
-    }
-
-def format_ai_error(error_code, detail=None) -> dict:
-    """Map an AI failure code to the same student-facing error dict.
-
-    Known codes: missing_api_key, timeout, invalid_response,
-    retries_exhausted, rate_limited, unavailable. rate_limited uses calm
-    student copy. Unknown codes still return a valid error page
-    (unavailable copy + contacts) and set `error`.
-    """
-    return _ai_failure_copy(error_code, detail=detail)
-
-
-def format_student_record(record: dict) -> dict:
-    """Return a plain dict of labelled values for a confirmation template."""
-    if not record:
-        return {
-            "heading": "Your check-in",
-            "fields": [],
-            "empty": True,
+            "error": error,
         }
-    fields = []
-    for key in RECORD_FIELD_ORDER:
-        if key not in record:
-            continue
-        value = record[key]
-        if key == "feelings_text":
-            display = str(value).strip() if value is not None else ""
-            if not display:
-                display = "(skipped)"
-        elif key == "sleep_hours_avg" and value is not None:
-            display = f"{float(value):.1f}"
-        elif value is not None and survey.QUESTION_MAP.get(key, {}).get("options"):
-            q = survey.QUESTION_MAP[key]
-            display = f"{value} · {q['options'][int(value) - q['min']]}"
-        else:
-            display = "(skipped)" if value is None else str(value)
-        fields.append({
-            "key": key,
-            "label": FORM_PROMPTS[key],
-            "value": display,
-        })
-    return {
-        "heading": "Your check-in",
-        "fields": fields,
-        "empty": len(fields) == 0,
-    }
 
+    def page_config(self) -> JSONObject:
+        """The questionnaire as the browser needs it."""
+        return self.__questionnaire.public_config()
 
-# ---------------------------------------------------------------------------
-# Thin CLI helper — smoke tests only; field names match the web form
-# ---------------------------------------------------------------------------
+    def __trend_summary(self, trend: JSONObject) -> JSONObject:
+        comparison = str(trend.get("comparison") or "none")
+        direction = str(trend.get("direction") or "not_enough")
+        change = trend.get("change")
+        amount = ""
+        if isinstance(change, bool):
+            change = None
+        elif isinstance(change, (int, float)):
+            amount = f"{abs(float(change)):.2f}"
+        headline = COMPARISON_COPY.get(comparison, COMPARISON_COPY["none"])
+        detail = DIRECTION_COPY.get(direction, DIRECTION_COPY["not_enough"])
+        return {
+            "comparison": comparison,
+            "direction": direction,
+            "headline": headline.format(change=amount),
+            "detail": detail,
+            "latest": trend.get("latest"),
+            "previous": trend.get("previous"),
+            "change": change,
+            "average": trend.get("average"),
+        }
 
-def print_message(message: str) -> None:
-    print(message)
+    def __factor_cards(self, record: JSONObject) -> list[JSONValue]:
+        found: dict[str, float] = {}
+        for key in FACTOR_FIELDS:
+            number = self.__number(record.get(key))
+            if number is None:
+                return []
+            found[key] = number
+        flags = record.get("context_flags")
+        flagged = flags if isinstance(flags, dict) else {}
+        workload, finances = found["pas_workload"], found["fin_stress"]
+        shown = {
+            "sleep": (f"{found['sleep_hours_avg']:g} hours · "
+                      f"{self.__label(found, 'sleep_quality')} quality"),
+            "workload": (f"{workload:g}/5 · "
+                         f"{self.__label(found, 'pas_workload')}"),
+            "finances": (f"{finances:g}/5 · "
+                         f"{self.__label(found, 'fin_stress')}"),
+            "support": (f"{found['support_mean']:g}/5 agreement across "
+                        "2 answers"),
+        }
+        return [{"title": title, "flagged": flagged.get(flag) is True,
+                 "value": shown[flag], "text": text}
+                for flag, title, text in FACTOR_COPY]
 
+    def __label(self, found: dict[str, float], key: str) -> str:
+        return self.__questionnaire.option_label(key, int(found[key]))
 
-def print_error(message: str) -> None:
-    print(f"Error: {message}")
+    def __number(self, value: JSONValue) -> float | None:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return None
+        return float(value)
 
+    def __strings(self, value: JSONValue) -> list[str]:
+        if not isinstance(value, list):
+            return []
+        return [str(item) for item in value]
 
-def display_record(record: dict[str, Any]) -> None:
-    """Print one check-in record using format_student_record."""
-    view = format_student_record(record)
-    print(view["heading"])
-    for field in view["fields"]:
-        print(f"  {field['label']}: {field['value']}")
+    def __operator_detail(self, raw: str | None) -> str | None:
+        text = (raw or "").strip()
+        if not text or self.__looks_like_secret(text):
+            return None
+        return text if len(text) <= 200 else text[:200].rstrip() + "…"
 
-
-def display_list(records: list[dict[str, Any]]) -> None:
-    """Print a short one-line summary for each saved record."""
-    if not records:
-        print("No records.")
-        return
-    for number, record in enumerate(records, 1):
-        print(f"{number}. {record.get('student_id', '?')} | "
-              f"{record.get('risk_category', '?')} | {record.get('stress_score', '?')}")
-
-
-def display_result(result: dict[str, Any]) -> None:
-    """Print the outcome of a check-in using the existing formatters."""
-    if not result or not result.get("ok"):
-        code = (result or {}).get("error_code") or (result or {}).get("error")
-        copy = format_ai_error(code)
-        print(copy.get("heading", "We couldn't complete your check-in"))
-        print(copy.get("body", ""))
-        return
-    print(format_soft_label(result.get("soft_label"))["heading"] or result.get("soft_label"))
-    print(f"Stress score: {result.get('stress_score')}")
-    for text in format_tips(result.get("tips"))["texts"]:
-        print(f"  - {text}")
-
-
-def _prompt_until_valid(prompt: str, validator):
-    """Read a line, validate, and re-prompt with the error until valid."""
-    while True:
-        raw = input(prompt)
-        ok, result = validator(raw)
-        if ok:
-            return result
-        print_error(result)
-
-
-def get_student_id() -> str:
-    return _prompt_until_valid(
-        "Student ID (7 digits starting with 2, e.g. 2605581): ",
-        validate_student_id,
-    )
-
-
-def collect_student_record():
-    """CLI uses the same question definitions and validation as the website."""
-    values = {'student_id':get_student_id()}
-    for q in survey.QUESTIONS:
-        print_message(q['prompt'])
-        if q.get('options'):
-            print_message(' | '.join(f"{i + q['min']}: {label}" for i, label in enumerate(q['options'])))
-        values[q['key']] = _prompt_until_valid(
-            f"{q['min']}–{q['max']}" + (' (optional; Enter to skip)' if q.get('optional') else '') + ': ',
-            lambda raw, item=q: survey.validate_question(raw, item))
-    values['feelings_text'] = _prompt_until_valid('Optional reflection (not saved): ', validate_feelings_text)
-    return validate_student_form(values)[1]
-
-
-if __name__ == '__main__':
-    print_message(str(format_student_record(collect_student_record())))
+    def __looks_like_secret(self, text: str) -> bool:
+        compact = "".join(text.split())
+        lowered = compact.lower()
+        if "api_key=" in lowered:
+            return True
+        if "bearer" in lowered and len(compact) > 20:
+            return True
+        return len(compact) >= 32 and compact.isalnum()
