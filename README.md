@@ -129,7 +129,9 @@ commit password hashes in source control.
   signs everyone out and resets each device's history access, because the
   history cookie is signed with this key. Set it for any real deployment.
 - `GEMINI_MODEL`: optional model to try first. If it fails, the app falls back
-  through its built-in model chain.
+  through its model chain.
+- `GEMINI_MODEL_CHAIN`: optional comma-separated model list replacing the
+  default fallback chain.
 - `SESSION_COOKIE_SECURE`: set to `1` behind HTTPS.
 - `DONOTSTRESS_DATA_PATH`: optional JSON storage path.
 - `HOST`: Flask bind address, default `127.0.0.1`. Use `0.0.0.0` in Docker.

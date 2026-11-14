@@ -19,30 +19,51 @@ class GeminiProvider(AIProvider):
     across models does not open a new connection each time.
     """
 
-    MODEL_CHAIN: tuple[str, ...] = (
-        "gemini-3.6-flash",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-    )
+    MODEL_CHAIN: tuple[str, ...] = AIProvider.DEFAULT_MODELS
     TEMPERATURE: float = 0.0
     TIMEOUT_SEC: float = 20.0
 
     def __init__(self, api_key: str | None = None,
-                 preferred_model: str | None = None) -> None:
+                 preferred_model: str | None = None,
+                 model_chain: str | tuple[str, ...] | None = None) -> None:
         super().__init__()
         if api_key is None:
             api_key = os.environ.get("GEMINI_API_KEY", "")
         if preferred_model is None:
             preferred_model = os.environ.get("GEMINI_MODEL")
+        if model_chain is None:
+            model_chain = os.environ.get("GEMINI_MODEL_CHAIN")
         self.__api_key: str = api_key.strip()
-        self.__models: tuple[str, ...] = self.__model_order(preferred_model)
+        self.__models: tuple[str, ...] = self.__model_order(
+            preferred_model, model_chain)
         self.__client: genai.Client | None = None
         self.__client_lock: threading.Lock = threading.Lock()
 
-    def __model_order(self, preferred: str | None = None) -> tuple[str, ...]:
-        """The preferred model first, then the rest of MODEL_CHAIN, no repeats."""
-        first = (preferred or "").strip() or self.MODEL_CHAIN[0]
-        return (first, *(name for name in self.MODEL_CHAIN if name != first))
+    def __model_order(
+        self,
+        preferred: str | None = None,
+        chain: str | tuple[str, ...] | None = None,
+    ) -> tuple[str, ...]:
+        """Ordered model fallback chain from GEMINI_MODEL / GEMINI_MODEL_CHAIN."""
+        if isinstance(chain, str):
+            parsed = tuple(
+                dict.fromkeys(
+                    item.strip() for item in chain.split(",") if item.strip()
+                )
+            )
+        elif isinstance(chain, tuple):
+            parsed = tuple(
+                dict.fromkeys(
+                    str(item).strip() for item in chain if str(item).strip()
+                )
+            )
+        else:
+            parsed = ()
+        base = parsed or self.MODEL_CHAIN
+        first = (preferred or "").strip()
+        if not first:
+            return base
+        return (first, *(name for name in base if name != first))
 
     @property
     def name(self) -> str:

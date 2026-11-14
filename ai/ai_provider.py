@@ -14,6 +14,12 @@ class AIProvider(ABC):
     the same way to every provider. A provider only makes single calls.
     """
 
+    DEFAULT_MODELS: tuple[str, ...] = (
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+    )
+
     @property
     @abstractmethod
     def name(self) -> str:

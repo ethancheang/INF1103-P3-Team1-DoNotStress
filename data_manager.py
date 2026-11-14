@@ -120,15 +120,15 @@ class DataManager(BaseManager):
         try:
             stored = self.__storage.replace(
                 clean_id, row, only_if=self.__is_pending,
-                preserve=("saved_at",))
+                preserve=("saved_at",), fallback_id=uuid.uuid4().hex)
         except OSError as error:
             self.logger.warning("Saving a record failed: %s", error)
             return {"ok": False, "error": str(error)}
-        if stored is not None:
-            return {"ok": True, "record_id": clean_id, "row": stored}
-        fresh_row = self.__stamped(record, uuid.uuid4().hex)
-        return self.__write(
-            fresh_row, lambda: self.__storage.append(fresh_row))
+        if stored is None:
+            return {"ok": False, "error": "Record could not be stored."}
+        return {"ok": True,
+                "record_id": str(stored.get("record_id") or clean_id),
+                "row": stored}
 
     def load(self) -> list[Record]:
         """Every saved record. [] when nothing has been saved yet.

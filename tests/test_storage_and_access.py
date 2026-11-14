@@ -33,6 +33,9 @@ class TestStorageFailures(unittest.TestCase):
             self.assertEqual(JSONStorage(path).load(), [])
             path.write_text("  \n", encoding="utf-8")
             self.assertEqual(JSONStorage(path).load(), [])
+            path.write_text("null", encoding="utf-8")
+            with self.assertRaises(OSError):
+                JSONStorage(path).load()
 
     def test_failed_backup_leaves_the_corrupt_file_untouched(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,6 +76,14 @@ class TestStorageFailures(unittest.TestCase):
                                       only_if=lambda existing: False)
             self.assertIsNone(refused)
             self.assertEqual(storage.load()[0]["saved_at"], "first")
+            fallback = storage.replace("a", row,
+                                       only_if=lambda existing: False,
+                                       fallback_id="b")
+            self.assertIsNotNone(fallback)
+            self.assertEqual(fallback["record_id"], "b")
+            self.assertEqual(
+                [item["record_id"] for item in storage.load()], ["a", "b"]
+            )
 
 
 class TestBrowserAccess(unittest.TestCase):
@@ -135,11 +146,20 @@ class TestBrowserAccess(unittest.TestCase):
 
     def test_admin_hash_never_reaches_the_browser(self) -> None:
         for url in ("/", "/admin/login", "/history", "/static/campus.js"):
-            body = self.client.get(url).data
+            with self.client.get(url) as response:
+                body = response.data
             self.assertNotIn(self.admin_hash.encode("utf-8"), body, url)
 
     def test_forget_this_device_deletes_the_history_cookie(self) -> None:
         self.client.get("/history")
+        with patch.object(self.app, "student_history") as history_spy:
+            locked = self.client.post(
+                "/api/history",
+                json={"student_id": "2605581"},
+                headers={"X-CSRF-Token": self.csrf()},
+            )
+        self.assertEqual(locked.status_code, 403)
+        self.assertEqual(history_spy.call_count, 0)
         self.client.set_cookie(WebController.HISTORY_COOKIE_NAME, "a" * 32)
         response = self.client.post("/api/history/forget",
                                     headers={"X-CSRF-Token": self.csrf()})

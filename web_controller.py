@@ -183,6 +183,9 @@ class WebController:
             return jsonify(message=student_id), 400
         held = set(self.__history_digests(
             request.cookies.get(self.HISTORY_COOKIE_NAME)))
+        if not self.__is_admin() and not held:
+            return jsonify(
+                message=self.__app.status_message("history_locked")), 403
         visible = None if self.__is_admin() else (
             lambda record_id: self.__history_digest(record_id) in held)
         page = self.__app.student_history(student_id, visible)
@@ -352,7 +355,6 @@ class WebController:
             result = outcome["result"]
             if not isinstance(result, dict):
                 raise TypeError("Check-in result payload must be a dict.")
-            self.__clear_result()
             session["checkin_token"] = self.__put_result(result)
             response = jsonify(payload)
             response.status_code = 200
@@ -427,7 +429,9 @@ class WebController:
         return False
 
     def __put_result(self, result: JSONObject) -> str:
-        token = secrets.token_urlsafe(32)
+        existing = session.get("checkin_token")
+        token = (existing if isinstance(existing, str) and existing
+                 else secrets.token_urlsafe(32))
         with self.__results_lock:
             self.__results[token] = {
                 "record": copy.deepcopy(result), "created": time.monotonic()}

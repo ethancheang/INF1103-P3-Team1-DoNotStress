@@ -9,11 +9,7 @@ from ai.ai_provider import AIProvider
 from json_types import JSONObject
 
 type FakeReply = str | Exception | Callable[[str, str], str]
-DEFAULT_MODELS: tuple[str, ...] = (
-    "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-3.5-flash-lite",
-)
+DEFAULT_MODELS: tuple[str, ...] = AIProvider.DEFAULT_MODELS
 
 
 class FakeProvider(AIProvider):

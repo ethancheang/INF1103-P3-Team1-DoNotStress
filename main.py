@@ -105,6 +105,7 @@ class App:
         self.__data: DataManager = DataManager(path)
 
         self.__save_lock: threading.Lock = threading.Lock()
+        self.__submissions_lock: threading.Lock = threading.Lock()
         self.__jobs_lock: threading.Lock = threading.Lock()
         self.__jobs: dict[str, dict[str, object]] = {}
         self.__submissions: dict[str, dict[str, object]] = {}
@@ -269,13 +270,6 @@ class App:
                     "payload": {"message": self.__io.status_message("calm_failure")}}
         return copy.deepcopy(outcome)
 
-    def forget_job(self, job_id: str, owner: str) -> None:
-        """Remove a finished job once its final response has been delivered."""
-        with self.__jobs_lock:
-            job = self.__jobs.get(job_id)
-            if job is not None and job.get("owner") == owner and job.get("done"):
-                self.__jobs.pop(job_id, None)
-
     def wait_for_job(self, job_id: str, timeout: float = 5.0) -> JSONObject:
         """Block until a job ends. Reports running if the timeout expires.
 
@@ -311,7 +305,7 @@ class App:
                 job_id: job for job_id, job in self.__jobs.items()
                 if self.__keep_job(job, cutoff, delivered_cutoff)
             }
-        with self.__save_lock:
+        with self.__submissions_lock:
             self.__submissions = {
                 key: entry for key, entry in self.__submissions.items()
                 if self.__entry_fresh(entry.get("created"), cutoff)
@@ -337,7 +331,7 @@ class App:
         return cls.__entry_fresh(delivered, delivered_cutoff)
 
     def forget_submission(self, owner: str) -> None:
-        with self.__save_lock:
+        with self.__submissions_lock:
             to_drop = [key for key, entry in self.__submissions.items()
                        if entry.get("owner") == owner]
             for key in to_drop:
@@ -347,8 +341,8 @@ class App:
                 job_id for job_id, job in self.__jobs.items()
                 if job.get("owner") == owner and job.get("done")
             ]
-        for job_id in done_jobs:
-            self.forget_job(job_id, owner)
+            for job_id in done_jobs:
+                self.__jobs.pop(job_id, None)
 
     def close(self) -> None:
         """Cancel queued check-ins, wait for active workers, and stop threads."""
@@ -522,7 +516,8 @@ class App:
     def __match_pending(self, fingerprint: str, owner: str,
                         pending_fingerprint: str,
                         pending_record_id: str) -> str:
-        entry = self.__submissions.get(f"{owner}:{fingerprint}")
+        with self.__submissions_lock:
+            entry = self.__submissions.get(f"{owner}:{fingerprint}")
         if entry is not None:
             if entry.get("pending") is True:
                 return str(entry.get("record_id") or "")
@@ -533,12 +528,13 @@ class App:
 
     def __remember(self, owner: str, fingerprint: str,
                    record_id: str, *, pending: bool = True) -> None:
-        self.__submissions[f"{owner}:{fingerprint}"] = {
-            "owner": owner,
-            "record_id": record_id,
-            "pending": pending,
-            "created": time.monotonic(),
-        }
+        with self.__submissions_lock:
+            self.__submissions[f"{owner}:{fingerprint}"] = {
+                "owner": owner,
+                "record_id": record_id,
+                "pending": pending,
+                "created": time.monotonic(),
+            }
 
     def __row_for_display(self, record) -> JSONObject:
         row = record.to_row()

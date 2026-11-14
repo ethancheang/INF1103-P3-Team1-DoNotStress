@@ -1110,12 +1110,17 @@ class TestTrimmed19Classes(unittest.TestCase):
 
             first_poll = client.get(f"/checkin/status/{job_id}?wait=nan")
             self.assertEqual(first_poll.status_code, 200)
+            with client.session_transaction() as sess:
+                first_token = sess.get("checkin_token")
             second_poll = client.get(f"/checkin/status/{job_id}")
             self.assertEqual(second_poll.status_code, 200)
             self.assertTrue(second_poll.get_json()["ok"])
             with client.session_transaction() as sess:
+                self.assertEqual(sess.get("checkin_token"), first_token)
+            self.assertEqual(client.get("/result").status_code, 200)
+            with client.session_transaction() as sess:
                 owner_id = str(sess.get("owner_id") or "")
-            dns_app.forget_job(job_id, owner_id)
+            dns_app.forget_submission(owner_id)
             after_forget = client.get(f"/checkin/status/{job_id}")
             self.assertEqual(after_forget.status_code, 404)
             dns_app.close()
@@ -1415,6 +1420,15 @@ class TestTrimmed19Classes(unittest.TestCase):
         ):
             provider = GeminiProvider(api_key="test-key")
         self.assertEqual(provider.models[0], "gemini-2.5-pro")
+
+        with mock.patch.dict(
+            os.environ,
+            {"GEMINI_MODEL_CHAIN": "custom-1, custom-2, custom-1"},
+            clear=False,
+        ):
+            custom = GeminiProvider(api_key="test-key")
+        self.assertEqual(custom.models, ("custom-1", "custom-2"))
+        self.assertIs(GeminiProvider.MODEL_CHAIN, AIProvider.DEFAULT_MODELS)
 
     def test_display_history_ignores_blank_category_and_sanitizes_pending_count(self) -> None:
         io = IOManager(Questionnaire.from_survey())

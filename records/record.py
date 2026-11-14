@@ -59,7 +59,10 @@ class Record(ABC):
         return None
 
     def get(self, key: str) -> JSONValue:
-        return copy.deepcopy(self.__data.get(key))
+        value = self.__data.get(key)
+        if isinstance(value, (dict, list)):
+            return copy.deepcopy(value)
+        return value
 
     def belongs_to(self, student_id: str) -> bool:
         """True only for an exact Student ID match."""

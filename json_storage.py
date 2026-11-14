@@ -54,14 +54,15 @@ class JSONStorage:
 
     def replace(self, record_id: str, row: JSONObject, *,
                 only_if: Callable[[JSONObject], bool] | None = None,
-                preserve: tuple[str, ...] = ()) -> JSONObject | None:
+                preserve: tuple[str, ...] = (),
+                fallback_id: str = "") -> JSONObject | None:
         """Replace the row with this record_id, or append when none has it.
 
         Returns a copy of the row as stored. When only_if is supplied and
-        the matching row fails it, the file is left untouched and None is
-        returned so the caller can append a fresh record instead. Fields
-        named in preserve keep their non-empty stored values. The row
-        passed in is never modified.
+        the matching row fails it, appends under fallback_id when given or
+        leaves the file untouched and returns None. Fields named in
+        preserve keep their non-empty stored values. The row passed in is
+        never modified.
         """
         with self.__lock:
             rows, _ = self.__read(backup_corrupt=True)
@@ -69,7 +70,11 @@ class JSONStorage:
             for index, existing in enumerate(rows):
                 if str(existing.get("record_id") or "").strip() == record_id:
                     if only_if is not None and not only_if(existing):
-                        return None
+                        if not fallback_id:
+                            return None
+                        stored["record_id"] = fallback_id
+                        rows.append(stored)
+                        break
                     for field in preserve:
                         if existing.get(field):
                             stored[field] = existing[field]
@@ -100,8 +105,6 @@ class JSONStorage:
         except json.JSONDecodeError as error:
             problem = f"Corrupted JSON in data file: {error}"
             return [], self.__back_up(problem) if backup_corrupt else problem
-        if payload is None:
-            return [], None
         if isinstance(payload, dict):
             # {} or {"other": 1} has no records list: treat it as corrupt
             # so a write backs it up rather than silently dropping it.
