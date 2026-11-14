@@ -6,11 +6,13 @@ from unittest.mock import patch
 
 import ai_manager
 import io_manager
-import logic_manager
+from logic_manager import LogicManager
 import survey
 import test_frontend as frontend
 from test_admin_access import login_admin
 from plain_tests import function_suite
+
+LOGIC = LogicManager()
 
 fake_generate = frontend.fake_generate
 
@@ -35,14 +37,14 @@ def record(**changes):
 def with_score(**changes):
     """io record plus logic_manager's deterministic score of its answers."""
     r=record(**changes)
-    return {**r, **logic_manager.score_answers(r)}
+    return {**r, **LOGIC.score_answers(r)}
 
 
 def finalised(**changes):
     """io record run through a matching fake Gemini reply, then Logic."""
     r=record(**changes)
     fields=ai_manager.validate_ai_response(fake_generate(json.dumps(r),None,None))[1]
-    return logic_manager.apply_logic({**r,**fields})
+    return LOGIC.evaluate({**r,**fields})
 
 
 # --- Scoring ---------------------------------------------------------------
@@ -158,7 +160,7 @@ def test_prompts_and_pss_sentences():
 
 def test_one_based_labels():
     r=with_score(sleep_hours_avg=7.5,sleep_quality=5,fin_stress=1)
-    shown_factors=logic_manager.factor_insights(r,r)
+    shown_factors=LOGIC.factor_insights(r,r)
     factors={item['title']:item['value'] for item in shown_factors}
     assert factors['Rest & recovery'] == '7.5 hours · Very bad quality'
     assert factors['Money pressures'] == '1/5 · No stress at all'
@@ -250,7 +252,7 @@ def test_ai_score_far_from_answers_is_rejected():
     fields=json.loads(fake_generate(None,None,None))
     fields.update(stress_score=4.5,risk_score=0.875,risk_category='High',
                   soft_label='Please reach out',speak_prominence='high')
-    r=logic_manager.apply_logic({**record(),**fields})
+    r=LOGIC.evaluate({**record(),**fields})
     assert not r['ok']
     assert r['error'] == 'score_mismatch'
     assert r['logic_stress_score'] == 1.0

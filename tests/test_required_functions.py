@@ -23,6 +23,9 @@ import ai_manager
 import data_manager
 import io_manager
 import logic_manager
+from logic_manager import LogicManager
+
+LOGIC = LogicManager()
 
 
 def _answers() -> dict:
@@ -35,9 +38,9 @@ def _answers() -> dict:
 def _fake_generate(prompt: str, api_key: str, model_name: str) -> str:
     """Fake Gemini: replays the formula on the prompt's answers."""
     answers = json.loads(prompt[prompt.rfind("{"):])
-    scored = logic_manager.scored_items(answers)
-    stress = logic_manager.score_answers(answers)["stress_score"]
-    category = logic_manager.category_for_score(stress)
+    scored = LOGIC.scored_items(answers)
+    stress = LOGIC.score_answers(answers)["stress_score"]
+    category = LOGIC.category_for_score(stress)
     return json.dumps({
         "scored_items": scored,
         "stress_score": stress,
@@ -93,23 +96,23 @@ def test_validate_response_rejects_malformed() -> None:
 
 def test_evaluate_score_route() -> None:
     record = _enriched()
-    decision = logic_manager.evaluate(record)
+    decision = LOGIC.evaluate(record)
     assert decision["ok"] is True
-    assert logic_manager.score(record) == record["stress_score"]
-    assert logic_manager.route(decision) == "Moderate"
+    assert LOGIC.score(record) == record["stress_score"]
+    assert LOGIC.route(decision) == "Moderate"
 
 
 def test_score_rejects_mismatched_ai_score() -> None:
     record = dict(_enriched(), stress_score=4.5)
-    assert logic_manager.score(record) is None
-    assert logic_manager.route(logic_manager.evaluate(record)) == "unavailable"
+    assert LOGIC.score(record) is None
+    assert LOGIC.route(LOGIC.evaluate(record)) == "unavailable"
 
 
 def test_save_load_query_and_missing_or_corrupt_file() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         path = os.path.join(tmp, "records.json")
         assert data_manager.load(path) == []
-        record = logic_manager.evaluate(_enriched())
+        record = LOGIC.evaluate(_enriched())
         assert data_manager.save(record, path, opt_in=True)["ok"] is True
         assert len(data_manager.load(path)) == 1
         assert len(data_manager.query(lambda r: r["risk_category"] == "Moderate", path)) == 1
@@ -123,7 +126,7 @@ def test_display_functions_print() -> None:
     with redirect_stdout(buffer):
         io_manager.display_record(_answers())
         io_manager.display_list([])
-        io_manager.display_result(logic_manager.evaluate(_enriched()))
+        io_manager.display_result(LOGIC.evaluate(_enriched()))
         io_manager.display_result({"ok": False, "error_code": "timeout"})
     assert "Stress score: 3.0" in buffer.getvalue()
 

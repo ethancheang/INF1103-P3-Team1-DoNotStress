@@ -492,7 +492,7 @@ def build_prompt(
     and answer-option labels are instructions, not scored fields.
 
     `instructions` is the scoring formula and tier rules, written by
-    logic_manager.scoring_instructions() and passed in by main.py. This module
+    LogicManager.instructions() and passed in by main.py. This module
     does not know those rules itself.
 
     `questions` defaults to DEFAULT_QUESTIONS so this module does not import
@@ -913,7 +913,7 @@ def call_gemini(
     When both `verify_fn` and `answers` are given, each schema-valid reply is
     also passed to verify_fn(reply, answers). A returned message means the
     reply is wrong for these answers; it is handled like bad JSON (retried,
-    then invalid_response). main.py passes logic_manager.verify_ai_scores.
+    then invalid_response). main.py passes LogicManager.verify.
 
     Returns (ok, validated_ai_dict_or_None, error_or_None).
     On failure, error is {"error_code", "detail", "source": "gemini"}.

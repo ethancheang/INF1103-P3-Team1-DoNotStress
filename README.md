@@ -86,7 +86,7 @@ Support contacts are always available, including without an AI result, in the pa
 
 ## Flow and storage
 
-`main.py` validates with `io_manager`, runs `ai_manager.analyse_student`, then `logic_manager.apply_logic`. Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
+`main.py` validates with `io_manager`, runs `ai_manager.analyse_student`, then `LogicManager.evaluate` (in `logic_manager.py`). Student-facing results and tips use the I/O formatters. Support contacts come from the existing I/O module. Assessment is AI-assisted wellbeing guidance, not a medical diagnosis.
 
 Before submission, the review step says that answers are used to share a few suggestions, while the student ID stays private and anything written in the reflection box is not stored. The server checks reflection text then discards it; only the boolean safety flag remains in a result. Numeric answers are sent for suggestions; the ID and reflection are not. Request bodies must not be logged by a deployment proxy. After a successful check-in the result is shown at `/result`. Session cookies contain only opaque identifiers and a CSRF token, not answers. The in-memory result expires after 30 minutes; the saved file is separate. `/garden` redirects to the home page.
 
@@ -107,7 +107,7 @@ This is a single-process local app. A production deployment needs a shared serve
 | Manager file | Required functions |
 | --- | --- |
 | `ai_manager.py` | `build_prompt`, `call_api`, `parse_response`, `validate_response` |
-| `logic_manager.py` | `evaluate`, `score`, `route` |
+| `logic_manager.py` | `LogicManager.evaluate`, `LogicManager.score`, `LogicManager.route` |
 | `data_manager.py` | `save`, `load`, `query(filter_fn)` |
 | `io_manager.py` | `display_record`, `display_list`, `display_result` |
 

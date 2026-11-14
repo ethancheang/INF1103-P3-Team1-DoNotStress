@@ -1,8 +1,11 @@
-"""logic_manager.trend() on plain check-in dicts, without Gemini or files."""
+"""LOGIC.trend() on plain check-in dicts, without Gemini or files."""
 import unittest
 
 import logic_manager as lm
+from logic_manager import LogicManager
 from plain_tests import case, function_suite
+
+LOGIC = LogicManager()
 
 STUDENT = "2605581"
 
@@ -29,13 +32,13 @@ def test_trend_compares_the_latest_score_with_the_previous_one():
              ((2.0, 3.64), lm.TREND_HIGHER, 1.64))
     for scores, comparison, change in cases:
         with case(scores=scores):
-            trend = lm.trend(history(*scores))
+            trend = LOGIC.trend(history(*scores))
             assert trend["comparison"] == comparison
             assert trend["change"] == change
     pending = {"student_id": STUDENT, "status": "pending", "ai_ok": False,
                "saved_at": "2026-10-09T01:00:00+00:00"}
-    assert lm.trend(history(3.0, 2.5) + [pending])["comparison"] == lm.TREND_LOWER
-    assert lm.trend(None)["comparison"] == lm.TREND_NONE
+    assert LOGIC.trend(history(3.0, 2.5) + [pending])["comparison"] == lm.TREND_LOWER
+    assert LOGIC.trend(None)["comparison"] == lm.TREND_NONE
 
 
 def test_trend_direction_needs_three_scores_and_uses_recent_ones():
@@ -47,8 +50,8 @@ def test_trend_direction_needs_three_scores_and_uses_recent_ones():
              ((5.0, 2.0, 2.0, 2.05, 1.95, 2.0), lm.TREND_STEADY))
     for scores, direction in cases:
         with case(scores=scores):
-            assert lm.trend(history(*scores))["direction"] == direction
-    trend = lm.trend(list(reversed(history(4.0, 3.0, 2.0))))
+            assert LOGIC.trend(history(*scores))["direction"] == direction
+    trend = LOGIC.trend(list(reversed(history(4.0, 3.0, 2.0))))
     assert (trend["latest"], trend["previous"], trend["average"]) == (2.0, 3.0, 3.0)
 
 
