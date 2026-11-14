@@ -6,7 +6,6 @@ from logic.context_flag_rule import ContextFlagRule
 from logic.decision import Decision
 from logic.safety_override_rule import SafetyOverrideRule
 from logic.support_priority_rule import SupportPriorityRule
-from logic.tip_cap_rule import TipCapRule
 from plain_tests import case, function_suite
 
 NO_FLAGS = {"sleep": False, "workload": False, "finances": False,
@@ -24,13 +23,12 @@ def _decision(flags=None, **fields):
 
 
 def test_every_rule_is_a_business_rule_with_a_name():
-    rules = (SafetyOverrideRule(), SupportPriorityRule(), ContextFlagRule(),
-             TipCapRule())
+    rules = (SafetyOverrideRule(), SupportPriorityRule(), ContextFlagRule())
     for rule in rules:
         with case(rule=rule.name):
             assert isinstance(rule, BusinessRule)
             assert rule.run(_decision()) == rule.applies(_decision())
-    assert len({rule.name for rule in rules}) == 4
+    assert len({rule.name for rule in rules}) == 3
 
 
 def test_a_decision_starts_as_exactly_what_gemini_said():
@@ -79,16 +77,16 @@ def test_context_flags_suggest_their_tips_in_order():
     assert decision.risk_category == "Moderate"
 
 
-def test_tip_cap_leads_keeps_gemini_tips_and_stops_at_four():
+def test_finalise_tips_leads_keeps_gemini_tips_and_stops_at_four():
     decision = _decision(tips=["short_breaks", "rest_a_little_more",
                                "talk_to_someone"])
     decision.lead_with("talk_to_someone")
     for tip in ("keep_social_contact", "sleep_routine", "money_worries"):
         decision.suggest(tip)
-    TipCapRule().run(decision)
+    decision.finalise_tips()
     assert decision.tips == ["talk_to_someone", "short_breaks",
                              "rest_a_little_more", "keep_social_contact"]
-    assert len(decision.tips) == TipCapRule.MAX_TIPS
+    assert len(decision.tips) == Decision.MAX_TIPS
 
 
 def load_tests(loader, tests, pattern):

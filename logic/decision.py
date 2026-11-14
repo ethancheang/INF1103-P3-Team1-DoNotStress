@@ -9,9 +9,12 @@ class Decision:
     """Gemini's tier and tips, adjusted rule by rule.
 
     It starts as exactly what Gemini returned. Rules may raise the tier,
-    lead with a tip, suggest extra tips and add notes; the setters below
-    are the only way they change it.
+    lead with a tip, suggest extra tips and add notes. They cannot
+    overwrite the tip list directly: finalise_tips() builds it once the
+    rules have run.
     """
+
+    MAX_TIPS: int = 4
 
     def __init__(self, record: JSONObject,
                  context_flags: dict[str, bool]) -> None:
@@ -85,10 +88,6 @@ class Decision:
         """The final tip IDs, in the order the student sees them."""
         return list(self.__tips)
 
-    @tips.setter
-    def tips(self, value: list[str]) -> None:
-        self.__tips = list(value)
-
     @property
     def notes(self) -> list[str]:
         return list(self.__notes)
@@ -105,6 +104,24 @@ class Decision:
     def note(self, text: str) -> None:
         """Record why a rule changed the outcome (for staff, not students)."""
         self.__notes.append(text)
+
+    def finalise_tips(self, max_tips: int = MAX_TIPS) -> None:
+        """Lead tip first, then Gemini's tips, then extras while there is room.
+
+        Called once after the rules have run. Gemini gives at most three
+        tips and at most one tip leads, so Gemini's own tips are never
+        pushed out by the cap.
+        """
+        ordered: list[str] = []
+        for tip_id in self.__lead_tips + self.__gemini_tips:
+            if tip_id not in ordered:
+                ordered.append(tip_id)
+        for tip_id in self.__extra_tips:
+            if len(ordered) >= max_tips:
+                break
+            if tip_id not in ordered:
+                ordered.append(tip_id)
+        self.__tips = ordered[:max_tips]
 
     def __strings(self, value: JSONValue) -> list[str]:
         if not isinstance(value, list):
