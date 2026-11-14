@@ -1,63 +1,55 @@
-"""Trend and TrendAnalyser on their own, without LogicManager."""
+"""logic_manager.trend() on plain check-in dicts, without Gemini or files."""
 import unittest
 
-from logic.trend import Trend
-from logic.trend_analyser import TrendAnalyser
+import logic_manager as lm
 from plain_tests import case, function_suite
-from records.check_in_record import CheckInRecord
-from records.stress_history import StressHistory
 
-ANALYSER = TrendAnalyser()
 STUDENT = "2605581"
 
 
 def history(*scores):
-    """A history of finished check-ins, one per day, oldest first."""
-    records = []
-    for day, score in enumerate(scores, 1):
-        records.append(CheckInRecord({
-            "student_id": STUDENT,
-            "survey_version": "evidence-v3",
-            "stress_score": score,
-            "risk_score": 0.5,
-            "risk_category": "Moderate",
-            "soft_label": "Worth a check-in",
-            "primary_stressors": [],
-            "recommended_support": "Internal",
-            "confidence": 0.8,
-            "reasoning": "test",
-            "source": "ai_logic",
-            "ai_ok": True,
-            "saved_at": f"2026-10-{day:02d}T01:00:00+00:00",
-        }))
-    return StressHistory(STUDENT, records)
+    """Finished check-ins as plain dicts, one per day, oldest first."""
+    return [{
+        "student_id": STUDENT,
+        "survey_version": "evidence-v3",
+        "stress_score": score,
+        "risk_category": "Moderate",
+        "soft_label": "Worth a check-in",
+        "source": "ai_logic",
+        "ai_ok": True,
+        "saved_at": f"2026-10-{day:02d}T01:00:00+00:00",
+    } for day, score in enumerate(scores, 1)]
 
 
 def test_trend_compares_the_latest_score_with_the_previous_one():
-    cases = (((), Trend.NONE, None), ((3.0,), Trend.FIRST, None),
-             ((3.0, 2.5), Trend.LOWER, -0.5), ((3.0, 3.25), Trend.SIMILAR,
-                                               0.25),
-             ((3.0, 2.8), Trend.SIMILAR, -0.2),
-             ((2.0, 3.64), Trend.HIGHER, 1.64))
+    cases = (((), lm.TREND_NONE, None), ((3.0,), lm.TREND_FIRST, None),
+             ((3.0, 2.5), lm.TREND_LOWER, -0.5),
+             ((3.0, 3.25), lm.TREND_SIMILAR, 0.25),
+             ((3.0, 2.8), lm.TREND_SIMILAR, -0.2),
+             ((2.0, 3.64), lm.TREND_HIGHER, 1.64))
     for scores, comparison, change in cases:
         with case(scores=scores):
-            trend = ANALYSER.analyse(history(*scores))
-            assert trend.comparison == comparison
-            assert trend.change == change
+            trend = lm.trend(history(*scores))
+            assert trend["comparison"] == comparison
+            assert trend["change"] == change
+    pending = {"student_id": STUDENT, "status": "pending", "ai_ok": False,
+               "saved_at": "2026-10-09T01:00:00+00:00"}
+    assert lm.trend(history(3.0, 2.5) + [pending])["comparison"] == lm.TREND_LOWER
+    assert lm.trend(None)["comparison"] == lm.TREND_NONE
 
 
 def test_trend_direction_needs_three_scores_and_uses_recent_ones():
-    cases = (((3.0, 2.0), Trend.NOT_ENOUGH),
-             ((4.0, 3.5, 3.0), Trend.EASING),
-             ((2.0, 2.05, 1.95, 2.0), Trend.STEADY),
-             ((1.5, 2.0, 2.6, 3.1), Trend.BUILDING),
+    cases = (((3.0, 2.0), lm.TREND_NOT_ENOUGH),
+             ((4.0, 3.5, 3.0), lm.TREND_EASING),
+             ((2.0, 2.05, 1.95, 2.0), lm.TREND_STEADY),
+             ((1.5, 2.0, 2.6, 3.1), lm.TREND_BUILDING),
              # Only the last five count: an old high is forgotten.
-             ((5.0, 2.0, 2.0, 2.05, 1.95, 2.0), Trend.STEADY))
+             ((5.0, 2.0, 2.0, 2.05, 1.95, 2.0), lm.TREND_STEADY))
     for scores, direction in cases:
         with case(scores=scores):
-            assert ANALYSER.analyse(history(*scores)).direction == direction
-    trend = ANALYSER.analyse(history(4.0, 3.0, 2.0))
-    assert (trend.latest, trend.previous, trend.average) == (2.0, 3.0, 3.0)
+            assert lm.trend(history(*scores))["direction"] == direction
+    trend = lm.trend(list(reversed(history(4.0, 3.0, 2.0))))
+    assert (trend["latest"], trend["previous"], trend["average"]) == (2.0, 3.0, 3.0)
 
 
 def load_tests(loader, tests, pattern):
